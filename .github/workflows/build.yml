@@ -20,7 +20,14 @@ jobs:
           "$SDKM" "ndk;29.0.14206865" "platforms;android-36" "build-tools;36.0.0" "cmake;3.22.1"
       - uses: gradle/actions/setup-gradle@v4
       - name: Build
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+      - name: Summarise errors
+        if: failure()
+        run: |
+          grep -nE "error:|^e: |What went wrong|FAILED|Execution failed|undefined reference|Caused by|not found|No such" build.log \
+            | head -25 | while IFS= read -r line; do echo "::error::${line:0:400}"; done
       - uses: actions/upload-artifact@v4
         with:
           name: sgtpuzzles-extended-debug-apk
