@@ -48,6 +48,8 @@ android {
     compileSdk = 36
     defaultConfig {
         applicationId = "name.boyle.chris.sgtpuzzles"
+        // Separate app id so this fork installs next to the original Puzzles app instead of updating it.
+        applicationIdSuffix = ".extended"
         minSdk = 21
         targetSdk = 36
         versionCode = 149
