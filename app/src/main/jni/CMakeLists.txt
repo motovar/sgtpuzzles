@@ -271,6 +271,9 @@ guiprogram(grapheditor untangle.c
   COMPILE_DEFINITIONS EDITOR)
 
 add_subdirectory(unfinished)
+add_subdirectory(extras-unreleased)
+add_subdirectory(extras-aho)
+add_subdirectory(extras-extended)
 add_subdirectory(auxiliary)
 
 if(build_cli_programs)

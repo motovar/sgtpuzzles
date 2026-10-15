@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ascent</title>
+<link rel="ToC" href="index.html">
+<link rel="up" href="index.html">
+<style type="text/css">body { word-wrap: break-word; } img { max-width: 100%; } body.night { color: #dddddd; background: #000000; } body.night a:link { color: #8888ff; } body.night a:visited { color: #cc88ff; }</style></head>
+<body>
+<p><a href="index.html">Contents</a></p>
+<h1 id="ascent">Ascent</h1>
+<p>You're given a grid, with several numbers inside. Your objective is
+to place each number exactly once, so a path is formed from the lowest
+number (i.e. 1) to the highest number. Two numbers that are in sequence
+must be horizontally, vertically or diagonally adjacent.</p>
+<p>The puzzle can be played on a rectangular or hexagonal grid. It's
+also possible to play on a rectangular grid while not allowing the path
+to move diagonally.</p>
+<p>In the alternate game mode 'Edges', the grid is surrounded by numbers
+placed inside arrows. An arrow points to the row, column or diagonal
+where this number appears in the path.</p>
+<p>This puzzle is invented by Gyora Benedek, and is known as
+<em>Hidato</em> (or the non-trademarked name <em>Hidoku</em>). Edges
+mode is an implementation of <em>1to25</em> invented by Jeff
+Widderich.</p>
+<p>More information: <a
+href="http://www.janko.at/Raetsel/Hidoku/index.htm">http://www.janko.at/Raetsel/Hidoku/index.htm</a></p>
+<h2 id="controls">Controls</h2>
+<p>There are three ways to enter a number:</p>
+<ol type="1">
+<li><p>Click a number to highlight it, then click (or drag to) an
+adjacent cell to place the next number in the sequence. The arrow keys
+and Enter can be used to emulate mouse clicks.</p></li>
+<li><p>Click an empty cell, then type a multi-digit number. To confirm a
+number, either press Enter, an arrow key, or click any cell.</p></li>
+<li><p>In Edges mode, click and drag from an edge number, then release
+in an empty grid cell in the same row, column or diagonal.</p></li>
+</ol>
+<p>To remove numbers, right-click or right-drag a number.</p>
+<p>It's also possible to draw a path while the numbers inside the path
+are still unknown. Left-click and drag across cells to draw a line.
+Right-click or right-drag to clear the line going through a cell.</p>
+<p>If a path has only a single number, the endpoints will display one or
+two smaller numbers, which represent the numbers which are valid for
+this cell.</p>
+<h2 id="ascent-parameters">Ascent parameters</h2>
+<p>These parameters are available from the ‘Custom…’ option on the
+‘Type’ menu.</p>
+<dl>
+    <dt>Width, Height</dt>
+    <dd>Size of the grid in squares.</dd>
+    <dt>Always show start and end points</dt>
+    <dd>When enabled, the first and last number are always given. Disable this option for an added challenge.</dd>
+    <dt>Symmetrical clues</dt>
+    <dd>When enabled, all given numbers form a symmetric pattern. This usually leads to easier puzzles.</dd>
+    <dt>Grid type</dt>
+    <dd>Choose between 'Rectangle', 'Rectangle (no diagonals)', 'Hexagon', 'Honeycomb' and 'Edges' mode.</dd>
+    <dt>Difficulty</dt>
+    <dd>Determine the difficulty of the generated puzzle. Higher difficulties require more complex reasoning.</dd>
+</dl>
+
+<h2 id="status">Status</h2>
+<p>This puzzle is fully implemented and playable.</p>
+
+</body>
+</html>

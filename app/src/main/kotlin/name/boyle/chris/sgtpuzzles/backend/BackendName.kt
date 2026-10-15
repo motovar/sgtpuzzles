@@ -47,7 +47,7 @@ sealed class BackendName(
      * a preference that hides the "M" button that inserts all pencil marks.
      */
     val isLatin by lazy {
-        this in setOf(KEEN, SOLO, TOWERS, UNDEAD, UNEQUAL)
+        this in setOf(KEEN, SOLO, TOWERS, UNDEAD, UNEQUAL, SOLO_PLUS, UNDEAD_PLUS, UNEQUAL_PLUS)
     }
 
     /** How to handle drag and revert for each game. */
@@ -62,6 +62,9 @@ sealed class BackendName(
             // For games where a drag can be canceled by going off-screen, do that.
             GALAXIES, MAP, MINES, PATTERN, PEGS, RECT, TENTS, TRACKS, UNTANGLE -> REVERT_OFF_SCREEN
 
+            // Extra puzzles (extras-*) where dragging draws something (paths, lines, ranges).
+            ASCENT, BOATS, BRICKS, CLUSTERS, FLOW, ROME, SPOKES, STICKS, WALLS -> REVERT_OFF_SCREEN
+
             // For games where dragging something off the board would be harmful, revert by
             // dragging back to the start of the drag instead.
             BRIDGES, GUESS, PEARL, SIGNPOST -> REVERT_TO_START
@@ -71,7 +74,10 @@ sealed class BackendName(
             // inconsistent UI since all the other games can't.
             BLACKBOX, DOMINOSA, FLIP, FLOOD, INERTIA, KEEN, LIGHTUP, LOOPY, MAGNETS, NETSLIDE,
             PALISADE, RANGE, SAMEGAME, SINGLES, SIXTEEN, SLANT, SOLO, TOWERS, UNDEAD, UNEQUAL,
-            UNRULY -> PREVENT
+            UNRULY,
+            // Extra puzzles (extras-*) that are driven by taps / the cursor only.
+            ABCD, ALPHACRYPT, FACTORCROSS, IDENTIFIER, KAKURO, MATHRAX, SALAD, SEISMIC, STELLAR,
+            SUBSETS, SUPERMAZE, CROSSING, SOLO_PLUS, UNDEAD_PLUS, UNEQUAL_PLUS -> PREVENT
         }
     }
 

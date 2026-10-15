@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crossing</title>
+<link rel="ToC" href="index.html">
+<link rel="up" href="index.html">
+<style type="text/css">body { word-wrap: break-word; } img { max-width: 100%; } body.night { color: #dddddd; background: #000000; } body.night a:link { color: #8888ff; } body.night a:visited { color: #cc88ff; }</style></head>
+<body>
+<p><a href="index.html">Contents</a></p>
+<h1 id="crossing">Crossing</h1>
+<p>You're given a grid with several black squares, and a list of
+numbers. Your objective is to fill every empty square with a digit, so
+each number appears once in the grid when reading from left-to-right or
+from top-to-bottom.</p>
+<p>This is an implementation of <em>Nansuke</em>, which was invented by
+Nikoli. It's sometimes known as <em>Number Skeleton</em>.</p>
+<p>More information: <a
+href="https://www.nikoli.co.jp/en/puzzles/nansuke/">https://www.nikoli.co.jp/en/puzzles/nansuke/</a></p>
+<h2 id="controls">Controls</h2>
+<p>Crossing uses the same control scheme as Solo.</p>
+<p>Left-click to select a cell, then type a number on your keyboard to
+enter it. Press Backspace or Space to clear a cell.</p>
+<p>Right-click a cell, then type a number to add a pencil mark. Pencil
+marks can be used for any purpose.</p>
+<p>You can also use the arrow keys to move the selected cell around.
+Press Enter to toggle between entering number and entering pencil
+marks.</p>
+<h2 id="crossing-parameters">Crossing parameters</h2>
+<p>These parameters are available from the ‘Custom…’ option on the
+‘Type’ menu.</p>
+<dl>
+    <dt>Width, Height</dt>
+    <dd>Size of the grid in squares.</dd>
+    <dt>Symmetric walls</dt>
+    <dd>When enabled, all walls form a rotationally symmetric pattern.</dd>
+</dl>
+
+<h2 id="status">Status</h2>
+<p>This puzzle has severe problems.</p>
+<p>The largest problem is related to a limitation of the original
+Portable Puzzle Collection framework, which is that all puzzles of the
+same size must use the exact same window space. Since the number list
+varies between puzzles, there is no reliable way to always fit the list
+on screen.</p>
+<p>The above problem has stopped me from addressing the other points I'm
+unhappy with:</p>
+<ul>
+<li>Inputting a complete number requires selecting each cell and typing
+a digit one by one. This is fairly tedious and could be enhanced by
+automatic cursor movement.</li>
+<li>The colored digits. This was part of a scrapped idea where complete
+numbers could be dragged and dropped with the mouse, and would be
+represented as a bar of colored tiles (similar to the implementation in
+Professor Layton for the Nintendo 3DS, I forget which installment). As
+it stands, the colors should probably be removed entirely.</li>
+</ul>
+
+</body>
+</html>

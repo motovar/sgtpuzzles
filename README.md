@@ -4,6 +4,10 @@ Android port of Simon Tatham's Puzzles
 This is [Simon Tatham's Portable Puzzle Collection](https://www.chiark.greenend.org.uk/~sgtatham/puzzles/),
 ported to Android.
 
+> **This fork** additionally bundles 24 extra puzzles (Kakuro, Boats, Flow, Stellar, ...) from three
+> community collections, see `app/src/main/jni/EXTRAS.md`. This conflicts with the upstream project's
+> non-goal of "new games that don't exist upstream", so it is maintained as a separate fork.
+
 The easiest way to install it is [from Google Play](https://play.google.com/store/apps/details?id=name.boyle.chris.sgtpuzzles).
 
 If you'd like to get involved, read on:

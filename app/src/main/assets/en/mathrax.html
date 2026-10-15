@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mathrax</title>
+<link rel="ToC" href="index.html">
+<link rel="up" href="index.html">
+<style type="text/css">body { word-wrap: break-word; } img { max-width: 100%; } body.night { color: #dddddd; background: #000000; } body.night a:link { color: #8888ff; } body.night a:visited { color: #cc88ff; }</style></head>
+<body>
+<p><a href="index.html">Contents</a></p>
+<h1 id="mathrax">Mathrax</h1>
+<p>You have a square grid; each square may contain a digit from 1 to the
+size of the grid, and some squares have clues overlapping them. Your
+objective is to fill the grid with numbers so that no number appears
+more than once in a row or column, and all clues are satisfied.</p>
+<p>The following clues can appear:</p>
+<ul>
+<li>An 'E' indicates that the four adjacent digits are even.</li>
+<li>An 'O' indicates that the four adjacent digits are odd.</li>
+<li>An '=' indicates that diagonally adjacent digits are equal.</li>
+<li>A number indicates the result of the given operation when applied to
+each pair of diagonally adjacent digits. (topleft * bottomright) =
+(topright * bottomleft)</li>
+</ul>
+<p>The inventor of Mathrax is unknown.</p>
+<p>More information: <a
+href="https://www.janko.at/Raetsel/Mathrax/index.htm">https://www.janko.at/Raetsel/Mathrax/index.htm</a></p>
+<h2 id="controls">Controls</h2>
+<p>Mathrax uses the same control scheme as Solo.</p>
+<p>Left-click to select a cell, then type a number on your keyboard to
+enter it. Press Backspace or Space to clear a cell.</p>
+<p>Right-click a cell, then type a number to add a pencil mark. Pencil
+marks can be used for any purpose.</p>
+<p>You can also use the arrow keys to move the selected cell around.
+Press Enter to toggle between entering number and entering pencil
+marks.</p>
+<p>Press the 'M' key to fill every empty cell with all possible pencil
+marks.</p>
+<h2 id="mathrax-parameters">Mathrax parameters</h2>
+<p>These parameters are available from the ‘Custom…’ option on the
+‘Type’ menu.</p>
+<dl>
+    <dt>Size (s*s)</dt>
+    <dd>Size of the grid in squares.</dd>
+    <dt>Difficulty</dt>
+    <dd>Determine the difficulty of the generated puzzle. Higher difficulties require more complex reasoning.</dd>
+    <dt>Addition clues</dt>
+    <dd>Allows clues with the addition operation to appear.</dd>
+    <dt>Subtraction clues</dt>
+    <dd>Allows clues with the subtraction operation to appear. Note that clues with a difference of zero are covered by Equality clues instead.</dd>
+    <dt>Multiplication clues</dt>
+    <dd>Allows clues with the multiplication operation to appear.</dd>
+    <dt>Division clues</dt>
+    <dd>Allows clues with the division operation to appear. Note that clues with a ratio of one are covered by Equality clues instead.</dd>
+    <dt>Equality clues</dt>
+    <dd>Allows clues with equality signs to appear.</dd>
+    <dt>Even/odd clues</dt>
+    <dd>Allows Even clues and Odd clues to appear.</dd>
+</dl>
+
+<h2 id="status">Status</h2>
+<p>This game is fully implemented and playable.</p>
+<p>I haven't properly tested the Recursive difficulty level. It's
+possible that it works exactly the same as Hard mode.</p>
+
+</body>
+</html>

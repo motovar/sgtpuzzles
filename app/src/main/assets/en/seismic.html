@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seismic</title>
+<link rel="ToC" href="index.html">
+<link rel="up" href="index.html">
+<style type="text/css">body { word-wrap: break-word; } img { max-width: 100%; } body.night { color: #dddddd; background: #000000; } body.night a:link { color: #8888ff; } body.night a:visited { color: #cc88ff; }</style></head>
+<body>
+<p><a href="index.html">Contents</a></p>
+<h1 id="seismic">Seismic</h1>
+<p>You're given a grid that has been divided into areas. Fill each empty
+cell with a number so each area of size N contains one instance of each
+number between 1 and N. Depending on the game mode, the following rule
+is added:</p>
+<ul>
+<li>Seismic: Two equal numbers N in the same row or column must have at
+least N spaces between them.</li>
+<li>Tectonic: Two equal numbers cannot be horizontally, vertically or
+diagonally adjacent.</li>
+</ul>
+<p>Seismic mode is an implementation of <em>Hakyuu</em>, a puzzle
+invented by <a href="https://www.nikoli.co.jp/">Nikoli</a>. It's also
+known as <em>Ripple Effect</em>. More information: <a
+href="http://www.janko.at/Raetsel/Hakyuu/index.htm">http://www.janko.at/Raetsel/Hakyuu/index.htm</a></p>
+<p>I don't know who first invented Tectonic.</p>
+<h2 id="controls">Controls</h2>
+<p>Seismic uses the same control scheme as Solo, but the interface
+automatically enforces the maximum number on each area, so it's not
+possible to enter numbers that are out of range.</p>
+<p>Left-click to select a cell, then type a number on your keyboard to
+enter it. Press Backspace or Space to clear a cell.</p>
+<p>Right-click a cell, then type a number to add a pencil mark. Pencil
+marks can be used for any purpose.</p>
+<p>You can also use the arrow keys to move the selected cell around.
+Press Enter to toggle between entering number and entering pencil
+marks.</p>
+<p>Press the 'M' key to fill every empty cell with all possible pencil
+marks.</p>
+<h2 id="seismic-parameters">Seismic parameters</h2>
+<p>These parameters are available from the ‘Custom…’ option on the
+‘Type’ menu.</p>
+<dl>
+    <dt>Width, Height</dt>
+    <dd>Size of the grid in squares.</dd>
+    <dt>Difficulty</dt>
+    <dd>Determine the difficulty of the generated puzzle. Higher difficulties require more complex reasoning.</dd>
+    <dt>Game mode</dt>
+    <dd>Switch between Seismic and Tectonic mode.</dd>
+</dl>
+
+<h2 id="status">Status</h2>
+<p>This puzzle is playable on lower sizes, but has a near-zero chance of
+generating sizes higher than 7x7. The generator step that creates
+randomly filled regions needs to be completely replaced with a different
+approach.</p>
+
+</body>
+</html>

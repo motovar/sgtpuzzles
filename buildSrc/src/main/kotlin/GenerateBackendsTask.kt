@@ -39,17 +39,25 @@ abstract class GenerateBackendsTask: DefaultTask()  {
         val definedNightColours = resourceNames(resDir.file("values/game_props.xml"), "color")
         val definedStrings = resourceNames(resDir.file("values/strings.xml"), "string")
         val definedKeyIcons = resDir.asFileTree.matching { include("drawable*/*sym_key*") }.map { it.nameWithoutExtension }.toSet()
-        val cmakeText = jniDir.file("CMakeLists.txt").get().asFile.readText()
-        val objectLines =
+        // The core puzzles are listed in jni/CMakeLists.txt; the extra collections
+        // (extras-aho, extras-unreleased, extras-extended) have their own CMakeLists.txt next to
+        // their sources.
+        val jni = jniDir.get().asFile
+        val cmakeDirs = listOf(jni) + (jni.listFiles { f -> f.isDirectory && f.name.startsWith("extras-") }
+            ?.sortedBy { it.name } ?: listOf())
+        val objectLines = cmakeDirs.filter { it.resolve("CMakeLists.txt").exists() }.flatMap { dir ->
+            val cmakeText = dir.resolve("CMakeLists.txt").readText()
             Regex("""puzzle\(\s*(\w+)\s+DISPLAYNAME\s+"([^"]+)"""").findAll(cmakeText).map {
                 generateObjectLine(
+                    dir,
                     it.groupValues[1],
                     it.groupValues[2],
                     definedNightColours,
                     definedStrings,
                     definedKeyIcons
                 )
-            }
+            }.toList()
+        }
         with(outputs.files.singleFile.resolve("name/boyle/chris/sgtpuzzles/backend/BackendNames.kt")) {
             parentFile.mkdirs()
             delete()
@@ -72,13 +80,14 @@ abstract class GenerateBackendsTask: DefaultTask()  {
     }
 
     private fun generateObjectLine(
+        sourceDir: java.io.File,
         puz: String,
         display: String,
         definedNightColours: Set<String>,
         definedStrings: Set<String>,
         definedKeyIcons: Set<String>
     ): String {
-        val sourceText = jniDir.file("${puz}.c").get().asFile.readText()
+        val sourceText = sourceDir.resolve("${puz}.c").readText()
         // skip first colour which is usually COL_BACKGROUND, except in Untangle
         val colourNames = (Regex("""enum\s+\{\s*COL_[^,]+,\s*(COL_[^}]+)}""").find(sourceText)
             ?.run { parseEnumMembers(puz, groupValues[1]) } ?: listOf())
