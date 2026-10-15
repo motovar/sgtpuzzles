@@ -8,6 +8,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -26,6 +28,8 @@ jobs:
       - name: Summarise errors
         if: failure()
         run: |
+          grep -n -A12 "What went wrong" build.log | head -20 | tr '\n' '|' | cut -c1-1500 | sed 's/^/::error::/'
+          grep -n -B3 -A3 "git'" build.log | head -14 | tr '\n' '|' | cut -c1-1500 | sed 's/^/::error::/'
           grep -nE "error:|^e: |What went wrong|FAILED|Execution failed|undefined reference|Caused by|not found|No such" build.log \
             | head -25 | while IFS= read -r line; do echo "::error::${line:0:400}"; done
       - uses: actions/upload-artifact@v4
