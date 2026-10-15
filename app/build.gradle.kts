@@ -18,13 +18,15 @@ fun timestamp(time: Boolean): String {
 fun gitCommand(vararg args: String): String {
     return providers.exec {
         commandLine("git", *args)
+        // Don't fail the configuration cache when e.g. the "simon" remote doesn't exist (forks, CI).
+        isIgnoreExitValue = true
     }.standardOutput.asText.get().trim()
 }
 
 fun idForSimon(): String {
     return try {
         val mergeBase = gitCommand("merge-base", "simon/main", "main")
-        gitCommand("rev-parse", "--short", mergeBase)
+        gitCommand("rev-parse", "--short", mergeBase).ifBlank { "UNOFFICIAL" }
     } catch (_: Exception) {
         "UNOFFICIAL"
     }
