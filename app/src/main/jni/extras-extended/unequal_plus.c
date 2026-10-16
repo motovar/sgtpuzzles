@@ -1550,6 +1550,7 @@ static key_label *game_request_keys(const game_params *params, int *nkeys, int *
     int order = params->order;
     char off = (order > 9) ? '0' : '1';
     key_label *keys = snewn(order + 1, key_label);
+    memset(keys, 0, (order + 1) * sizeof(key_label));
     *nkeys = order + 1;
 
     for(i = 0; i < order; i++) {

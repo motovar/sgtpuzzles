@@ -336,6 +336,7 @@ static key_label *game_request_keys(const game_params *params, int *nkeys, int *
 	int n = params->n;
 
 	key_label *keys = snewn(n + 1, key_label);
+    memset(keys, 0, (n + 1) * sizeof(key_label));
 	*nkeys = n + 1;
 
 	for (i = 0; i < n; i++)

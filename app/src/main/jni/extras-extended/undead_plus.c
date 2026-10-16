@@ -1795,6 +1795,7 @@ static void num2grid(int num, int width, int height, int *x, int *y) {
 static key_label *game_request_keys(const game_params *params, int *nkeys, int *arrow_mode)
 {
     key_label *keys = snewn(4, key_label);
+    memset(keys, 0, (4) * sizeof(key_label));
     *nkeys = 4;
 
     keys[0].button = 'G';

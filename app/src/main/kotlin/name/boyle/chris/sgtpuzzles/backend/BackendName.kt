@@ -81,6 +81,18 @@ sealed class BackendName(
         }
     }
 
+    /**
+     * The extra puzzles (extras-*) have no hand-made night palette, so their colours are derived
+     * automatically (see GameView.refreshColours).
+     */
+    val autoNightColours by lazy {
+        this in setOf(
+            ABCD, ALPHACRYPT, ASCENT, BOATS, BRICKS, CLUSTERS, CROSSING, FACTORCROSS, FLOW,
+            IDENTIFIER, KAKURO, MATHRAX, ROME, SALAD, SEISMIC, SOLO_PLUS, SPOKES, STELLAR, STICKS,
+            SUBSETS, SUPERMAZE, UNDEAD_PLUS, UNEQUAL_PLUS, WALLS
+        )
+    }
+
     private val swapLRName by lazy { PrefsConstants.SWAP_L_R_PREFIX + this }
 
     val swapLRNatively by lazy { this in SWAP_L_R_NATIVE_PREFS }

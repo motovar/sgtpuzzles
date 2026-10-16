@@ -60,6 +60,7 @@ import androidx.annotation.ColorInt
 import androidx.annotation.ColorRes
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.ColorUtils
 import androidx.core.view.MotionEventCompat
 import name.boyle.chris.sgtpuzzles.GameView.LimitDPIMode.LIMIT_AUTO
 import name.boyle.chris.sgtpuzzles.GameView.LimitDPIMode.LIMIT_OFF
@@ -796,6 +797,9 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
             // Only replace colours[0] at night: Untangle uses a darker grey to distinguish the play area
             colours[0] = ContextCompat.getColor(context, R.color.game_background)
             @ColorRes val nightColours = whichBackend.nightColours // doesn't include background
+            if (whichBackend.autoNightColours) {
+                for (i in 1 until colours.size) colours[i] = autoNightColour(colours[i])
+            }
             for (i in 1 until colours.size) {
                 //Log.d("GameView", "\t<color name=\"" + resourceName + "\">" + String.format("#%06x", (0xFFFFFF & colours[i])) + "</color>");
                 if (nightColours.size >= i) {
@@ -811,6 +815,22 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
         } else {
             setBackgroundColor(defaultBackgroundColour)
         }
+    }
+
+    /** Flip the lightness of greys, lighten dark colours and darken pastels, keeping the hue. */
+    @ColorInt
+    private fun autoNightColour(@ColorInt colour: Int): Int {
+        val hsl = FloatArray(3)
+        ColorUtils.colorToHSL(colour, hsl)
+        val s = hsl[1]
+        val l = hsl[2]
+        hsl[2] = when {
+            s < 0.25f -> 1f - l
+            l > 0.7f -> 1f - l + 0.05f
+            l < 0.45f -> l + 0.3f
+            else -> l
+        }.coerceIn(0f, 1f)
+        return ColorUtils.HSLToColor(hsl)
     }
 
     override fun setBackgroundColor(@ColorInt colour: Int) {

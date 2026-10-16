@@ -1099,6 +1099,7 @@ static key_label *game_request_keys(const game_params *params, int *nkeys, int *
 	char base = params->mode == GAMEMODE_LETTERS ? 'A' : '1';
 
 	key_label *keys = snewn(n + 3, key_label);
+    memset(keys, 0, (n + 3) * sizeof(key_label));
 	*nkeys = n + 3;
 
 	for (i = 0; i < n; i++)
