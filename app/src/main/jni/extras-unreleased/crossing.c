@@ -423,17 +423,25 @@ static key_label *game_request_keys(const game_params *params, int *nkeys, int *
 {
 	int i;
 
-	key_label *keys = snewn(10, key_label);
-    memset(keys, 0, (10) * sizeof(key_label));
-	*nkeys = 10;
+	key_label *keys = snewn(11, key_label);
+    memset(keys, 0, (11) * sizeof(key_label));
+	*nkeys = 11;
 
 	for (i = 0; i < 9; i++)
 	{
+		char lb[2];
+		lb[0] = (char)('1' + i); lb[1] = '\0';
 		keys[i].button = '1' + i;
-		keys[i].label = NULL;
+		keys[i].label = dupstr(lb);
+		keys[i].needs_arrows = false;
 	}
 	keys[9].button = '\b';
-	keys[9].label = NULL;
+	keys[9].label = dupstr("Clear");
+	keys[9].needs_arrows = false;
+	keys[10].button = 'M';
+	keys[10].label = dupstr("Mark");
+	keys[10].needs_arrows = false;
+	*arrow_mode = ANDROID_ARROWS_LEFT_RIGHT;
 
 	return keys;
 }
@@ -1249,7 +1257,13 @@ static void decode_ui(game_ui *ui, const char *encoding, const game_state *state
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
 							   const game_state *newstate)
 {
-    return false;
+#ifdef ANDROID
+    if (ui->cshow && !ui->ckey && ui->cpencil &&
+        newstate->grid[ui->cy * newstate->puzzle->w + ui->cx] != 0)
+        ui->cshow = ui->cpencil = false;
+#endif
+    return newstate->completed && !newstate->cheated &&
+        oldstate && !oldstate->completed;
 }
 
 static const char *current_key_label(const game_ui *ui,
@@ -1299,6 +1313,20 @@ static char *interpret_move(const game_state *state, game_ui *ui,
 		if (button == LEFT_BUTTON)
 		{
 			/* Select */
+#ifdef ANDROID
+			if(ui->cshow && cx == gx && cy == gy)
+			{
+				/* Tap on the selected square toggles pencil/ink */
+				ui->cpencil = state->grid[gy*w+gx] != 0 ? false : !ui->cpencil;
+			}
+			else
+			{
+				ui->cx = gx;
+				ui->cy = gy;
+				ui->cpencil = false;
+				ui->cshow = true;
+			}
+#else
 			if(!ui->cshow || ui->cpencil || cx != gx || cy != gy)
 			{
 				ui->cx = gx;
@@ -1311,6 +1339,7 @@ static char *interpret_move(const game_state *state, game_ui *ui,
 			{
 				ui->cshow = false;
 			}
+#endif
 			
 			if(state->puzzle->walls[gy*w+gx])
 				ui->cshow = false;
@@ -1353,10 +1382,10 @@ static char *interpret_move(const game_state *state, game_ui *ui,
 		return MOVE_UI_UPDATE;
 	}
 	/* Keyboard change pencil cursor */
-	if (ui->cshow && button == CURSOR_SELECT)
+	if (ui->cshow && (button == CURSOR_SELECT || button == 'M' || button == 'm'))
 	{
 		ui->cpencil = !ui->cpencil;
-		ui->ckey = true;
+		if (button == CURSOR_SELECT) ui->ckey = true;
 		return MOVE_UI_UPDATE;
 	}
 	

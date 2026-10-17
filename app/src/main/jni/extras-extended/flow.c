@@ -1134,7 +1134,8 @@ static void free_ui(game_ui *ui)
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
                                const game_state *newstate)
 {
-    return false;
+    return newstate->completed && !newstate->used_solve && oldstate &&
+        !oldstate->completed;
 }
 
 static const char *current_key_label(const game_ui *ui,
@@ -1253,6 +1254,8 @@ static char *interpret_move(const game_state *state, game_ui *ui,
         return MOVE_UI_UPDATE;
     } else if (button == LEFT_DRAG || button == RIGHT_DRAG) {
         ui->cur_visible = false;
+        if (x < 0 || y < 0 || x >= w || y >= h)
+            return NULL;
         if (!ui->is_drag) {
             ui->is_drag = true;
             ui->mode = get_dragmode(button, state->soln[y*w+x]);

@@ -1697,6 +1697,8 @@ struct game_ui {
     bool path_dragging;    /* true if currently dragging a path */
     int drag_last_x;       /* last cell x coordinate during drag */
     int drag_last_y;       /* last cell y coordinate during drag */
+    bool drag_moved;       /* true once the drag has entered another cell */
+    int tap_x, tap_y, tap_dir; /* cell and edge direction of the initial press */
 };
 
 
@@ -1717,6 +1719,9 @@ static game_ui *new_ui(const game_state *state) {
     ui->path_dragging = false;
     ui->drag_last_x = -1;
     ui->drag_last_y = -1;
+    ui->drag_moved = false;
+    ui->tap_x = ui->tap_y = -1;
+    ui->tap_dir = U;
     
     return ui;
 }
@@ -1728,7 +1733,8 @@ static void free_ui(game_ui *ui) {
 
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
                                const game_state *newstate) {
-    return false;
+    return newstate->completed && !newstate->used_solve && oldstate &&
+        !oldstate->completed;
 }
 
 #define PREFERRED_TILE_SIZE (8)
@@ -1826,6 +1832,10 @@ static char *interpret_move(const game_state *state, game_ui *ui,
                 ui->path_dragging = true;
                 ui->drag_last_x = fx;
                 ui->drag_last_y = fy;
+                ui->drag_moved = false;
+                ui->tap_x = fx;
+                ui->tap_y = fy;
+                ui->tap_dir = dir;
             }
 
             if (button == LEFT_BUTTON) {
@@ -1844,6 +1854,7 @@ static char *interpret_move(const game_state *state, game_ui *ui,
             /* Check if cells are adjacent */
             int dx = fx - ui->drag_last_x;
             int dy = fy - ui->drag_last_y;
+            ui->drag_moved = true;
 
             if ((abs(dx) == 1 && dy == 0) || (dx == 0 && abs(dy) == 1)) {
               /* Cells are adjacent, create a path between them */
@@ -1877,9 +1888,18 @@ static char *interpret_move(const game_state *state, game_ui *ui,
 
     if (button == LEFT_RELEASE) {
         if (ui->path_dragging) {
+            bool tap = !ui->drag_moved;
             ui->path_dragging = false;
             ui->drag_last_x = -1;
             ui->drag_last_y = -1;
+            ui->drag_moved = false;
+            if (tap && ui->tap_x >= -1 && ui->tap_x <= w &&
+                ui->tap_y >= -1 && ui->tap_y <= h) {
+                /* A plain tap (no drag) toggles a path segment on the
+                 * nearest edge of the tapped cell. */
+                return mark_in_direction(state, ui->tap_x, ui->tap_y,
+                                         ui->tap_dir, true, buf);
+            }
             return MOVE_UI_UPDATE;
         }
     }
@@ -1908,6 +1928,18 @@ static char *interpret_move(const game_state *state, game_ui *ui,
         return MOVE_UI_UPDATE;
     }
     return NULL;
+}
+
+static key_label *game_request_keys(const game_params *params, int *nkeys,
+                                    int *arrow_mode) {
+    key_label *keys = snewn(1, key_label);
+    memset(keys, 0, sizeof(key_label));
+    *nkeys = 1;
+    *arrow_mode = ANDROID_ARROWS_ONLY;
+    keys[0].button = 'G';
+    keys[0].label = dupstr("Grid");
+    keys[0].needs_arrows = false;
+    return keys;
 }
 
 static game_state *execute_move(const game_state *state, const char *move) {
@@ -2299,7 +2331,7 @@ const struct game thegame = {
     free_ui,
     NULL, /* encode_ui */
     NULL, /* decode_ui */
-    NULL, /* game_request_keys */
+    game_request_keys,
     NULL, /* android_cursor_visibility */
     game_changed_state,
     NULL, /* current_key_label */

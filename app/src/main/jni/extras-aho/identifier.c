@@ -1379,6 +1379,7 @@ struct game_params {
 
 struct clues {
   int refcount;
+  game_params *par_own;  /* private copy of the parameters, shared by all states */
   Shape* given;
   Shape* groundtruth;
   ShapeConfig* conf;
@@ -1840,9 +1841,11 @@ static game_state *new_game(midend *me, const game_params *params, const char *d
     game_state *state = snew(game_state);
     Shape* board;
     char ch;
-    state->par = params;
+    state->par = NULL; /* set below, once clues exist */
     state->clues = snew(struct clues);
     state->clues->refcount = 1;
+    state->clues->par_own = dup_params(params);
+    state->par = state->clues->par_own;
 
     state->clues->conf = interpret_fleet_config(desc, params->refl);
     while (*desc && *desc != ';') desc++; 
@@ -1975,6 +1978,7 @@ static game_state *dup_game(const game_state *state)
 static void free_game(game_state *state)
 {
     if (--state->clues->refcount <= 0) {
+        free_params(state->clues->par_own);
         free_shape(state->clues->groundtruth);
         if (state->clues->given)
           free_shape(state->clues->given);
@@ -2042,7 +2046,7 @@ static void free_ui(game_ui *ui)
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
                                const game_state *newstate)
 {
-    return false;
+    return newstate->completed && !newstate->cheated && !newstate->errors && !newstate->derrors && oldstate && !oldstate->completed;
 }
 
 #define PREFERRED_TILESIZE 32

@@ -1549,9 +1549,10 @@ static key_label *game_request_keys(const game_params *params, int *nkeys, int *
     int i;
     int order = params->order;
     char off = (order > 9) ? '0' : '1';
-    key_label *keys = snewn(order + 1, key_label);
-    memset(keys, 0, (order + 1) * sizeof(key_label));
-    *nkeys = order + 1;
+    key_label *keys = snewn(order + 3, key_label);
+    memset(keys, 0, (order + 3) * sizeof(key_label));
+    *nkeys = order + 3;
+    *arrow_mode = ANDROID_ARROWS_LEFT;
 
     for(i = 0; i < order; i++) {
         if (i==10) off = 'a'-10;
@@ -1559,7 +1560,11 @@ static key_label *game_request_keys(const game_params *params, int *nkeys, int *
         keys[i].label = NULL;
     }
     keys[order].button = '\b';
-    keys[order].label = NULL;
+    keys[order].label = dupstr("Clear");
+    keys[order+1].button = 'M';
+    keys[order+1].label = dupstr("Mark");
+    keys[order+2].button = 'H';
+    keys[order+2].label = dupstr("Hints");
 
     return keys;
 }
@@ -1635,7 +1640,7 @@ static game_ui *new_ui(const game_state *state)
     ui->hpencil = false;
     ui->hshow = ui->hcursor = getenv_bool("PUZZLES_SHOW_CURSOR", false);
 
-    ui->pencil_keep_highlight = false;
+    ui->pencil_keep_highlight = true;
 
     return ui;
 }
@@ -1677,8 +1682,9 @@ static bool game_changed_state(game_ui *ui, const game_state *oldstate,
     if (ui->hshow && ui->hpencil && !ui->hcursor &&
         GRID(newstate, nums, ui->hx, ui->hy) != 0) {
         ui->hshow = false;
+        ui->hpencil = false;
     }
-    return false;
+    return newstate->completed && !newstate->cheated && oldstate && !oldstate->completed;
 }
 
 static const char *current_key_label(const game_ui *ui,
@@ -1742,13 +1748,14 @@ static char *interpret_move(const game_state *state, game_ui *ui,
 
         if (button == LEFT_BUTTON) {
             /* normal highlighting for non-immutable squares */
-            if (GRID(state, flags, x, y) & F_IMMUTABLE)
+            if (GRID(state, flags, x, y) & F_IMMUTABLE) {
                 ui->hshow = false;
-            else if (x == ui->hx && y == ui->hy &&
-                     ui->hshow && !ui->hpencil)
-                ui->hshow = false;
-            else {
-                ui->hx = x; ui->hy = y; ui->hpencil = false;
+                ui->hpencil = false;
+            } else if (x == ui->hx && y == ui->hy && ui->hshow) {
+                /* tap on the active square toggles pencil/ink */
+                ui->hpencil = !ui->hpencil;
+            } else {
+                ui->hx = x; ui->hy = y;
                 ui->hshow = true;
             }
             ui->hcursor = false;
@@ -1756,12 +1763,14 @@ static char *interpret_move(const game_state *state, game_ui *ui,
         }
         if (button == RIGHT_BUTTON) {
             /* pencil highlighting for non-filled squares */
-            if (GRID(state, nums, x, y) != 0)
+            if (GRID(state, nums, x, y) != 0) {
                 ui->hshow = false;
-            else if (x == ui->hx && y == ui->hy &&
-                     ui->hshow && ui->hpencil)
+                ui->hpencil = false;
+            } else if (x == ui->hx && y == ui->hy &&
+                     ui->hshow && ui->hpencil) {
                 ui->hshow = false;
-            else {
+                ui->hpencil = false;
+            } else {
                 ui->hx = x; ui->hy = y; ui->hpencil = true;
                 ui->hshow = true;
             }
@@ -1862,7 +1871,7 @@ static char *interpret_move(const game_state *state, game_ui *ui,
          * pencil marks and the user preference says not to hide the
          * highlight in that situation.
          */
-        if (!ui->hcursor && !(ui->hpencil && ui->pencil_keep_highlight))
+        if (!ui->hcursor && !ui->pencil_keep_highlight)
             ui->hshow = false;
 
         return dupstr(buf);

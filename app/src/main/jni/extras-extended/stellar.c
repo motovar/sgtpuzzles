@@ -962,7 +962,29 @@ static void decode_ui(game_ui *ui, const char *encoding,
 
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
                                const game_state *newstate) {
-    return false;
+    return newstate->solved && !newstate->cheated && oldstate &&
+        !oldstate->solved;
+}
+
+static const char *current_key_label(const game_ui *ui,
+                                     const game_state *state, int button) {
+    if (ui->hshow && IS_CURSOR_SELECT(button))
+        return ui->hpencil ? "Ink" : "Pencil";
+    return "";
+}
+
+static key_label *game_request_keys(const game_params *params, int *nkeys,
+                                    int *arrow_mode) {
+    key_label *keys = snewn(5, key_label);
+    memset(keys, 0, 5 * sizeof(key_label));
+    *nkeys = 5;
+    *arrow_mode = ANDROID_ARROWS_LEFT;
+    keys[0].button = 'S'; keys[0].label = dupstr("Star");
+    keys[1].button = 'C'; keys[1].label = dupstr("Cloud");
+    keys[2].button = 'X'; keys[2].label = dupstr("Cross");
+    keys[3].button = '\b'; keys[3].label = dupstr("Clear");
+    keys[4].button = 'M'; keys[4].label = dupstr("Pencil");
+    return keys;
 }
 
 #define TILE_SIZE 64
@@ -981,6 +1003,15 @@ struct game_drawstate {
     bool hflash;
  };
 
+#ifdef ANDROID
+/* keep the cell selected while pencilling so several marks can be toggled */
+#define STELLAR_AFTER_ENTRY(ui) do { \
+    if (!(ui)->hcursor && !(ui)->hpencil) (ui)->hshow = 0; } while (0)
+#else
+#define STELLAR_AFTER_ENTRY(ui) do { \
+    if (!(ui)->hcursor) (ui)->hpencil = (ui)->hshow = 0; } while (0)
+#endif
+
 static char *interpret_move(const game_state *state, game_ui *ui, 
                             const game_drawstate *ds,
                             int x, int y, int button)
@@ -992,8 +1023,8 @@ static char *interpret_move(const game_state *state, game_ui *ui,
     gy = ((y-BORDER) / ds->tilesize );
     g = gx + gy * ds->size;
     
-    if (((x-BORDER) < 0) || (x-BORDER) > (ds->tilesize * (ds->size)) || 
-        ((y-BORDER) < 0) || (y-BORDER) > (ds->tilesize * (ds->size)) )
+    if (((x-BORDER) < 0) || (x-BORDER) >= (ds->tilesize * (ds->size)) || 
+        ((y-BORDER) < 0) || (y-BORDER) >= (ds->tilesize * (ds->size)) )
         g = -1;
             
     if (ui->hshow == 1) {
@@ -1002,24 +1033,24 @@ static char *interpret_move(const game_state *state, game_ui *ui,
             !(state->grid[hg] & CODE_PLANET) ) {
             if (button == 's' || button == 'S' || button == '1') {
                 sprintf(buf, (ui->hpencil == 0) ? "S%d" : "s%d" , hg);
-                if (!ui->hcursor) ui->hpencil = ui->hshow = 0;
+                STELLAR_AFTER_ENTRY(ui);
                 return dupstr(buf);
             }
             if (button == 'c' || button == 'C' || button == '2') {
                 sprintf(buf, (ui->hpencil == 0) ? "C%d" : "c%d" , hg);
-                if (!ui->hcursor) ui->hpencil = ui->hshow = 0;
+                STELLAR_AFTER_ENTRY(ui);
                 return dupstr(buf);
             }
             if (button == 'x' || button == 'X' || button == '3' ||
                 button == '-' || button == '_') {
                 sprintf(buf, (ui->hpencil == 0) ? "X%d" : "x%d" , hg);
-                if (!ui->hcursor) ui->hpencil = ui->hshow = 0;
+                STELLAR_AFTER_ENTRY(ui);
                 return dupstr(buf);
             }
             if (button == 'e' || button == 'E' || button == CURSOR_SELECT2 ||
                 button == '0' || button == '\b' ) {
                 sprintf(buf, "E%d", hg);
-                if (!ui->hcursor) ui->hpencil = ui->hshow = 0;
+                STELLAR_AFTER_ENTRY(ui);
                 return dupstr(buf);
             }
         }       
@@ -1037,6 +1068,10 @@ static char *interpret_move(const game_state *state, game_ui *ui,
               case CURSOR_LEFT:   ui->hx -= (ui->hx > 0)     ? 1 : 0; break;
             }
         ui->hshow = ui->hcursor = 1;
+        return MOVE_UI_UPDATE;
+    }
+    if (ui->hshow && button == 'M') {
+        ui->hpencil = 1 - ui->hpencil;
         return MOVE_UI_UPDATE;
     }
     if (ui->hshow && button == CURSOR_SELECT) {
@@ -1061,6 +1096,13 @@ static char *interpret_move(const game_state *state, game_ui *ui,
 
         else if (ui->hshow == 1) {
             if (button == LEFT_BUTTON) {
+                if (gx == ui->hx && gy == ui->hy) {
+#ifdef ANDROID
+                    /* tapping the selected cell again toggles pencil/ink */
+                    ui->hpencil = 1 - ui->hpencil;
+                    return MOVE_UI_UPDATE;
+#endif
+                }
                 if (ui->hpencil == 0) {
                     if (gx == ui->hx && gy == ui->hy) {
                         ui->hshow = 0; ui->hpencil = 0; ui->hcursor = 0;
@@ -1609,10 +1651,10 @@ const struct game thegame = {
     free_ui,
     encode_ui,
     decode_ui,
-    NULL,
+    game_request_keys,
     NULL, /* android_cursor_visibility */
     game_changed_state,
-    NULL, /* current_key_label */
+    current_key_label,
     interpret_move,
     execute_move,
     TILE_SIZE, game_compute_size, game_set_size,

@@ -1005,7 +1005,8 @@ static void free_ui(game_ui *ui)
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
                                const game_state *newstate)
 {
-    return false;
+    return newstate->completed && !newstate->cheated && oldstate &&
+        !oldstate->completed;
 }
 
 struct game_drawstate
@@ -1165,6 +1166,9 @@ static game_state *execute_move(const game_state *state, const char *move)
 
             pos++;
         }
+        if (subsets_validate(ret, NULL, NULL) == STATUS_COMPLETE)
+            ret->completed = true;
+        ret->cheated = ret->completed;
         return ret;
     }
 

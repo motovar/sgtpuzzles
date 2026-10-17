@@ -40,6 +40,7 @@ struct game_params {
 
 struct clues {
   int refcount;
+  game_params *par_own;  /* private copy of the parameters, shared by all states */
   int num, cols, rows;
   char* letters;
   Operator* ops;
@@ -1066,6 +1067,29 @@ static const char *validate_desc(const game_params *params, const char *desc)
     return NULL;
 }
 
+static key_label *game_request_keys(const game_params *params, int *nkeys, int *arrow_mode)
+{
+    /* Digits 0-9 (first digit of a two-digit number is pending until the
+     * next key, so slow tapping works), Enter confirms a pending first
+     * digit, Clear erases, Mark toggles pencil mode on the selected cell. */
+    int n = 0;
+    int d;
+    int nd = params->size > 9 ? 10 : params->size;
+    key_label *keys = snewn(nd + 3, key_label);
+    memset(keys, 0, (nd + 3) * sizeof(key_label));
+    for (d = (params->size > 9 ? 0 : 1); n < nd; d++, n++) {
+        char b[2]; b[0] = (char)('0' + d); b[1] = 0;
+        keys[n].button = '0' + d;
+        keys[n].label = dupstr(b);
+    }
+    keys[n].button = '\n'; keys[n].label = dupstr("Enter"); n++;
+    keys[n].button = '\b'; keys[n].label = dupstr("Clear"); n++;
+    keys[n].button = 'M'; keys[n].label = dupstr("Mark"); n++;
+    *nkeys = n;
+    *arrow_mode = ANDROID_ARROWS_LEFT;
+    return keys;
+}
+
 static game_state *new_game(midend *me, const game_params *params, const char *desc)
 {
     game_state *state = snew(game_state);
@@ -1074,7 +1098,7 @@ static game_state *new_game(midend *me, const game_params *params, const char *d
 
     n = params->size;
 
-    state->par = params;
+    state->par = NULL; /* set below, once clues exist */
     state->grid = snewn(n, char);
     state->pencil = snewn(n, long);
     for (i=0; i<n; i++) {
@@ -1085,6 +1109,8 @@ static game_state *new_game(midend *me, const game_params *params, const char *d
 
     state->clues = snew(struct clues);
     state->clues->refcount = 1;
+    state->clues->par_own = dup_params(params);
+    state->par = state->clues->par_own;
     state->clues->num = n;
     if (n > 12) {
       state->clues->cols = 2;
@@ -1182,6 +1208,7 @@ static game_state *dup_game(const game_state *state)
 static void free_game(game_state *state)
 {
     if (--state->clues->refcount <= 0) {
+        free_params(state->clues->par_own);
         sfree(state->clues->letters);
         sfree(state->clues->l1vec);
         sfree(state->clues->l2vec);
@@ -1257,6 +1284,8 @@ struct game_ui {
     int pending;
 };
 
+static bool check_errors(const game_state *state, long *errors);
+
 static game_ui *new_ui(const game_state *state)
 {
     game_ui *ui = snew(game_ui);
@@ -1283,8 +1312,26 @@ static bool game_changed_state(game_ui *ui, const game_state *oldstate,
     if (ui->hshow && ui->hpencil && !ui->hcursor &&
         newstate->grid[ui->hx * newstate->clues->rows + ui->hy] != -1) {
         ui->hshow = 0;
+#ifdef ANDROID
+        ui->hpencil = 0;
+#endif
+    }
+    if (oldstate && !oldstate->completed && !oldstate->cheated &&
+        !newstate->completed && !newstate->cheated &&
+        !(ui && ui->pending) && !check_errors(newstate, NULL)) {
+        /* Just solved. (The flag is set here rather than in flash_length so
+           - flash_length sets it afterwards. */
+        return true;
     }
     return false;
+}
+
+static const char *current_key_label(const game_ui *ui,
+                                     const game_state *state, int button)
+{
+    if (ui->hshow && IS_CURSOR_SELECT(button))
+        return ui->pending ? "Enter" : ui->hpencil ? "Ink" : "Pencil";
+    return "";
 }
 
 #define PREFERRED_TILESIZE 48
@@ -1352,6 +1399,24 @@ static char* make_move_string(const game_params *par, game_ui *ui, struct clues*
   return dupstr(buf);
 }
 
+/* After a value has been entered, move the focus on to the next letter
+ * (down the column, then on to the next column), skipping given constants. */
+static void advance_focus(const game_state *state, game_ui *ui)
+{
+    int rows = state->clues->rows;
+    int num = state->par->size;
+    int i;
+    for (i = ui->hy + ui->hx*rows + 1; i < num; i++) {
+        if (state->clues->ops[i] != Constant) {
+            ui->hx = i / rows;
+            ui->hy = i % rows;
+            ui->hshow = 1;
+            ui->hpencil = 0;
+            return;
+        }
+    }
+}
+
 static char *interpret_move(const game_state *state, game_ui *ui, const game_drawstate *ds,
 			    int x, int y, int button)
 {
@@ -1374,10 +1439,21 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
               retstr = make_move_string(state->par, ui, state->clues, ui->pending - '0');
               abort_pending(state, ui);
             }
+#ifdef ANDROID
+            if (tx == ui->hx && ty == ui->hy && ui->hshow) {
+              /* tap on the already active square: toggle pencil/ink
+               * (pencil only makes sense on a still empty square) */
+              if (ui->hpencil)
+                ui->hpencil = 0;
+              else if (state->grid[ty + tx*rows] == -1)
+                ui->hpencil = 1;
+            } else {
+#else
             if (tx == ui->hx && ty == ui->hy && ui->hshow && ui->hpencil == 0) {
               /* left-click on the already active square */
               ui->hshow = 0;
             } else {
+#endif
               /* left-click on a new square */
               ui->hx = tx;
               ui->hy = ty;
@@ -1424,10 +1500,13 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
       return retstr;
     }
     if (ui->hshow &&
-        (button == CURSOR_SELECT)) {
+        (button == CURSOR_SELECT || button == 'M' || button == 'm' || button == '\n')) {
       if (ui->pending) {
+        bool was_pencil = ui->hpencil;
         retstr = make_move_string(state->par, ui, state->clues, ui->pending - '0');
         abort_pending(state, ui);
+        if (!was_pencil && retstr && retstr[0] == 'r')
+          advance_focus(state, ui);
       } else {
         ui->hpencil = 1 - ui->hpencil;
         ui->hcursor = 1;
@@ -1445,7 +1524,8 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
         if (ui->hpencil && (ui->hy + ui->hx*rows >= num || state->grid[ui->hy + ui->hx*rows] != -1))
           return NULL;
 
-        if (!ui->hcursor) ui->hshow = 0;
+        bool was_pencil = ui->hpencil;
+        if (!ui->hcursor && !ui->hpencil) ui->hshow = 0;
 
         if (ui->pending) {
           if (button == CURSOR_SELECT2)
@@ -1456,6 +1536,8 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
             n = (ui->pending - '0')*10 + (button - '0');
           retstr = make_move_string(state->par, ui, state->clues, n);
           abort_pending(state, ui);
+          if (n > 0 && !was_pencil && retstr && retstr[0] == 'r')
+            advance_focus(state, ui);
         } else {
           if (button == CURSOR_SELECT2 || button == '\b')
             n = -1;
@@ -1469,6 +1551,8 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
             n = button - '0';
           }
           retstr = make_move_string(state->par, ui, state->clues, n);
+          if (n > 0 && !was_pencil && retstr && retstr[0] == 'r')
+            advance_focus(state, ui);
         }
 	return retstr;
     }
@@ -1957,9 +2041,7 @@ static float game_flash_length(const game_state *oldstate, const game_state *new
 			       int dir, game_ui *ui)
 {
     if (!oldstate->completed && !oldstate->cheated &&
-        !newstate->cheated && !newstate->completed &&
-        !check_errors(newstate, NULL)) {
-      ((game_state*)newstate)->completed = true;
+        !newstate->cheated && newstate->completed && dir > 0) {
       return FLASH_TIME;
     }
     return 0.0F;
@@ -2005,10 +2087,10 @@ const struct game thegame = {
     free_ui,
     NULL, /* encode_ui */
     NULL, /* decode_ui */
-    NULL,
+    game_request_keys,
     NULL, /* android_cursor_visibility */
     game_changed_state,
-    NULL,
+    current_key_label,
     interpret_move,
     execute_move,
     PREFERRED_TILESIZE, 

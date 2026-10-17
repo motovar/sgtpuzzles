@@ -72,8 +72,19 @@ android {
         buildConfig = true
     }
 
+    signingConfigs {
+        // A fixed (public, non-secret) key so that every CI build can be installed over the previous one.
+        create("shared") {
+            storeFile = file("shared.keystore")
+            storePassword = "android"
+            keyAlias = "shared"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug {
+            signingConfig = signingConfigs.getByName("shared")
             versionNameSuffix = "-DEBUG-${idForSimon()}"
             ndk {
                 isDebuggable = true
@@ -82,10 +93,14 @@ android {
         }
         release {
             versionNameSuffix = "-${timestamp(true)}-${idForSimon()}"
+            signingConfig = signingConfigs.getByName("shared")
             isMinifyEnabled = true
+            isShrinkResources = true
             ndk {
                 isDebuggable = false
-                debugSymbolLevel = "FULL"
+                // Phones are ARM; dropping x86/x86_64 and the debug symbols roughly halves the APK.
+                abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+                debugSymbolLevel = "NONE"
             }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

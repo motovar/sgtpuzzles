@@ -1794,21 +1794,23 @@ static void num2grid(int num, int width, int height, int *x, int *y) {
 
 static key_label *game_request_keys(const game_params *params, int *nkeys, int *arrow_mode)
 {
-    key_label *keys = snewn(4, key_label);
-    memset(keys, 0, (4) * sizeof(key_label));
-    *nkeys = 4;
+    key_label *keys = snewn(6, key_label);
+    memset(keys, 0, 6 * sizeof(key_label));
+    *nkeys = 6;
+    *arrow_mode = ANDROID_ARROWS_LEFT;
 
     keys[0].button = 'G';
     keys[0].label = dupstr("Ghost");
-
     keys[1].button = 'V';
     keys[1].label = dupstr("Vampire");
-
     keys[2].button = 'Z';
     keys[2].label = dupstr("Zombie");
-
     keys[3].button = '\b';
-    keys[3].label = NULL;
+    keys[3].label = dupstr("Clear");
+    keys[4].button = 'p';
+    keys[4].label = dupstr("Pencil");
+    keys[5].button = 'M';
+    keys[5].label = dupstr("Marks");
 
     return keys;
 }
@@ -2112,8 +2114,17 @@ static bool game_changed_state(game_ui *ui, const game_state *oldstate,
         if (g == 1 || g == 2 || g == 4)
             ui->hshow = false;
     }
-    return false;
+    return newstate->solved && !newstate->cheated && oldstate && !oldstate->solved;
 }
+
+static const char *current_key_label(const game_ui *ui,
+                                     const game_state *state, int button)
+{
+    if (ui->hshow && IS_CURSOR_SELECT(button))
+        return ui->hpencil ? "Ink" : "Pencil";
+    return "";
+}
+
 
 struct game_drawstate {
     int tilesize;
@@ -2137,6 +2148,9 @@ struct game_drawstate {
 static bool is_clue(const game_state *state, int x, int y)
 {
     int h = state->common->params.h, w = state->common->params.w;
+
+    if (x < 0 || x > w + 1 || y < 0 || y > h + 1)
+        return false;
 
     if (state->common->grid[x+y*(state->common->params.w+2)] == -1)
         return false;
@@ -2224,7 +2238,7 @@ static char *interpret_move(const game_state *state, game_ui *ui,
         ui->hcursor = true;
         return MOVE_UI_UPDATE;
     }
-    if (ui->hshow && button == CURSOR_SELECT) {
+    if (ui->hshow && (button == CURSOR_SELECT || button == 'p' || button == 'P')) {
         ui->hpencil = !ui->hpencil;
         ui->hcursor = true;
         return MOVE_UI_UPDATE;
@@ -2235,35 +2249,19 @@ static char *interpret_move(const game_state *state, game_ui *ui,
         if (xi >= 0 && !state->common->fixed[xi]) {
             if (button == 'g' || button == 'G' || button == '1') {
                 sprintf(buf,"g%d",xi);
-                if (!ui->hcursor) {
-                    ui->hpencil = false;
-                    ui->hshow = false;
-                }
                 return dupstr(buf);
             }
             if (button == 'v' || button == 'V' || button == '2') {
                 sprintf(buf,"v%d",xi);
-                if (!ui->hcursor) {
-                    ui->hpencil = false;
-                    ui->hshow = false;
-                }
                 return dupstr(buf);
             }
             if (button == 'z' || button == 'Z' || button == '3') {
                 sprintf(buf,"z%d",xi);
-                if (!ui->hcursor) {
-                    ui->hpencil = false;
-                    ui->hshow = false;
-                }
                 return dupstr(buf);
             }
             if (button == 'e' || button == 'E' || button == CURSOR_SELECT2 ||
                 button == '0' || button == '\b') {
                 sprintf(buf,"E%d",xi);
-                if (!ui->hcursor) {
-                    ui->hpencil = false;
-                    ui->hshow = false;
-                }
                 return dupstr(buf);
             }
         }
@@ -2293,6 +2291,14 @@ static char *interpret_move(const game_state *state, game_ui *ui,
                 if (button == LEFT_BUTTON) {
                     if (!ui->hpencil) {
                         if (gx == ui->hx && gy == ui->hy) {
+#ifdef ANDROID
+                            /* tap on the active square toggles pencil mode */
+                            if (g == 7) {
+                                ui->hpencil = true;
+                                ui->hcursor = false;
+                                return MOVE_UI_UPDATE;
+                            }
+#endif
                             ui->hshow = false;
                             ui->hpencil = false;
                             ui->hcursor = false;
@@ -3192,7 +3198,7 @@ const struct game thegame = {
     game_request_keys,
     NULL, /* android_cursor_visibility */
     game_changed_state,
-    NULL, /* current_key_label */
+    current_key_label,
     interpret_move,
     execute_move,
     PREFERRED_TILE_SIZE, game_compute_size, game_set_size,

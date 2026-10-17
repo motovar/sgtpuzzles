@@ -795,10 +795,13 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
         }
         if (night) {
             // Only replace colours[0] at night: Untangle uses a darker grey to distinguish the play area
+            val dayBackgroundHsl = FloatArray(3)
+            ColorUtils.colorToHSL(colours[0], dayBackgroundHsl)
+            val dayBackgroundLightness = dayBackgroundHsl[2]
             colours[0] = ContextCompat.getColor(context, R.color.game_background)
             @ColorRes val nightColours = whichBackend.nightColours // doesn't include background
             if (whichBackend.autoNightColours) {
-                for (i in 1 until colours.size) colours[i] = autoNightColour(colours[i])
+                for (i in 1 until colours.size) colours[i] = autoNightColour(colours[i], dayBackgroundLightness)
             }
             for (i in 1 until colours.size) {
                 //Log.d("GameView", "\t<color name=\"" + resourceName + "\">" + String.format("#%06x", (0xFFFFFF & colours[i])) + "</color>");
@@ -817,15 +820,23 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
         }
     }
 
-    /** Flip the lightness of greys, lighten dark colours and darken pastels, keeping the hue. */
+    /**
+     * Derive a night colour from a day colour of a game that has no hand-made night palette.
+     * Greys are mapped by their distance from the day background (so highlights and
+     * lowlights stay visible against the black night background), coloured things keep
+     * their hue and only get their lightness adjusted for contrast.
+     */
     @ColorInt
-    private fun autoNightColour(@ColorInt colour: Int): Int {
+    private fun autoNightColour(@ColorInt colour: Int, dayBackgroundLightness: Float): Int {
         val hsl = FloatArray(3)
         ColorUtils.colorToHSL(colour, hsl)
         val s = hsl[1]
         val l = hsl[2]
         hsl[2] = when {
-            s < 0.25f -> 1f - l
+            s < 0.25f -> {
+                val d = l - dayBackgroundLightness
+                if (d > 0) 0.08f + d else -d * 1.25f
+            }
             l > 0.7f -> 1f - l + 0.05f
             l < 0.45f -> l + 0.3f
             else -> l

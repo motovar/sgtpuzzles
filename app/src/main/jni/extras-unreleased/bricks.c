@@ -959,7 +959,28 @@ static void decode_ui(game_ui *ui, const char *encoding, const game_state *state
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
                                const game_state *newstate)
 {
-    return false;
+	return newstate->completed && !newstate->cheated && oldstate && !oldstate->completed;
+}
+
+static key_label *game_request_keys(const game_params *params, int *nkeys,
+                                    int *arrow_mode)
+{
+	key_label *keys = snewn(3, key_label);
+	memset(keys, 0, 3 * sizeof(key_label));
+	*nkeys = 3;
+	/* Arrow pad with diagonals: the grid is a brick pattern */
+	*arrow_mode = ANDROID_ARROWS_DIAGONALS;
+
+	keys[0].button = '1';
+	keys[0].label = dupstr("Shade");
+	keys[0].needs_arrows = true;
+	keys[1].button = '0';
+	keys[1].label = dupstr("Unshade");
+	keys[1].needs_arrows = true;
+	keys[2].button = '\b';
+	keys[2].label = dupstr("Clear");
+	keys[2].needs_arrows = true;
+	return keys;
 }
 
 struct game_drawstate {
@@ -1650,7 +1671,7 @@ const struct game thegame = {
 	free_ui,
 	encode_ui,
 	decode_ui,
-	NULL, /* game_request_keys */
+	game_request_keys,
 	NULL, /* android_cursor_visibility */
 	game_changed_state,
 	NULL, /* current_key_label */

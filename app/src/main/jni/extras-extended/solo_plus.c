@@ -3647,11 +3647,12 @@ static key_label *game_request_keys(const game_params *params, int *nkeys, int *
         keys[i].label = NULL;
     }
     keys[cr].button = '+';
-    keys[cr].label = NULL;
+    keys[cr].label = dupstr("Marks +");
     keys[cr+1].button = '-';
-    keys[cr+1].label = NULL;
+    keys[cr+1].label = dupstr("Marks -");
     keys[cr+2].button = '\b';
-    keys[cr+2].label = NULL;
+    keys[cr+2].label = dupstr("Clear");
+    *arrow_mode = ANDROID_ARROWS_LEFT;
 
 
     return keys;
@@ -4651,8 +4652,17 @@ static bool game_changed_state(game_ui *ui, const game_state *oldstate,
     if (ui->hshow && ui->hpencil && !ui->hcursor &&
         newstate->grid[ui->hy * cr + ui->hx] != 0) {
         ui->hshow = false;
+        ui->hpencil = false;
     }
-    return false;
+    return newstate->completed && !newstate->cheated && oldstate && !oldstate->completed;
+}
+
+static const char *current_key_label(const game_ui *ui,
+                                     const game_state *state, int button)
+{
+    if (ui->hshow && IS_CURSOR_SELECT(button))
+        return ui->hpencil ? "Ink" : "Pencil";
+    return "";
 }
 
 struct game_drawstate {
@@ -4697,9 +4707,12 @@ static char *interpret_move(const game_state *state, game_ui *ui,
                        state->pencil[(ty*cr+tx) * cr + (ui->hhint-1)]) {
                 sprintf(buf, "R%d,%d,%d", tx, ty, ui->hhint);
                 return dupstr(buf);
-            } else if (tx == ui->hx && ty == ui->hy &&
-                       ui->hshow && !ui->hpencil) {
-                ui->hshow = false;
+            } else if (tx == ui->hx && ty == ui->hy && ui->hshow) {
+                /* tap on the active square toggles pencil/ink (Android) */
+                if (ui->hpencil)
+                    ui->hpencil = false;
+                else if (state->grid[ty*cr+tx] == 0)
+                    ui->hpencil = true;
             } else {
                 ui->hx = tx;
                 ui->hy = ty;
@@ -5826,7 +5839,7 @@ const struct game thegame = {
     game_request_keys,
     NULL, /* android_cursor_visibility */
     game_changed_state,
-    NULL, /* current_key_label */
+    current_key_label,
     interpret_move,
     execute_move,
     PREFERRED_TILE_SIZE, game_compute_size, game_set_size,

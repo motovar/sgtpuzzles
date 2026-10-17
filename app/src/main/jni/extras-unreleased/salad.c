@@ -1098,21 +1098,31 @@ static key_label *game_request_keys(const game_params *params, int *nkeys, int *
 	int n = params->nums;
 	char base = params->mode == GAMEMODE_LETTERS ? 'A' : '1';
 
-	key_label *keys = snewn(n + 3, key_label);
-    memset(keys, 0, (n + 3) * sizeof(key_label));
-	*nkeys = n + 3;
+	key_label *keys = snewn(n + 4, key_label);
+    memset(keys, 0, (n + 4) * sizeof(key_label));
+	*nkeys = n + 4;
 
 	for (i = 0; i < n; i++)
 	{
+		char lb[2];
+		lb[0] = (char)(base + i); lb[1] = '\0';
 		keys[i].button = base + i;
-		keys[i].label = NULL;
+		keys[i].label = dupstr(lb);
+		keys[i].needs_arrows = false;
 	}
 	keys[n].button = 'X';
-	keys[n].label = NULL;
+	keys[n].label = dupstr("X");
+	keys[n].needs_arrows = false;
 	keys[n+1].button = 'O';
-	keys[n+1].label = NULL;
+	keys[n+1].label = dupstr("O");
+	keys[n+1].needs_arrows = false;
 	keys[n+2].button = '\b';
-	keys[n+2].label = NULL;
+	keys[n+2].label = dupstr("Clear");
+	keys[n+2].needs_arrows = false;
+	keys[n+3].button = 'M';
+	keys[n+3].label = dupstr("Mark");
+	keys[n+3].needs_arrows = false;
+	*arrow_mode = ANDROID_ARROWS_LEFT_RIGHT;
 
 	return keys;
 }
@@ -1442,7 +1452,11 @@ static game_ui *new_ui(const game_state *state)
 	ret->hx = ret->hy = 0;
 	ret->hcursor = ret->hshow = getenv_bool("PUZZLES_SHOW_CURSOR", false);
 	ret->hpencil = false;
+#ifdef ANDROID
+	ret->pencil_keep_highlight = true;
+#else
 	ret->pencil_keep_highlight = false;
+#endif
 	
 	return ret;
 }
@@ -1487,7 +1501,13 @@ static void set_prefs(game_ui *ui, const config_item *cfg)
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
 							   const game_state *newstate)
 {
-    return false;
+#ifdef ANDROID
+    if (ui->hshow && !ui->hcursor && ui->hpencil &&
+        newstate->grid[ui->hx + newstate->params->order * ui->hy] != 0)
+        ui->hshow = ui->hpencil = false;
+#endif
+    return newstate->completed && !newstate->cheated &&
+        oldstate && !oldstate->completed;
 }
 static const char *current_key_label(const game_ui *ui,
                                      const game_state *state, int button)
@@ -1547,6 +1567,16 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
 		{
 			int newpencil = button == RIGHT_BUTTON;
 			
+#ifdef ANDROID
+			if((state->gridclues[(gy*o)+gx] == 0 || state->gridclues[(gy*o)+gx] == LATINH_CIRCLE)
+				&& ui->hshow && ui->hx == gx && ui->hy == gy)
+			{
+				/* Tap on the selected square toggles pencil/ink */
+				ui->hpencil = state->grid[gy*o+gx] != 0 ? false : !ui->hpencil;
+				ui->hcursor = false;
+				return MOVE_UI_UPDATE;
+			}
+#endif
 			if((state->gridclues[(gy*o)+gx] == 0 || state->gridclues[(gy*o)+gx] == LATINH_CIRCLE)
 				&& (!ui->hshow || (newpencil ? !ui->hpencil : ui->hpencil)
 				|| ui->hx != gx || ui->hy != gy))

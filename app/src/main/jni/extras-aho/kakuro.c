@@ -49,6 +49,7 @@ struct game_params {
 
 struct clues {
     int refcount;
+  game_params *par_own;  /* private copy of the parameters, shared by all states */
     int w, h;
     int oddeven;
     unsigned char *playable;
@@ -1844,7 +1845,7 @@ static game_state *new_game(midend *me, const game_params *params, const char *d
 
     w = h = params->size + 1;
     wh = w*h;
-    state->par = params;
+    state->par = NULL; /* set below, once clues exist */
     state->grid = snewn(wh, digit);
     state->pencil = snewn(wh, long);
     for (i = 0; i < wh; i++) {
@@ -1855,6 +1856,8 @@ static game_state *new_game(midend *me, const game_params *params, const char *d
 
     state->clues = snew(struct clues);
     state->clues->refcount = 1;
+    state->clues->par_own = dup_params(params);
+    state->par = state->clues->par_own;
     state->clues->w = w;
     state->clues->h = h;
     state->clues->oddeven = 0;
@@ -1947,6 +1950,7 @@ static game_state *dup_game(const game_state *state)
 static void free_game(game_state *state)
 {
     if (--state->clues->refcount <= 0) {
+        free_params(state->clues->par_own);
         sfree(state->clues->playable);
         sfree(state->clues->hclues);
         sfree(state->clues->vclues);
@@ -2004,6 +2008,8 @@ struct game_ui {
      * pencil-mark one or a real one.
      */
     int hpencil;
+    /* direction in which focus advances after entering a value */
+    int advx, advy;
     /*
      * This indicates whether or not we're showing the highlight
      * (used to be hx = hy = -1); important so that when we're
@@ -2031,6 +2037,7 @@ static game_ui *new_ui(const game_state *state)
     game_ui *ui = snew(game_ui);
 
     ui->hx = ui->hy = 0;
+    ui->advx = 1; ui->advy = 0;
     ui->hpencil = ui->hshow = ui->hcursor = 0;
 #ifdef MULTIDIGIT
     ui->pending = 0;
@@ -2043,6 +2050,34 @@ static void free_ui(game_ui *ui)
     sfree(ui);
 }
 
+static key_label *game_request_keys(const game_params *params, int *nkeys, int *arrow_mode)
+{
+    int i, n = 0;
+    key_label *keys = snewn(9 + 3, key_label);
+    memset(keys, 0, (9 + 3) * sizeof(key_label));
+    for (i = 1; i <= 9; i++) {
+        char b[2]; b[0] = (char)('0' + i); b[1] = 0;
+        keys[n].button = '0' + i;
+        keys[n].label = dupstr(b);
+        n++;
+    }
+    keys[n].button = '\b'; keys[n].label = dupstr("Clear"); n++;
+    keys[n].button = 'p'; keys[n].label = dupstr("Pencil"); n++;
+    keys[n].button = 'M'; keys[n].label = dupstr("Fill"); n++;
+    *nkeys = n;
+    *arrow_mode = ANDROID_ARROWS_LEFT;
+    return keys;
+}
+
+static const char *current_key_label(const game_ui *ui,
+                                     const game_state *state, int button)
+{
+    if (ui->hshow && IS_CURSOR_SELECT(button))
+        return ui->hpencil ? "Ink" : "Pencil";
+    return "";
+}
+
+static bool check_errors(const game_state *state, long *errors);
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
                                const game_state *newstate)
 {
@@ -2057,7 +2092,7 @@ static bool game_changed_state(game_ui *ui, const game_state *oldstate,
         newstate->grid[ui->hy * w + ui->hx] != -1) {
         ui->hshow = 0;
     }
-    return false;
+    return oldstate && !oldstate->completed && !oldstate->cheated && !newstate->cheated && !newstate->completed && !check_errors(newstate, NULL);
 }
 
 #define PREFERRED_TILESIZE 48
@@ -2127,6 +2162,20 @@ static void finish_pending(const game_ui *ui0)
 }
 #endif /* MULTIDIGIT */
 
+/* After a value has been entered, move the focus to the next playable
+ * square in the current direction (row or column of the clue run). */
+static void advance_focus(const game_state *state, game_ui *ui)
+{
+    int sz = state->par->size + 1;
+    int nx = ui->hx + ui->advx, ny = ui->hy + ui->advy;
+    if (nx >= 0 && nx < sz && ny >= 0 && ny < sz &&
+        state->clues->playable[ny*sz+nx]) {
+        ui->hx = nx; ui->hy = ny;
+        ui->hshow = 1;
+        ui->hpencil = 0;
+    }
+}
+
 static char *interpret_move(const game_state *state, game_ui *ui, const game_drawstate *ds,
 			    int x, int y, int button)
 {
@@ -2149,10 +2198,23 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
               abort_pending(state, ui);
             }
 #endif /* MULTIDIGIT */
+#ifdef ANDROID
+            if (tx == ui->hx && ty == ui->hy && ui->hshow) {
+              /* tap on the already active square: toggle pencil/ink */
+              if (ui->hpencil)
+                ui->hpencil = 0;
+              else if (state->grid[ty*sz+tx] == -1)
+                ui->hpencil = 1;
+            } else {
+              if (ui->hshow && abs(tx - ui->hx) + abs(ty - ui->hy) == 1) {
+                ui->advx = tx - ui->hx; ui->advy = ty - ui->hy;
+              }
+#else
             if (tx == ui->hx && ty == ui->hy && ui->hshow && ui->hpencil == 0) {
               /* left-click on the already active square */
               ui->hshow = 0;
             } else {
+#endif
               /* left-click on a new square */
               ui->hx = tx;
               ui->hy = ty;
@@ -2204,7 +2266,7 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
       return retstr;
     }
     if (ui->hshow &&
-        (button == CURSOR_SELECT)) {
+        (button == CURSOR_SELECT || button == 'p' || button == 'P')) {
 #ifdef MULTIDIGIT
       if (ui->pending) {
         retstr = make_move_string(state, ui, ui->pending - '0');
@@ -2234,7 +2296,7 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
         if (!state->clues->playable[ui->hy*sz+ui->hx])
             return NULL;
 
-        if (!ui->hcursor) ui->hshow = 0;
+        if (!ui->hcursor && !ui->hpencil) ui->hshow = 0;
 
 #ifdef MULTIDIGIT
         if (ui->pending) {
@@ -2264,7 +2326,12 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
           {
             n = button - '0';
           }
-          retstr = make_move_string(state, ui, n);
+          {
+            bool was_pencil = ui->hpencil;
+            retstr = make_move_string(state, ui, n);
+            if (n > 0 && !was_pencil && retstr && retstr[0] == 'R')
+              advance_focus(state, ui);
+          }
         }
 	return retstr;
     }
@@ -2921,10 +2988,10 @@ const struct game thegame = {
     free_ui,
     NULL, /* encode_ui */
     NULL, /* decode_ui */
-    NULL,
+    game_request_keys,
     NULL, /* android_cursor_visibility */
     game_changed_state,
-    NULL,
+    current_key_label,
     interpret_move,
     execute_move,
     PREFERRED_TILESIZE, game_compute_size, game_set_size,

@@ -72,6 +72,7 @@ struct game_params {
 
 struct clues {
   int refcount;
+  game_params *par_own;  /* private copy of the parameters, shared by all states */
   int size;
   int nswitches;
   unsigned char* doorvector;
@@ -2460,13 +2461,15 @@ static game_state *new_game(midend *me, const game_params *params, const char *d
     hexlen = calchexlen(sz, nfloors);
     ncoord = numcoord(params);
 
-    state->par = params;
+    state->par = NULL; /* set below, once clues exist */
     state->coord = snewn(ncoord, int);
     set_initial_state(params, state->coord);
     state->completed = state->cheated = false;
 
     state->clues = snew(struct clues);
     state->clues->refcount = 1;
+    state->clues->par_own = dup_params(params);
+    state->par = state->clues->par_own;
     state->clues->size = sz;
     state->clues->nswitches = nswitches;
     state->clues->doorvector = makedoorvector(sz, nfloors);
@@ -2525,6 +2528,7 @@ static void free_game(game_state *state)
 {
   int i;
   if (--state->clues->refcount <= 0) {
+        free_params(state->clues->par_own);
     sfree(state->clues->doorvector);
     for (i=0; i<state->clues->nswitches; i++)
       sfree(state->clues->doorswitches[i]);
@@ -2582,6 +2586,7 @@ static void free_ui(game_ui *ui)
     sfree(ui);
 }
 
+static int check_complete(const game_state *state);
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
                                const game_state *newstate)
 {
@@ -2595,7 +2600,7 @@ static bool game_changed_state(game_ui *ui, const game_state *oldstate,
     ui->tshow = 0;
     ui->tpos[0] = ui->tpos[1] = -1;
   }
-    return false;
+    return (newstate->completed || (!newstate->cheated && check_complete(newstate))) && oldstate && !oldstate->completed && !newstate->cheated;
 }
 
 #define PREFERRED_TILESIZE 48

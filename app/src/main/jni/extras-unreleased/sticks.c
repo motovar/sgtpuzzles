@@ -900,11 +900,12 @@ static void decode_ui(game_ui *ui, const char *encoding, const game_state *state
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
                                const game_state *newstate)
 {
-    return false;
+    return newstate->completed && !newstate->cheated && oldstate &&
+        !oldstate->completed;
 }
 
 #define COORD(x)     ( (x) * tilesize + tilesize/2 )
-#define FROMCOORD(x) ( ((x)-(tilesize/2)) / tilesize )
+#define FROMCOORD(x) ( ((x)-(tilesize/2)+tilesize) / tilesize - 1 )
 
 struct game_drawstate
 {
@@ -913,6 +914,19 @@ struct game_drawstate
 };
 
 #define DRAG_DELTA (tilesize*0.4)
+static key_label *game_request_keys(const game_params *params, int *nkeys,
+	int *arrow_mode)
+{
+	key_label *keys = snewn(3, key_label);
+	memset(keys, 0, 3 * sizeof(key_label));
+	*nkeys = 3;
+	*arrow_mode = ANDROID_ARROWS_LEFT_RIGHT;
+	keys[0].button = '1'; keys[0].label = dupstr("Vertical");
+	keys[1].button = '0'; keys[1].label = dupstr("Horizontal");
+	keys[2].button = '\b'; keys[2].label = dupstr("Clear");
+	return keys;
+}
+
 static char *interpret_move(const game_state *state, game_ui *ui,
 	const game_drawstate *ds,
 	int ox, int oy, int button)
@@ -1089,6 +1103,11 @@ static char *interpret_move(const game_state *state, game_ui *ui,
 
 		int old = state->grid[i];
 
+		/* remember the tapped cell so the on-screen keys act on it */
+		ui->cx = hx;
+		ui->cy = hy;
+		ui->cursor = true;
+
 		if (button == LEFT_RELEASE)
 			ui->dragmove[0] = (old == 0 ? F_VER : old & F_VER ? F_HOR : 0);
 		if (button == RIGHT_RELEASE)
@@ -1237,7 +1256,7 @@ static void game_get_cursor_location(const game_ui *ui,
 	int tilesize = ds->tilesize;
 	if(ui->cursor) {
 		*x = COORD(ui->cx);
-		*x = COORD(ui->cy);
+		*y = COORD(ui->cy);
 		*w = *h = tilesize;
 	}
 }
@@ -1447,7 +1466,7 @@ const struct game thegame = {
 	free_ui,
 	encode_ui,
 	decode_ui,
-	NULL, /* game_request_keys */
+	game_request_keys,
 	NULL, /* android_cursor_visibility */
 	game_changed_state,
 	NULL, /* current_key_label */

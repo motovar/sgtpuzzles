@@ -1,4 +1,4 @@
-name: Build debug APK
+name: Build APK
 on:
   push:
   pull_request:
@@ -24,7 +24,7 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
       - name: Summarise errors
         if: failure()
         run: |
@@ -34,5 +34,5 @@ jobs:
             | head -25 | while IFS= read -r line; do echo "::error::${line:0:400}"; done
       - uses: actions/upload-artifact@v4
         with:
-          name: sgtpuzzles-extended-debug-apk
+          name: sgtpuzzles-extended-apk
           path: app/build/outputs/apk/**/*.apk

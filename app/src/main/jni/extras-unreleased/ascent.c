@@ -2098,7 +2098,12 @@ static game_ui *new_ui(const game_state *state)
 	ret->s = s;
 	ret->cshow = CSHOW_NONE;
 
+#ifdef ANDROID
+	/* The on-screen diagonal arrow pad sends numpad codes */
+	ret->move_with_numpad = true;
+#else
 	ret->move_with_numpad = false;
+#endif
 
 	if (!state) return ret;
 
@@ -2398,6 +2403,33 @@ static void ui_backtrack(game_ui *ui, const game_state *state)
 	ui_seek(ui, state);
 }
 
+static key_label *game_request_keys(const game_params *params, int *nkeys,
+                                    int *arrow_mode)
+{
+	int i;
+	key_label *keys = snewn(12, key_label);
+	memset(keys, 0, 12 * sizeof(key_label));
+	*nkeys = 12;
+	*arrow_mode = ANDROID_ARROWS_DIAGONALS;
+	for (i = 0; i < 10; i++)
+	{
+		keys[i].button = '0' + i;
+		keys[i].label = NULL;
+		keys[i].needs_arrows = false;
+	}
+	keys[10].button = '\n';
+	keys[10].label = dupstr("Enter");
+	keys[11].button = '\b';
+	keys[11].label = dupstr("Clear");
+	return keys;
+}
+
+static const char *current_key_label(const game_ui *ui,
+                                     const game_state *state, int button)
+{
+	return "";
+}
+
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
                                const game_state *newstate)
 {
@@ -2408,7 +2440,7 @@ static bool game_changed_state(game_ui *ui, const game_state *oldstate,
 	{
 		ui_backtrack(ui, newstate);
 	}
-	if(!oldstate->completed && newstate->completed)
+	if(oldstate && !oldstate->completed && newstate->completed)
 	{
 		ui_clear(ui);
 	}
@@ -2419,7 +2451,7 @@ static bool game_changed_state(game_ui *ui, const game_state *oldstate,
 
 		ui_seek(ui, newstate);
 	}
-    return false;
+	return newstate->completed && !newstate->cheated && oldstate && !oldstate->completed;
 }
 
 struct game_drawstate {
@@ -2863,7 +2895,22 @@ static char *interpret_move(const game_state *state, game_ui *ui,
 
 	/* Pressing Enter, Spacebar or Backspace when not typing will emulate a mouse click */
 	if (button == '\b' && ui->typing_cell == CELL_NONE)
+	{
 		button = CURSOR_SELECT2;
+		/* Touch: Clear key erases the highlighted cell */
+		if (ui->cshow == CSHOW_MOUSE)
+		{
+			i = ui->cy*w + ui->cx;
+			if (i >= 0 && i < w*h && !GET_BIT(state->immutable, i) &&
+			    (state->grid[i] != NUMBER_EMPTY || (state->path && state->path[i])))
+			{
+				char cbuf[20];
+				sprintf(cbuf, "C%d", i);
+				return dupstr(cbuf);
+			}
+			return NULL;
+		}
+	}
 	if (IS_CURSOR_SELECT(button) && ui->cshow == CSHOW_KEYBOARD && ui->typing_cell == CELL_NONE)
 	{
 		ret = ascent_mouse_click(state, ui, ui->cx, ui->cy,
@@ -4003,10 +4050,10 @@ const struct game thegame = {
 	free_ui,
 	encode_ui,
 	decode_ui,
-	NULL, /* game_request_keys */
+	game_request_keys,
 	NULL, /* android_cursor_visibility */
 	game_changed_state,
-	NULL, /* current_key_label */
+	current_key_label,
 	interpret_move,
 	execute_move,
 	48, game_compute_size, game_set_size,

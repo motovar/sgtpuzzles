@@ -1547,7 +1547,7 @@ static void decode_ui(game_ui *ui, const char *encoding, const game_state *state
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
 							   const game_state *newstate)
 {
-    return false;
+    return newstate->completed && !newstate->cheated && oldstate && !oldstate->completed;
 }
 
 struct game_drawstate {

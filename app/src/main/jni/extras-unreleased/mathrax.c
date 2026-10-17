@@ -1083,17 +1083,25 @@ static key_label *game_request_keys(const game_params *params, int *nkeys, int *
 	int i;
 	int n = params->o;
 
-	key_label *keys = snewn(n + 1, key_label);
-    memset(keys, 0, (n + 1) * sizeof(key_label));
-	*nkeys = n + 1;
+	key_label *keys = snewn(n + 2, key_label);
+    memset(keys, 0, (n + 2) * sizeof(key_label));
+	*nkeys = n + 2;
 
 	for (i = 0; i < n; i++)
 	{
+		char lb[2];
+		lb[0] = (char)('1' + i); lb[1] = '\0';
 		keys[i].button = '1' + i;
-		keys[i].label = NULL;
+		keys[i].label = dupstr(lb);
+		keys[i].needs_arrows = false;
 	}
 	keys[n].button = '\b';
-	keys[n].label = NULL;
+	keys[n].label = dupstr("Clear");
+	keys[n].needs_arrows = false;
+	keys[n+1].button = 'M';
+	keys[n+1].label = dupstr("Mark");
+	keys[n+1].needs_arrows = false;
+	*arrow_mode = ANDROID_ARROWS_LEFT_RIGHT;
 
 	return keys;
 }
@@ -1113,7 +1121,11 @@ static game_ui *new_ui(const game_state *state)
 	ret->hx = ret->hy = 0;
 	ret->cshow = ret->ckey = getenv_bool("PUZZLES_SHOW_CURSOR", false);
 	ret->cpencil = false;
+#ifdef ANDROID
+	ret->pencil_keep_highlight = true;
+#else
 	ret->pencil_keep_highlight = false;
+#endif
 	
 	return ret;
 }
@@ -1158,7 +1170,13 @@ static void set_prefs(game_ui *ui, const config_item *cfg)
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
 							   const game_state *newstate)
 {
-    return false;
+#ifdef ANDROID
+    if (ui->cshow && !ui->ckey && ui->cpencil &&
+        newstate->grid[ui->hy * newstate->o + ui->hx] != 0)
+        ui->cshow = ui->cpencil = false;
+#endif
+    return newstate->completed && !newstate->cheated &&
+        oldstate && !oldstate->completed;
 }
 
 static const char *current_key_label(const game_ui *ui,
@@ -1208,6 +1226,20 @@ static char *interpret_move(const game_state *state, game_ui *ui,
 		if (button == LEFT_BUTTON)
 		{
 			/* Select */
+#ifdef ANDROID
+			if(ui->cshow && hx == gx && hy == gy)
+			{
+				/* Tap on the selected square toggles pencil/ink */
+				ui->cpencil = state->grid[gy*o+gx] != 0 ? false : !ui->cpencil;
+			}
+			else
+			{
+				ui->hx = gx;
+				ui->hy = gy;
+				ui->cpencil = false;
+				ui->cshow = true;
+			}
+#else
 			if(!ui->cshow || ui->cpencil || hx != gx || hy != gy)
 			{
 				ui->hx = gx;
@@ -1220,9 +1252,15 @@ static char *interpret_move(const game_state *state, game_ui *ui,
 			{
 				ui->cshow = false;
 			}
+#endif
 			
 			if(state->flags[gy*o+gx] & F_IMMUTABLE)
+			{
 				ui->cshow = false;
+#ifdef ANDROID
+				ui->cpencil = false;
+#endif
+			}
 			
 			ui->ckey = false;
 			return MOVE_UI_UPDATE;
