@@ -93,6 +93,25 @@ sealed class BackendName(
         )
     }
 
+    /**
+     * Colours (indices into the game's colour array) of the extra puzzles that make up pictures
+     * (monsters, ships, planets, balls...). These keep their own hues at night instead of being
+     * inverted like the grid, lines and text.
+     */
+    val nightKeepColours: Set<Int> by lazy {
+        mapOf<BackendName, Set<Int>>(
+            UNDEAD_PLUS to setOf(6, 7, 8),
+            STELLAR to setOf(3, 4, 5, 6),
+            BOATS to setOf(4, 5, 6, 7, 8, 9, 10),
+            WALLS to setOf(5, 6, 7, 8, 9),
+            FLOW to setOf(7, 8, 9),
+            SALAD to setOf(7, 8, 9, 11, 12, 13, 16),
+            SUPERMAZE to setOf(3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32),
+            CROSSING to setOf(6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35),
+            IDENTIFIER to setOf(2, 3, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24)
+        )[this] ?: emptySet()
+    }
+
     private val swapLRName by lazy { PrefsConstants.SWAP_L_R_PREFIX + this }
 
     val swapLRNatively by lazy { this in SWAP_L_R_NATIVE_PREFS }

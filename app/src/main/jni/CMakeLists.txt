@@ -277,7 +277,7 @@ add_subdirectory(extras-extended)
 # The extra puzzles were written and tested on x86, where plain `char` is signed; on Android/ARM it
 # is unsigned, which breaks code that stores -1 in a char (shows "255", hangs generators, etc).
 file(GLOB extras_sources ${CMAKE_CURRENT_SOURCE_DIR}/extras-*/*.c)
-set_source_files_properties(${extras_sources} PROPERTIES COMPILE_OPTIONS "-fsigned-char")
+set_source_files_properties(${extras_sources} PROPERTIES COMPILE_OPTIONS "-fsigned-char;SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/extras-quiet.h")
 add_subdirectory(auxiliary)
 
 if(build_cli_programs)

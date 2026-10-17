@@ -2053,14 +2053,16 @@ static void free_ui(game_ui *ui)
 static key_label *game_request_keys(const game_params *params, int *nkeys, int *arrow_mode)
 {
     int i, n = 0;
-    key_label *keys = snewn(9 + 3, key_label);
-    memset(keys, 0, (9 + 3) * sizeof(key_label));
-    for (i = 1; i <= 9; i++) {
+    int lo = params->max > 9 ? 0 : 1;
+    key_label *keys = snewn(10 + 4, key_label);
+    memset(keys, 0, (10 + 4) * sizeof(key_label));
+    for (i = lo; i <= 9; i++) {
         char b[2]; b[0] = (char)('0' + i); b[1] = 0;
         keys[n].button = '0' + i;
         keys[n].label = dupstr(b);
         n++;
     }
+    if (params->max > 9) { keys[n].button = '\n'; keys[n].label = dupstr("OK"); n++; }
     keys[n].button = '\b'; keys[n].label = dupstr("Clear"); n++;
     keys[n].button = 'p'; keys[n].label = dupstr("Pencil"); n++;
     keys[n].button = 'M'; keys[n].label = dupstr("Fill"); n++;
@@ -2265,6 +2267,15 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
       ui->hshow = ui->hcursor = 1;
       return retstr;
     }
+#ifdef MULTIDIGIT
+    if (button == '\n' && ui->pending) {
+      /* On-screen "OK" key: accept the pending first digit as a one-digit number */
+      retstr = make_move_string(state, ui, ui->pending - '0');
+      abort_pending(state, ui);
+      if (!ui->hpencil && retstr && retstr[0] == 'R') advance_focus(state, ui);
+      return retstr;
+    }
+#endif /* MULTIDIGIT */
     if (ui->hshow &&
         (button == CURSOR_SELECT || button == 'p' || button == 'P')) {
 #ifdef MULTIDIGIT
@@ -2308,6 +2319,8 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
             n = (ui->pending - '0')*10 + (button - '0');
           retstr = make_move_string(state, ui, n);
           abort_pending(state, ui);
+          if (n > 0 && !ui->hpencil && retstr && retstr[0] == 'R')
+            advance_focus(state, ui);
         } else
 #endif /* MULTIDIGIT */
         {
@@ -2849,6 +2862,101 @@ static void draw_tile(drawing *dr, game_drawstate *ds, const game_params *par,
     draw_update(dr, cx, cy, cw, ch);
 }
 
+
+/* ---- Combination helper: shown in the status bar for the selected square ---- */
+
+struct combo_ctx {
+    char *buf;
+    int size, len;
+    int count, limit;
+    int maxd;
+    int target;
+    int nleft;
+    long usedmask;      /* digits already in the run, or ruled out */
+    int digits[24];
+};
+
+static void combo_emit(struct combo_ctx *c, int n)
+{
+    int i;
+    if (c->count++ >= c->limit) return;
+    if (c->len + 4 * n + 3 >= c->size) { c->count = c->limit + 1; return; }
+    if (c->len) c->buf[c->len++] = ' ';
+    for (i = 0; i < n; i++) {
+        if (c->maxd > 9 && i) c->buf[c->len++] = '+';
+        c->len += sprintf(c->buf + c->len, "%d", c->digits[i]);
+    }
+    c->buf[c->len] = 0;
+}
+
+static void combo_rec(struct combo_ctx *c, int from, int k, int sum, int n)
+{
+    int d;
+    if (k == n) { if (sum == 0) combo_emit(c, n); return; }
+    for (d = from; d <= c->maxd; d++) {
+        if (c->usedmask & (1L << d)) continue;
+        if (d > sum) break;
+        c->digits[k] = d;
+        combo_rec(c, d + 1, k + 1, sum - d, n);
+    }
+}
+
+/* Describe the possible digit sets for the run through (x,y) in direction (dx,dy). */
+static void run_hint(const game_state *state, int x, int y, int dx, int dy,
+                     const char *name, char *out, int outsize)
+{
+    int sz = state->par->size + 1;
+    int cx = x, cy = y, clue, empty = 0, rest, len = 0;
+    long used = 0;
+    struct combo_ctx c;
+    char list[200];
+    int px, py;
+
+    /* walk back to the clue square */
+    while (cx - dx >= 0 && cy - dy >= 0 &&
+           state->clues->playable[(cy-dy)*sz + (cx-dx)]) { cx -= dx; cy -= dy; }
+    cx -= dx; cy -= dy;
+    if (cx < 0 || cy < 0) { out[0] = 0; return; }
+    clue = dx ? state->clues->hclues[cy*sz+cx] : state->clues->vclues[cy*sz+cx];
+    if (clue < 0) { out[0] = 0; return; }
+    rest = clue;
+    for (px = cx + dx, py = cy + dy; px < sz && py < sz && state->clues->playable[py*sz+px];
+         px += dx, py += dy) {
+        int d = state->grid[py*sz+px];
+        len++;
+        if (d == -1) empty++;
+        else { used |= 1L << d; rest -= d; }
+    }
+    if (!empty || rest <= 0) { out[0] = 0; return; }
+    /* digits excluded by the pencil marks of the selected square (if it has any) */
+    memset(&c, 0, sizeof c);
+    c.buf = list; c.size = sizeof list; c.limit = 14;
+    c.maxd = state->par->max; c.usedmask = used;
+    list[0] = 0;
+    combo_rec(&c, 1, 0, rest, empty);
+    if (c.count == 0)
+        sprintf(out, "%s %d in %d: no combination", name, clue, len);
+    else if (c.count > c.limit)
+        snprintf(out, outsize, "%s %d in %d: %s ...", name, clue, len, list);
+    else
+        snprintf(out, outsize, "%s %d in %d: %s", name, clue, len, list);
+}
+
+static void kakuro_hint_text(const game_state *state, const game_ui *ui, char *buf, int size)
+{
+    int sz = state->par->size + 1;
+    char a[260], b[260];
+    buf[0] = 0;
+    if (!ui->hshow || ui->hx < 0 || ui->hx >= sz || ui->hy < 0 || ui->hy >= sz ||
+        !state->clues->playable[ui->hy*sz+ui->hx]) {
+        snprintf(buf, size, "Tap a white square to see the possible digit combinations.");
+        return;
+    }
+    run_hint(state, ui->hx, ui->hy, 1, 0, "Row", a, sizeof a);
+    run_hint(state, ui->hx, ui->hy, 0, 1, "Column", b, sizeof b);
+    snprintf(buf, size, "%s%s%s", a, (a[0] && b[0]) ? "\n" : "", b);
+}
+
 static void game_redraw(drawing *dr, game_drawstate *ds, const game_state *oldstate,
 			const game_state *state, int dir, const game_ui *ui,
 			float animtime, float flashtime)
@@ -2892,6 +3000,12 @@ static void game_redraw(drawing *dr, game_drawstate *ds, const game_state *oldst
 
 #ifdef SHOWDIFF
     status_bar(dr, global_buf);
+#else
+    {
+        char hint[560];
+        kakuro_hint_text(state, ui, hint, sizeof hint);
+        status_bar(dr, hint);
+    }
 #endif /* SHOWDIFF */
     for (y = 0; y < sz; y++) {
 	for (x = 0; x < sz; x++) {
@@ -3009,7 +3123,7 @@ const struct game thegame = {
 #ifdef SHOWDIFF
     true,			       /* wants_statusbar */
 #else
-    false,			       /* wants_statusbar */
+    true,			       /* wants_statusbar: combination helper */
 #endif /* SHOWDIFF */
     false, game_timing_state,
     0,				       /* flags */

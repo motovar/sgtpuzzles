@@ -801,7 +801,11 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
             colours[0] = ContextCompat.getColor(context, R.color.game_background)
             @ColorRes val nightColours = whichBackend.nightColours // doesn't include background
             if (whichBackend.autoNightColours) {
-                for (i in 1 until colours.size) colours[i] = autoNightColour(colours[i], dayBackgroundLightness)
+                val keep = whichBackend.nightKeepColours
+                for (i in 1 until colours.size) {
+                    colours[i] = if (i in keep) pictureNightColour(colours[i])
+                    else autoNightColour(colours[i], dayBackgroundLightness)
+                }
             }
             for (i in 1 until colours.size) {
                 //Log.d("GameView", "\t<color name=\"" + resourceName + "\">" + String.format("#%06x", (0xFFFFFF & colours[i])) + "</color>");
@@ -826,6 +830,15 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
      * lowlights stay visible against the black night background), coloured things keep
      * their hue and only get their lightness adjusted for contrast.
      */
+    /** Colours that are part of a picture keep their look; only very dark ones are lifted off the black. */
+    @ColorInt
+    private fun pictureNightColour(@ColorInt colour: Int): Int {
+        val hsl = FloatArray(3)
+        ColorUtils.colorToHSL(colour, hsl)
+        hsl[2] = max(hsl[2], 0.28f)
+        return ColorUtils.HSLToColor(hsl)
+    }
+
     @ColorInt
     private fun autoNightColour(@ColorInt colour: Int, dayBackgroundLightness: Float): Int {
         val hsl = FloatArray(3)
