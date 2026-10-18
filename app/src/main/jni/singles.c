@@ -641,9 +641,22 @@ static void solver_state_free(struct solver_state *ss)
     sfree(ss);
 }
 
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+
 static void solver_op_add(struct solver_state *ss, int x, int y, int op, const char *desc)
 {
     struct solver_op *sop;
+
+    if (hint_on) {
+        if (hint_n >= hint_cap) {
+            hint_cap = hint_cap ? hint_cap * 2 : 128;
+            hint_log = sresize(hint_log, 3 * hint_cap, int);
+        }
+        hint_log[3*hint_n] = x; hint_log[3*hint_n+1] = y; hint_log[3*hint_n+2] = op;
+        hint_n++;
+    }
 
     if (ss->n_alloc < ss->n_ops + 1) {
         ss->n_alloc = (ss->n_alloc + 1) * 2;
@@ -1214,6 +1227,50 @@ solved:
     move = game_state_diff(currstate, solved, true);
     free_game(solved);
     return move;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    game_state *solved = dup_game(orig), *work;
+    char *out = NULL, buf[64];
+    int i, ok;
+
+    ok = solve_specific(solved, DIFF_ANY, false) > 0;
+    if (ok) {
+        for (i = 0; i < curr->n; i++) {
+            unsigned f = curr->flags[i] & (F_BLACK | F_CIRCLE);
+            unsigned g = solved->flags[i] & (F_BLACK | F_CIRCLE);
+            if ((f & F_BLACK && !(g & F_BLACK)) || (f & F_CIRCLE && (g & F_BLACK))) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"),
+                        i / curr->w + 1, i % curr->w + 1);
+                *error = errbuf;
+                free_game(solved);
+                return NULL;
+            }
+        }
+    }
+    free_game(solved);
+
+    /* Replay the solver's deduction chain from the start position; the first
+     * step not yet on the board follows from the steps already made. */
+    work = dup_game(orig);
+    hint_n = 0;
+    hint_on = true;
+    solve_specific(work, DIFF_ANY, false);
+    hint_on = false;
+    free_game(work);
+    for (i = 0; i < hint_n; i++) {
+        int x = hint_log[3*i], y = hint_log[3*i+1], op = hint_log[3*i+2];
+        unsigned f = curr->flags[y*curr->w + x];
+        if (op == BLACK ? (f & F_BLACK) : (f & F_CIRCLE)) continue;
+        sprintf(buf, "%c%d,%d;", op == BLACK ? 'B' : 'C', x, y);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 /* --- Game generation --- */
@@ -1926,6 +1983,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     REQUIRE_RBUTTON,		       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER

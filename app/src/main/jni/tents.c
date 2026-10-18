@@ -271,6 +271,23 @@ enum {
 
 enum { BLANK, TREE, TENT, NONTENT, MAGIC };
 
+/* Hint support: record the order in which the solver decides squares. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static void hint_record(int pos, int val)
+{
+    if (!hint_on) return;
+    if (hint_n >= hint_cap) {
+        hint_cap = hint_cap ? hint_cap * 2 : 128;
+        hint_log = sresize(hint_log, 2 * hint_cap, int);
+    }
+    hint_log[2*hint_n] = pos;
+    hint_log[2*hint_n+1] = val;
+    hint_n++;
+}
+#define HSET(p, v) do { soln[(p)] = (v); hint_record((p), (v)); } while (0)
+
 struct game_params {
     int w, h;
     int diff;
@@ -552,7 +569,7 @@ static int tents_solve(int w, int h, const char *grid, int *numbers,
 			    printf("%d,%d cannot be a tent (no adjacent"
 				   " unmatched tree)\n", x, y);
 #endif
-			soln[y*w+x] = NONTENT;
+			HSET(y*w+x, NONTENT);
 			done_something = true;
 		    }
 		}
@@ -585,7 +602,7 @@ static int tents_solve(int w, int h, const char *grid, int *numbers,
 			    printf("%d,%d cannot be a tent (adjacent tent)\n",
 				   x, y);
 #endif
-			soln[y*w+x] = NONTENT;
+			HSET(y*w+x, NONTENT);
 			done_something = true;
 		    }
 		}
@@ -631,7 +648,7 @@ static int tents_solve(int w, int h, const char *grid, int *numbers,
 			    printf("tree at %d,%d can only link to tent at"
 				   " %d,%d\n", x, y, x2, y2);
 #endif
-			soln[y2*w+x2] = TENT;
+			HSET(y2*w+x2, TENT);
 			sc->links[y*w+x] = linkd;
 			sc->links[y2*w+x2] = F(linkd);
 			done_something = true;
@@ -656,7 +673,7 @@ static int tents_solve(int w, int h, const char *grid, int *numbers,
 				       " %d,%d rule out tent at %d,%d\n",
 				       x, y, x2, y2);
 #endif
-			    soln[y2*w+x2] = NONTENT;
+			    HSET(y2*w+x2, NONTENT);
 			    done_something = true;
 			}
 		    }
@@ -877,7 +894,7 @@ static int tents_solve(int w, int h, const char *grid, int *numbers,
 				   mthis[j] == TENT ? "tent" : "non-tent",
 				   pos % w, pos / w);
 #endif
-			soln[pos] = mthis[j];
+			HSET(pos, mthis[j]);
 			done_something = true;
 		    }
 		}
@@ -1385,6 +1402,49 @@ static char *solve_game(const game_state *state, const game_state *currstate,
 
         return move;
     }
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int w = curr->p.w, h = curr->p.h, i;
+    struct solver_scratch *sc = new_scratch(w, h);
+    char *soln = snewn(w*h, char), *out = NULL;
+    int ret;
+
+    hint_n = 0;
+    hint_on = true;
+    ret = tents_solve(w, h, orig->grid, orig->numbers->numbers, soln, sc, DIFFCOUNT-1);
+    hint_on = false;
+    free_scratch(sc);
+    if (ret != 1) {
+        sfree(soln);
+        *error = _("No logical next step found");
+        return NULL;
+    }
+    /* mistakes: a tent where the solution has none, or a non-tent where it has a tent */
+    for (i = 0; i < w*h; i++) {
+        if ((curr->grid[i] == TENT && soln[i] != TENT) ||
+            (curr->grid[i] == NONTENT && soln[i] == TENT)) {
+            sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+            *error = errbuf;
+            sfree(soln);
+            return NULL;
+        }
+    }
+    for (i = 0; i < hint_n; i++) {
+        int pos = hint_log[2*i], val = hint_log[2*i+1];
+        if (curr->grid[pos] != val) {
+            char buf[64];
+            sprintf(buf, "%c%d,%d", val == TENT ? 'T' : 'N', pos % w, pos / w);
+            out = dupstr(buf);
+            break;
+        }
+    }
+    sfree(soln);
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static bool game_can_format_as_text_now(const game_params *params)
@@ -2689,6 +2749,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     REQUIRE_RBUTTON,		       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER

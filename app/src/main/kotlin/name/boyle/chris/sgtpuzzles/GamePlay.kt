@@ -562,6 +562,11 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
             isEnabled = enableType
             isVisible = enableType
         }
+        menu.findItem(R.id.solve_step).apply {
+            val show = solveEnabled && currentBackend?.supportsSolveStep == true
+            isEnabled = show
+            isVisible = show
+        }
         return true
     }
 
@@ -607,6 +612,7 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
             R.id.game_menu -> doGameMenu()
             R.id.type_menu -> doTypeMenu()
             R.id.help_menu -> doHelpMenu()
+            R.id.solve_step -> solveStepMenuItemClicked()
             android.R.id.home -> startChooserAndFinish()
             R.id.undo -> sendKey(0, 0, GameView.UI_UNDO)
             R.id.redo -> sendKey(0, 0, GameView.UI_REDO)
@@ -736,11 +742,6 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
                 isEnabled = solveEnabled
                 isVisible = solveEnabled
             }
-            menu.findItem(R.id.solve_step).apply {
-                val show = solveEnabled && currentBackend?.supportsSolveStep == true
-                isEnabled = show
-                isVisible = show
-            }
             menu.findItem(R.id.this_game).title = MessageFormat.format(
                 getString(R.string.how_to_play_game), this@GamePlay.title
             )
@@ -753,10 +754,6 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
                     }
                     R.id.solve -> {
                         solveMenuItemClicked()
-                        return@setOnMenuItemClickListener true
-                    }
-                    R.id.solve_step -> {
-                        solveStepMenuItemClicked()
                         return@setOnMenuItemClickListener true
                     }
                     R.id.feedback -> {
@@ -1224,6 +1221,7 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
             for (i in listOf(R.id.game_menu, R.id.type_menu, R.id.help_menu)) {
                 findItem(i).setShowAsAction(state)
             }
+            findItem(R.id.solve_step).setShowAsAction(SHOW_AS_ACTION_ALWAYS)
             val undoRedoKbd = prefs.getBoolean(UNDO_REDO_KBD_KEY, UNDO_REDO_KBD_DEFAULT)
             val undoItem = findItem(R.id.undo)
             val redoItem = findItem(R.id.redo)

@@ -8,5 +8,6 @@
 <item android:title="@string/Redo" android:id="@+id/redo" android:alphabeticShortcut="r" android:icon="@drawable/ic_action_redo" android:visible="false" supportLib:showAsAction="ifRoom"/>
 <item android:title="@string/Game" android:id="@+id/game_menu" android:icon="@drawable/ic_action_game" supportLib:showAsAction="ifRoom|withText"/>
 <item android:title="@string/Type" android:id="@+id/type_menu" android:icon="@drawable/ic_action_type" supportLib:showAsAction="ifRoom|withText"/>
+<item android:title="@string/Show_next_step" android:id="@+id/solve_step" android:icon="@drawable/ic_action_hint" android:visible="false" supportLib:showAsAction="ifRoom"/>
 <item android:title="@string/Help" android:id="@+id/help_menu" android:icon="@drawable/ic_action_help" supportLib:showAsAction="ifRoom|withText"/>
 </menu>

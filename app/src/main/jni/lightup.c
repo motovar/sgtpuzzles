@@ -697,6 +697,21 @@ static void list_lights(game_state *state, int ox, int oy, bool origin,
     }
 }
 
+/* Hint support: record the order of the solver's deductions. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static void hint_record(int x, int y, int what)
+{
+    if (!hint_on) return;
+    if (hint_n >= hint_cap) {
+        hint_cap = hint_cap ? hint_cap * 2 : 128;
+        hint_log = sresize(hint_log, 3 * hint_cap, int);
+    }
+    hint_log[3*hint_n] = x; hint_log[3*hint_n+1] = y; hint_log[3*hint_n+2] = what;
+    hint_n++;
+}
+
 /* Makes sure a light is the given state, editing the lights table to suit the
  * new state if necessary. */
 static void set_light(game_state *state, int ox, int oy, bool on)
@@ -712,6 +727,7 @@ static void set_light(game_state *state, int ox, int oy, bool on)
         state->nlights--;
     } else if (on && !(GRID(state,flags,ox,oy) & F_LIGHT)) {
         diff = 1;
+        hint_record(ox, oy, 'L');
         GRID(state,flags,ox,oy) |= F_LIGHT;
         state->nlights++;
     }
@@ -899,6 +915,7 @@ static bool try_solve_number(game_state *state, int nx, int ny,
         GRID(state,flags,nx,ny) |= F_NUMBERUSED;
         for (i = 0; i < s.npoints; i++) {
             if (!(s.points[i].f & F_MARK)) {
+                hint_record(s.points[i].x, s.points[i].y, 'I');
                 GRID(state,flags,s.points[i].x,s.points[i].y) |= F_IMPOSSIBLE;
                 ret = true;
             }
@@ -1038,6 +1055,7 @@ static void trl_callback_discount(game_state *state, int dx, int dy,
         if (scratch[i].n == 0) return;
     }
     /* The light ruled out everything in scratch. Yay. */
+    hint_record(dx, dy, 'I');
     GRID(state,flags,dx,dy) |= F_IMPOSSIBLE;
 #ifdef SOLVER_DIAGNOSTICS
     debug(("Set reduction discounted square at (%d,%d):\n", dx,dy));
@@ -1775,6 +1793,50 @@ done:
     return move;
 }
 
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    game_state *sol, *work;
+    char *out = NULL, buf[64];
+    int x, y, i;
+
+    /* full solution (with guessing), to detect mistakes */
+    sol = dup_game(orig);
+    if (dosolve(sol, F_SOLVE_ALLOWRECURSE | F_SOLVE_DISCOUNTSETS, NULL) > 0) {
+        for (x = 0; x < curr->w; x++) {
+            for (y = 0; y < curr->h; y++) {
+                unsigned cf = GRID(curr, flags, x, y), sf = GRID(sol, flags, x, y);
+                if (((cf & F_LIGHT) && !(sf & F_LIGHT)) ||
+                    ((cf & F_IMPOSSIBLE) && (sf & F_LIGHT))) {
+                    sprintf(errbuf, _("There is a mistake in row %d, column %d"), y + 1, x + 1);
+                    *error = errbuf;
+                    free_game(sol);
+                    return NULL;
+                }
+            }
+        }
+    }
+    free_game(sol);
+
+    work = dup_game(orig);
+    hint_n = 0;
+    hint_on = true;
+    dosolve(work, F_SOLVE_FORCEUNIQUE | F_SOLVE_DISCOUNTSETS, NULL);
+    hint_on = false;
+    free_game(work);
+    for (i = 0; i < hint_n; i++) {
+        int hx = hint_log[3*i], hy = hint_log[3*i+1], what = hint_log[3*i+2];
+        unsigned cf = GRID(curr, flags, hx, hy);
+        if (what == 'L' ? (cf & F_LIGHT) : (cf & F_IMPOSSIBLE)) continue;
+        sprintf(buf, "%c%d,%d", what, hx, hy);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
+}
+
 static bool game_can_format_as_text_now(const game_params *params)
 {
     return true;
@@ -2414,6 +2476,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
