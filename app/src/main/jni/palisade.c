@@ -271,8 +271,30 @@ static const int bitcount[16] = {0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4};
 
 #define COMPUTE_J (-1)
 
+/* Hint support: record the order of the solver's edge decisions. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static void hint_record(int i, int dir, int wall)
+{
+    if (!hint_on) return;
+    if (hint_n >= hint_cap) {
+        hint_cap = hint_cap ? hint_cap * 2 : 128;
+        hint_log = sresize(hint_log, 3 * hint_cap, int);
+    }
+    hint_log[3*hint_n] = i; hint_log[3*hint_n+1] = dir; hint_log[3*hint_n+2] = wall;
+    hint_n++;
+}
+
 static void connect(solver_ctx *ctx, int i, int j)
 {
+    int w = ctx->params->w;
+    if (hint_on) {
+        if (j == i - w) hint_record(i, 0, 0);
+        else if (j == i + 1) hint_record(i, 1, 0);
+        else if (j == i + w) hint_record(i, 2, 0);
+        else if (j == i - 1) hint_record(i, 3, 0);
+    }
     dsf_merge(ctx->dsf, i, j);
 }
 
@@ -285,6 +307,7 @@ static bool connected(solver_ctx *ctx, int i, int j, int dir)
 static void disconnect(solver_ctx *ctx, int i, int j, int dir)
 {
     if (j == COMPUTE_J) j = i + dx[dir] + ctx->params->w*dy[dir];
+    hint_record(i, dir, 1);
     ctx->borders[i] |= BORDER(dir);
     ctx->borders[j] |= BORDER(FLIP(dir));
 }
@@ -820,6 +843,52 @@ static void free_game(game_state *state)
     }
     sfree(state->borders);
     sfree(state);
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int w = orig->shared->params.w, h = orig->shared->params.h, wh = w*h;
+    borderflag *sol = snewn(wh, borderflag);
+    char *out = NULL, buf[96];
+    int i, k;
+    bool ok;
+
+    init_borders(w, h, sol);
+    hint_n = 0;
+    hint_on = true;
+    ok = solver(&orig->shared->params, orig->shared->clues, sol);
+    hint_on = false;
+    if (ok) {
+        for (i = 0; i < wh; i++) {
+            for (k = 0; k < 4; k++) {
+                bool curwall = curr->borders[i] & BORDER(k);
+                bool curno = curr->borders[i] & DISABLED(BORDER(k));
+                bool solwall = sol[i] & BORDER(k);
+                if ((curwall && !solwall) || (curno && solwall)) {
+                    sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+                    *error = errbuf;
+                    sfree(sol);
+                    return NULL;
+                }
+            }
+        }
+    }
+    sfree(sol);
+    for (i = 0; i < hint_n; i++) {
+        int c = hint_log[3*i], dir = hint_log[3*i+1], wall = hint_log[3*i+2];
+        int x = c % w, y = c / w, x2 = x + dx[dir], y2 = y + dy[dir];
+        int flag = wall ? BORDER(dir) : DISABLED(BORDER(dir));
+        int flag2 = wall ? BORDER(FLIP(dir)) : DISABLED(BORDER(FLIP(dir)));
+        if (x2 < 0 || x2 >= w || y2 < 0 || y2 >= h) continue;
+        if (curr->borders[c] & flag) continue;
+        sprintf(buf, "F%d,%d,%dF%d,%d,%d", x, y, flag, x2, y2, flag2);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -1664,4 +1733,5 @@ const struct game thegame = {
     true,                                     /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,                                         /* flags */
+    hint_game,
 };
