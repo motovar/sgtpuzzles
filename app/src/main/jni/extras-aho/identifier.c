@@ -1361,6 +1361,26 @@ ShapeDict* global_dict_m = 0;
 ShapeDict* global_dict_r = 0;
 ShapeDict* global_dict_i = 0;
 
+/* The dictionaries are needed in every process that uses a game (on Android
+ * the generator runs in a separate process), so create them lazily. */
+static ShapeDict* get_dict(int refl, int maxlev)
+{
+  ShapeDict* dict;
+  if (!global_dict_a) {
+    global_dict_a = init_shape_dictionary(12, ID_REFL_ALL);
+    global_dict_r = init_shape_dictionary(12, ID_REFL_ROT);
+    global_dict_m = init_shape_dictionary(12, ID_REFL_MIR);
+    global_dict_i = init_shape_dictionary(12, ID_REFL_ORIG);
+  }
+  dict = (refl == ID_REFL_ALL ? global_dict_a :
+          refl == ID_REFL_ROT ? global_dict_r :
+          refl == ID_REFL_MIR ? global_dict_m :
+          global_dict_i);
+  if (maxlev > 12) maxlev = 12;
+  extend_shape_dictionary(dict, maxlev);
+  return dict;
+}
+
 /* ---------- Game configuration ---------- */
 
 
@@ -1551,6 +1571,7 @@ static void decode_params(game_params *params, char const *string)
       refl = (*p == 'm' ? ID_REFL_MIR : *p == 'r' ? ID_REFL_ROT : ID_REFL_ORIG);
       p++;
     }
+    params->refl = refl;
     params->conf = interpret_fleet_config(p, refl);
     params->confstr = dupstr(p);
 }
@@ -1693,17 +1714,7 @@ static char *new_game_desc(const game_params *params, random_state *rs,
     double entr;
     int x, y, done, count;
     int n, i, off, nc;
-    if (!global_dict_a) {
-      global_dict_a = init_shape_dictionary(12, ID_REFL_ALL);
-      global_dict_r = init_shape_dictionary(12, ID_REFL_ROT);
-      global_dict_m = init_shape_dictionary(12, ID_REFL_MIR);
-      global_dict_i = init_shape_dictionary(12, ID_REFL_ORIG);
-    }
-    dict = (params->refl == ID_REFL_ALL ? global_dict_a :
-            params->refl == ID_REFL_ROT ? global_dict_r :
-            params->refl == ID_REFL_MIR ? global_dict_m :
-            global_dict_i);
-    extend_shape_dictionary(dict, params->conf->maxlev);
+    dict = get_dict(params->refl, params->conf->maxlev);
 
     conf = copy_shape_config(params->conf);
     if (params->ftype == 2) { /* standard fleet, only straight line shapes */
@@ -1889,10 +1900,7 @@ static game_state *new_game(midend *me, const game_params *params, const char *d
       void *randseed;
       int randseedsize;
       ShapeDict* dict;
-      dict = (params->refl == ID_REFL_ALL ? global_dict_a :
-              params->refl == ID_REFL_ROT ? global_dict_r :
-              params->refl == ID_REFL_MIR ? global_dict_m :
-              global_dict_i);
+      dict = get_dict(params->refl, state->clues->conf->maxlev);
       state->clues->dstat = init_dict_statistics(dict, state->clues->conf, params->bwidth, params->bheight);
       get_random_seed(&randseed, &randseedsize);
       state->clues->drs = random_new(randseed, randseedsize);
@@ -2557,10 +2565,7 @@ static void draw_legend(drawing *dr, game_drawstate *ds, const game_params *par,
   int y = ds->yoffl;
   int sqsz = ds->tilesize - ds->gridsize;
   ShapeDict* dict;
-  dict = (par->refl == ID_REFL_ALL ? global_dict_a :
-          par->refl == ID_REFL_ROT ? global_dict_r :
-          par->refl == ID_REFL_MIR ? global_dict_m :
-          global_dict_i);
+  dict = get_dict(par->refl, conf->maxlev);
   for (i=0; i<conf->numcomp; i++) {
     sprintf(buf, "%d *", conf->mult[i]);
     draw_text(dr, x, y + sqsz / 2, FONT_VARIABLE, ds->tilesize / 2, ALIGN_HLEFT | ALIGN_VCENTRE, COL_BLACK, buf);
