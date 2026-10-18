@@ -506,6 +506,28 @@ static bool do_row(unsigned char *known, unsigned char *deduced,
     return done_any;
 }
 
+/* Hint support: record the order in which squares become known. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static unsigned char *hint_seen = NULL;
+static void hint_scan(const unsigned char *matrix, int n)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        if (matrix[i] != UNKNOWN && !hint_seen[i]) {
+            hint_seen[i] = 1;
+            if (hint_n >= hint_cap) {
+                hint_cap = hint_cap ? hint_cap * 2 : 256;
+                hint_log = sresize(hint_log, 2 * hint_cap, int);
+            }
+            hint_log[2*hint_n] = i;
+            hint_log[2*hint_n+1] = matrix[i];
+            hint_n++;
+        }
+    }
+}
+
 static bool solve_puzzle(const game_state *state, unsigned char *grid,
                          int w, int h,
                          unsigned char *matrix, unsigned char *workspace,
@@ -618,6 +640,7 @@ static bool solve_puzzle(const game_state *state, unsigned char *grid,
 			   , "row", i+1, cluewid
 #endif
 			   );
+		    if (hint_on) hint_scan(matrix, w*h);
 		    changed_h[i] = 0;
 		}
 	    }
@@ -642,6 +665,7 @@ static bool solve_puzzle(const game_state *state, unsigned char *grid,
 			   , "col", i+1, cluewid
 #endif
 			   );
+		    if (hint_on) hint_scan(matrix, w*h);
 		    changed_w[i] = 0;
 		}
 	    }
@@ -1135,6 +1159,51 @@ static char *solve_game(const game_state *state, const game_state *currstate,
     sfree(matrix);
 
     return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int w = curr->common->w, h = curr->common->h, i, max = max(w, h);
+    unsigned char *matrix = snewn(w*h, unsigned char);
+    unsigned char *workspace = snewn(max*7, unsigned char);
+    unsigned int *changed_h = snewn(max+1, unsigned int);
+    unsigned int *changed_w = snewn(max+1, unsigned int);
+    int *rowdata = snewn(max+1, int);
+    char *out = NULL, buf[64];
+    bool ok;
+
+    hint_seen = snewn(w*h, unsigned char);
+    memset(hint_seen, 0, w*h);
+    hint_n = 0;
+    hint_on = true;
+    ok = solve_puzzle(orig, NULL, w, h, matrix, workspace, changed_h, changed_w, rowdata, 0);
+    hint_on = false;
+    sfree(hint_seen); hint_seen = NULL;
+    sfree(workspace); sfree(changed_h); sfree(changed_w); sfree(rowdata);
+    if (ok) {
+        for (i = 0; i < w*h; i++) {
+            int g = curr->grid[i];
+            if ((g == GRID_FULL && matrix[i] != BLOCK) || (g == GRID_EMPTY && matrix[i] != DOT)) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+                *error = errbuf;
+                sfree(matrix);
+                return NULL;
+            }
+        }
+    }
+    sfree(matrix);
+    for (i = 0; i < hint_n; i++) {
+        int pos = hint_log[2*i], v = hint_log[2*i+1];
+        int want = (v == BLOCK ? GRID_FULL : GRID_EMPTY);
+        if (curr->grid[pos] == want) continue;
+        sprintf(buf, "%c%d,%d,1,1", v == BLOCK ? 'F' : 'E', pos % w, pos / w);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static bool game_can_format_as_text_now(const game_params *params)
@@ -2134,6 +2203,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     REQUIRE_RBUTTON,		       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER

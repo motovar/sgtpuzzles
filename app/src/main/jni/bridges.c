@@ -1277,6 +1277,23 @@ static void map_clear(game_state *state)
     }
 }
 
+/* Hint support: record bridges in the order the solver places them. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static void hint_record(int x1, int y1, int x2, int y2, int n)
+{
+    if (!hint_on) return;
+    if (hint_n >= hint_cap) {
+        hint_cap = hint_cap ? hint_cap * 2 : 128;
+        hint_log = sresize(hint_log, 5 * hint_cap, int);
+    }
+    hint_log[5*hint_n] = x1; hint_log[5*hint_n+1] = y1;
+    hint_log[5*hint_n+2] = x2; hint_log[5*hint_n+3] = y2;
+    hint_log[5*hint_n+4] = n;
+    hint_n++;
+}
+
 static void solve_join(struct island *is, int direction, int n, bool is_max)
 {
     struct island *is_orth;
@@ -1290,6 +1307,8 @@ static void solve_join(struct island *is, int direction, int n, bool is_max)
     assert(is_orth);
     /*debug(("...joining (%d,%d) to (%d,%d) with %d bridge(s).\n",
            is->x, is->y, is_orth->x, is_orth->y, n));*/
+    if (n > 0 && !is_max)
+        hint_record(is->x, is->y, is_orth->x, is_orth->y, n);
     island_join(is, is_orth, n, is_max);
 
     if (n > 0 && !is_max) {
@@ -2728,6 +2747,56 @@ static char *solve_game(const game_state *state, const game_state *currstate,
     return ret;
 }
 
+static int hint_count(const game_state *st, int x1, int y1, int x2, int y2)
+{
+    if (x1 == x2)
+        return GRIDCOUNT(st, x1, (y1 < y2 ? y1 : y2) + 1, G_LINEV);
+    return GRIDCOUNT(st, (x1 < x2 ? x1 : x2) + 1, y1, G_LINEH);
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    game_state *solved = dup_game(orig);
+    char *out = NULL, buf[80];
+    int i, j;
+
+    hint_n = 0;
+    hint_on = true;
+    i = solve_from_scratch(solved, 10);
+    hint_on = false;
+    if (!i) {
+        free_game(solved);
+        *error = _("No logical next step found");
+        return NULL;
+    }
+    /* mistakes: more bridges between two islands than in the solution */
+    for (i = 0; i < hint_n; i++) {
+        int *e = &hint_log[5*i];
+        int fin = hint_count(solved, e[0], e[1], e[2], e[3]);
+        if (hint_count(curr, e[0], e[1], e[2], e[3]) > fin) {
+            sprintf(errbuf, _("There is a mistake near row %d, column %d"), e[1] + 1, e[0] + 1);
+            *error = errbuf;
+            free_game(solved);
+            return NULL;
+        }
+    }
+    /* first deduced bridge (ignoring tentative ones the solver undid) not yet on the board */
+    for (i = 0; i < hint_n; i++) {
+        int *e = &hint_log[5*i];
+        if (hint_count(solved, e[0], e[1], e[2], e[3]) < e[4]) continue;
+        if (hint_count(curr, e[0], e[1], e[2], e[3]) < e[4]) {
+            sprintf(buf, "L%d,%d,%d,%d,%d", e[0], e[1], e[2], e[3], e[4]);
+            out = dupstr(buf);
+            break;
+        }
+    }
+    free_game(solved);
+    if (!out) *error = _("No logical next step found");
+    return out;
+}
+
 /* ----------------------------------------------------------------------
  * Drawing routines.
  */
@@ -3385,7 +3454,7 @@ const struct game thegame = {
 #endif
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
-    REQUIRE_RBUTTON,		       /* flags */
+    REQUIRE_RBUTTON,		       /* flags */    hint_game,
 };
 
 /* vim: set shiftwidth=4 tabstop=8: */

@@ -1192,6 +1192,28 @@ static int unruly_validate_counts(const game_state *state,
     return (above ? -1 : below ? 1 : 0);
 }
 
+/* Hint support: record the order in which squares become known. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static char *hint_seen = NULL;
+static void hint_scan(const game_state *state)
+{
+    int i, s = state->w2 * state->h2;
+    for (i = 0; i < s; i++) {
+        if ((state->grid[i] == N_ONE || state->grid[i] == N_ZERO) && !hint_seen[i]) {
+            hint_seen[i] = 1;
+            if (hint_n >= hint_cap) {
+                hint_cap = hint_cap ? hint_cap * 2 : 256;
+                hint_log = sresize(hint_log, 2 * hint_cap, int);
+            }
+            hint_log[2*hint_n] = i;
+            hint_log[2*hint_n+1] = state->grid[i];
+            hint_n++;
+        }
+    }
+}
+
 static int unruly_solve_game(game_state *state,
                              struct unruly_scratch *scratch, int diff)
 {
@@ -1199,6 +1221,7 @@ static int unruly_solve_game(game_state *state,
 
     while (true) {
         done = 0;
+        if (hint_on) hint_scan(state);
 
         /* Check for impending 3's */
         done += unruly_solver_check_all_threes(state, scratch);
@@ -1259,6 +1282,7 @@ static int unruly_solve_game(game_state *state,
 
         break;
     }
+    if (hint_on) hint_scan(state);
     return maxdiff;
 }
 
@@ -1298,6 +1322,50 @@ static char *solve_game(const game_state *state, const game_state *currstate,
     free_game(solved);
     unruly_free_scratch(scratch);
     return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int s = curr->w2 * curr->h2, i;
+    game_state *work = dup_game(orig);
+    struct unruly_scratch *scratch = unruly_new_scratch(work);
+    char *out = NULL, buf[64];
+    bool solved;
+
+    hint_seen = snewn(s, char);
+    memset(hint_seen, 0, s);
+    hint_n = 0;
+    hint_on = true;
+    unruly_solve_game(work, scratch, DIFFCOUNT);
+    hint_on = false;
+    sfree(hint_seen); hint_seen = NULL;
+    solved = unruly_validate_counts(work, scratch, NULL) == 0 &&
+             unruly_validate_all_rows(work, NULL) != -1;
+    if (solved) {
+        for (i = 0; i < s; i++) {
+            if ((curr->grid[i] == N_ONE || curr->grid[i] == N_ZERO) &&
+                curr->grid[i] != work->grid[i]) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"),
+                        i / curr->w2 + 1, i % curr->w2 + 1);
+                *error = errbuf;
+                free_game(work); unruly_free_scratch(scratch);
+                return NULL;
+            }
+        }
+    }
+    free_game(work);
+    unruly_free_scratch(scratch);
+    for (i = 0; i < hint_n; i++) {
+        int pos = hint_log[2*i], v = hint_log[2*i+1];
+        if (curr->grid[pos] == v) continue;
+        sprintf(buf, "P%c,%d,%d", v == N_ONE ? '1' : '0', pos % curr->w2, pos / curr->w2);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 /* ********* *
@@ -2074,6 +2142,7 @@ const struct game thegame = {
     false,                      /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,                          /* flags */
+    hint_game,
 };
 
 /* ***************** *
