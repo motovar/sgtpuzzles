@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -207,7 +208,13 @@ private fun Buttons(
     BoxWithConstraints {
         val keyList = keys.value.toList()
         val maxDp = if (isLandscape) this.maxHeight else this.maxWidth
-        val keySize = dimensionResource(id = R.dimen.keySize)
+        val rawKeySize = dimensionResource(id = R.dimen.keySize)
+        // Ten or more digit keys: shrink the keys a little (portrait only) so that 0-9 fit in one row.
+        val digitCount = keyList.count { it in '0'..'9' }
+        val keyScale = if (!isLandscape && digitCount >= 10)
+            minOf(1f, maxDp.value * 0.995f / (10 * rawKeySize.value)).coerceAtLeast(0.6f)
+        else 1f
+        val keySize = rawKeySize * keyScale
         val hasArrows = arrowMode.value.hasArrows()
         val isDiagonal = arrowMode.value == ARROWS_DIAGONALS
 
@@ -254,6 +261,7 @@ private fun Buttons(
         val totalWidth = if (isLandscape) largerWidth + spaceAfterKeys else maxWidth
         val totalHeight = if (isLandscape) maxHeight else largerHeight + spaceAfterKeys
 
+        CompositionLocalProvider(LocalKeyScale provides keyScale) {
         Box(modifier = Modifier
             .background(colorResource(id = R.color.keyboard_background))
             .width(totalWidth)
@@ -317,8 +325,11 @@ private fun Buttons(
                     )
             }
         }
+        }
     }
 }
+
+private val LocalKeyScale = compositionLocalOf { 1f }
 
 private fun majorsNeeded(characters: List<Char>, minorsPerMajor: Int): Int =
     ceil(characters.size.toDouble() / minorsPerMajor).toInt()
@@ -789,8 +800,8 @@ private fun KeyButton(
             contentPadding = PaddingValues(0.dp, 0.dp),
             modifier = modifier
                 .absoluteOffset { offset }
-                .width(dimensionResource(id = R.dimen.keySize))
-                .height(dimensionResource(id = R.dimen.keySize))
+                .width(dimensionResource(id = R.dimen.keySize) * LocalKeyScale.current)
+                .height(dimensionResource(id = R.dimen.keySize) * LocalKeyScale.current)
                 .semantics {
                     role = Role.Button
                     this.contentDescription = contentDescription

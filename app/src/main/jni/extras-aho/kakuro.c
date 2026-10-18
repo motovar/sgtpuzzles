@@ -2010,6 +2010,8 @@ struct game_ui {
     int hpencil;
     /* direction in which focus advances after entering a value */
     int advx, advy;
+    /* show the digit-combination helper in the status bar */
+    int show_hints;
     /*
      * This indicates whether or not we're showing the highlight
      * (used to be hx = hy = -1); important so that when we're
@@ -2038,6 +2040,7 @@ static game_ui *new_ui(const game_state *state)
 
     ui->hx = ui->hy = 0;
     ui->advx = 1; ui->advy = 0;
+    ui->show_hints = 1;
     ui->hpencil = ui->hshow = ui->hcursor = 0;
 #ifdef MULTIDIGIT
     ui->pending = 0;
@@ -2077,6 +2080,23 @@ static const char *current_key_label(const game_ui *ui,
     if (ui->hshow && IS_CURSOR_SELECT(button))
         return ui->hpencil ? "Ink" : "Pencil";
     return "";
+}
+
+static config_item *get_prefs(game_ui *ui)
+{
+    config_item *ret = snewn(2, config_item);
+    ret[0].name = "Show possible digit combinations";
+    ret[0].kw = "show-combinations";
+    ret[0].type = C_BOOLEAN;
+    ret[0].u.boolean.bval = ui->show_hints != 0;
+    ret[1].name = NULL;
+    ret[1].type = C_END;
+    return ret;
+}
+
+static void set_prefs(game_ui *ui, const config_item *cfg)
+{
+    ui->show_hints = cfg[0].u.boolean.bval;
 }
 
 static bool check_errors(const game_state *state, long *errors);
@@ -3003,7 +3023,8 @@ static void game_redraw(drawing *dr, game_drawstate *ds, const game_state *oldst
 #else
     {
         char hint[560];
-        kakuro_hint_text(state, ui, hint, sizeof hint);
+        if (ui->show_hints) kakuro_hint_text(state, ui, hint, sizeof hint);
+        else hint[0] = 0;
         status_bar(dr, hint);
     }
 #endif /* SHOWDIFF */
@@ -3097,7 +3118,7 @@ const struct game thegame = {
     free_game,
     true, solve_game,
     false, game_can_format_as_text_now, game_text_format,
-    NULL, NULL, /* get_prefs, set_prefs */
+    get_prefs, set_prefs,
     new_ui,
     free_ui,
     NULL, /* encode_ui */

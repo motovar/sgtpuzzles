@@ -100,7 +100,7 @@ sealed class BackendName(
      */
     val nightKeepColours: Set<Int> by lazy {
         mapOf<BackendName, Set<Int>>(
-            UNDEAD_PLUS to setOf(6, 7, 8),
+            UNDEAD_PLUS to setOf(6, 7, 8, 10, 11),
             STELLAR to setOf(3, 4, 5, 6),
             BOATS to setOf(4, 5, 6, 7, 8, 9, 10),
             WALLS to setOf(5, 6, 7, 8, 9),

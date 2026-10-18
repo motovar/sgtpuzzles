@@ -68,6 +68,8 @@ enum {
     COL_ZOMBIE,
     COL_VAMPIRE,
     COL_DONE,
+    COL_MONSTER_OUTLINE,
+    COL_MONSTER_EYES,
     NCOLOURS
 };
 
@@ -2619,6 +2621,14 @@ static float *game_colours(frontend *fe, int *ncolours)
     ret[COL_DONE * 3 + 1] = ret[COL_BACKGROUND * 3 + 1] / 1.5F;
     ret[COL_DONE * 3 + 2] = ret[COL_BACKGROUND * 3 + 2] / 1.5F;
 
+    ret[COL_MONSTER_OUTLINE * 3 + 0] = 0.0F;
+    ret[COL_MONSTER_OUTLINE * 3 + 1] = 0.0F;
+    ret[COL_MONSTER_OUTLINE * 3 + 2] = 0.0F;
+
+    ret[COL_MONSTER_EYES * 3 + 0] = 1.0F;
+    ret[COL_MONSTER_EYES * 3 + 1] = 1.0F;
+    ret[COL_MONSTER_EYES * 3 + 2] = 1.0F;
+
     *ncolours = NCOLOURS;
     return ret;
 }
@@ -2710,7 +2720,7 @@ static void draw_circle_or_point(drawing *dr, int cx, int cy, int radius,
 static void draw_monster(drawing *dr, game_drawstate *ds, int x, int y,
                          int tilesize, bool hflash, int monster)
 {
-    int black = (hflash ? COL_FLASH : COL_TEXT);
+    int black = (hflash ? COL_FLASH : COL_MONSTER_OUTLINE);
 
     if (monster == 1) {                /* ghost */
         int poly[80], i, j;
@@ -2744,9 +2754,9 @@ static void draw_monster(drawing *dr, game_drawstate *ds, int x, int y,
         unclip(dr);
 
         draw_circle(dr,x-tilesize/6,y-tilesize/12,tilesize/10,
-                    COL_BACKGROUND,black);
+                    COL_MONSTER_EYES,black);
         draw_circle(dr,x+tilesize/6,y-tilesize/12,tilesize/10,
-                    COL_BACKGROUND,black);
+                    COL_MONSTER_EYES,black);
 
         draw_circle_or_point(dr,x-tilesize/6+1+tilesize/48,y-tilesize/12,
                              tilesize/48,black);
@@ -2774,9 +2784,9 @@ static void draw_monster(drawing *dr, game_drawstate *ds, int x, int y,
         unclip(dr);
 
         draw_circle(dr, x-tilesize/7, y-tilesize/16, tilesize/16,
-                    COL_BACKGROUND, black);
+                    COL_MONSTER_EYES, black);
         draw_circle(dr, x+tilesize/7, y-tilesize/16, tilesize/16,
-                    COL_BACKGROUND, black);
+                    COL_MONSTER_EYES, black);
         draw_circle_or_point(dr, x-tilesize/7, y-tilesize/16, tilesize/48,
                              black);
         draw_circle_or_point(dr, x+tilesize/7, y-tilesize/16, tilesize/48,
@@ -2791,7 +2801,7 @@ static void draw_monster(drawing *dr, game_drawstate *ds, int x, int y,
         poly[i++] = y+7*tilesize/24;
         poly[i++] = x-1*tilesize/16;
         poly[i++] = y+1*tilesize/8;
-        draw_polygon(dr, poly, i/2, COL_BACKGROUND, black);
+        draw_polygon(dr, poly, i/2, COL_MONSTER_EYES, black);
         i = 0;
         poly[i++] = x+3*tilesize/16;
         poly[i++] = y+1*tilesize/8;
@@ -2799,7 +2809,7 @@ static void draw_monster(drawing *dr, game_drawstate *ds, int x, int y,
         poly[i++] = y+7*tilesize/24;
         poly[i++] = x+1*tilesize/16;
         poly[i++] = y+1*tilesize/8;
-        draw_polygon(dr, poly, i/2, COL_BACKGROUND, black);
+        draw_polygon(dr, poly, i/2, COL_MONSTER_EYES, black);
 
         draw_circle(dr, x, y-tilesize/5, 2*tilesize/5, COL_VAMPIRE, black);
         unclip(dr);
@@ -2826,7 +2836,7 @@ static void draw_monster(drawing *dr, game_drawstate *ds, int x, int y,
 
         clip(dr, x-tilesize/5, y+tilesize/6, 2*tilesize/5+1, tilesize/2);
         draw_circle(dr, x-tilesize/15, y+tilesize/6, tilesize/12,
-                    COL_BACKGROUND, black);
+                    COL_MONSTER_EYES, black);
         unclip(dr);
 
         draw_line(dr, x-tilesize/5, y+tilesize/6, x+tilesize/5, y+tilesize/6,
