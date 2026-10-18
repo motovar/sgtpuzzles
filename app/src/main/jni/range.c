@@ -340,6 +340,49 @@ static char *solve_game(const game_state *orig, const game_state *curpos,
     return ret;
 }
 
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int const w = orig->params.w, n = w * orig->params.h;
+    move *const base = snewn(n, move);
+    move *const base2 = snewn(n, move);
+    move *end = solve_internal(orig, base, DIFF_RECURSION);
+    move *end2, *it;
+    signed char *sol = snewn(n, signed char);
+    char *out = NULL, buf[64];
+    int i;
+
+    memset(sol, 0, n);
+    if (end) {
+        for (it = base; it < end; ++it)
+            sol[idx(it->square.r, it->square.c, w)] = it->colour == M_BLACK ? BLACK : WHITE;
+        for (i = 0; i < n; i++) {
+            if ((curr->grid[i] == BLACK || curr->grid[i] == WHITE) && sol[i] &&
+                curr->grid[i] != sol[i]) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+                *error = errbuf;
+                sfree(base); sfree(base2); sfree(sol);
+                return NULL;
+            }
+        }
+    }
+    end2 = solve_internal(orig, base2, DIFF_RECURSION - 1);
+    if (end2) {
+        for (it = base2; it < end2; ++it) {
+            int cell = idx(it->square.r, it->square.c, w);
+            int want = it->colour == M_BLACK ? BLACK : WHITE;
+            if (curr->grid[cell] == want) continue;
+            sprintf(buf, "%c,%d,%d", it->colour == M_BLACK ? 'B' : 'W', it->square.r, it->square.c);
+            out = dupstr(buf);
+            break;
+        }
+    }
+    sfree(base); sfree(base2); sfree(sol);
+    if (!out) *error = _("No logical next step found");
+    return out;
+}
+
 static square *find_clues(const game_state *state, int *ret_nclues);
 static move *do_solve(game_state *state,
                       int nclues,
@@ -1896,4 +1939,5 @@ struct game const thegame = {
     false, /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0, /* flags */
+    hint_game,
 };
