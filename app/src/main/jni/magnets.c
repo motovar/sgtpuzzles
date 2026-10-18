@@ -890,6 +890,11 @@ static int solve_unflag_surrounds(game_state *state, int i, int which)
 
 /* Sets a cell to a particular colour, and also perform other
  * housekeeping around that. */
+/* Hint support: record the order in which cells are set by the solver. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+
 static int solve_set(game_state *state, int i, int which,
                      const char *why, rowcol *rc)
 {
@@ -944,6 +949,15 @@ static int solve_set(game_state *state, int i, int which,
             return -1;
     }
 
+    if (hint_on) {
+        if (hint_n >= hint_cap) {
+            hint_cap = hint_cap ? hint_cap * 2 : 128;
+            hint_log = sresize(hint_log, 2 * hint_cap, int);
+        }
+        hint_log[2*hint_n] = i;
+        hint_log[2*hint_n+1] = which;
+        hint_n++;
+    }
     state->grid[i] = which;
     state->grid[ii] = OPPOSITE(which);
 
@@ -1472,6 +1486,49 @@ static void solve_from_aux(const game_state *state, const char *aux)
         state->grid[i] = CHAR2GRID(aux[i]);
         state->flags[i] |= GS_SET;
     }
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    game_state *work = dup_game(orig);
+    char *out = NULL, buf[64];
+    int i, ret;
+
+    hint_n = 0;
+    hint_on = true;
+    ret = solve_state(work, DIFFCOUNT);
+    hint_on = false;
+    if (ret > 0) {
+        for (i = 0; i < curr->wh; i++) {
+            if (orig->common->dominoes[i] == i) continue;
+            if ((curr->flags[i] & GS_SET) && curr->grid[i] != work->grid[i]) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"),
+                        i / curr->w + 1, i % curr->w + 1);
+                *error = errbuf;
+                free_game(work);
+                return NULL;
+            }
+        }
+    }
+    free_game(work);
+    for (i = 0; i < hint_n; i++) {
+        int pos = hint_log[2*i], which = hint_log[2*i+1];
+        int ii = orig->common->dominoes[pos];
+        bool done;
+        if (ii == pos) continue;        /* pre-set domino half */
+        if (which == NEUTRAL)
+            done = (curr->flags[pos] & GS_SET) && curr->grid[pos] == NEUTRAL;
+        else
+            done = curr->grid[pos] == which;
+        if (done) continue;
+        sprintf(buf, "%c%d,%d", GRID2CHAR(which), pos % curr->w, pos / curr->w);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -2496,6 +2553,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     REQUIRE_RBUTTON,		       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
