@@ -778,8 +778,24 @@ struct solver_usage {
  * a particular number in it. The y-coordinate passed in here is
  * transformed.
  */
+/* Hint support: record placements made by the solver, in order. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+
 static void solver_place(struct solver_usage *usage, int x, int y, int n)
 {
+    if (hint_on) {
+        if (hint_n >= hint_cap) {
+            hint_cap = hint_cap ? hint_cap * 2 : 256;
+            hint_log = sresize(hint_log, 3 * hint_cap, int);
+        }
+        hint_log[3*hint_n] = x;
+        hint_log[3*hint_n+1] = y;
+        hint_log[3*hint_n+2] = n;
+        hint_n++;
+    }
+
     int cr = usage->cr;
     int sqindex = y*cr+x;
     int i, bi;
@@ -4318,6 +4334,62 @@ static void free_game(game_state *state)
     sfree(state);
 }
 
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int cr = curr->cr, d, i;
+    digit *grid = snewn(cr*cr, digit);
+    digit *sol = snewn(cr*cr, digit);
+    char *out = NULL;
+    bool have_sol = true;
+    struct difficulty dlev;
+
+    /* Full solution from the clues only, to detect mistakes. */
+    for (i = 0; i < cr*cr; i++)
+        sol[i] = curr->immutable[i] ? curr->grid[i] : 0;
+    dlev.maxdiff = DIFF_RECURSIVE;
+    dlev.maxkdiff = DIFF_KINTERSECT;
+    solver(cr, curr->blocks, curr->kblocks, curr->xtype, sol, curr->kgrid, &dlev);
+    if (dlev.diff == DIFF_IMPOSSIBLE || dlev.diff == DIFF_AMBIGUOUS)
+        have_sol = false;
+    for (i = 0; i < cr*cr; i++) if (!sol[i]) have_sol = false;
+    if (have_sol) {
+        for (i = 0; i < cr*cr; i++) {
+            if (curr->grid[i] && curr->grid[i] != sol[i]) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"),
+                        i / cr + 1, i % cr + 1);
+                *error = errbuf;
+                sfree(grid); sfree(sol);
+                return NULL;
+            }
+        }
+    }
+
+    for (d = DIFF_BLOCK; d <= DIFF_EXTREME && !out; d++) {
+        memcpy(grid, curr->grid, cr*cr);
+        dlev.maxdiff = d;
+        dlev.maxkdiff = DIFF_KINTERSECT;
+        hint_n = 0;
+        hint_on = true;
+        solver(cr, curr->blocks, curr->kblocks, curr->xtype, grid, curr->kgrid, &dlev);
+        hint_on = false;
+        for (i = 0; i < hint_n; i++) {
+            int x = hint_log[3*i], y = hint_log[3*i+1], n = hint_log[3*i+2];
+            if (!curr->grid[y*cr+x] && (!have_sol || sol[y*cr+x] == n)) {
+                char buf[64];
+                sprintf(buf, "R%d,%d,%d", x, y, n);
+                out = dupstr(buf);
+                break;
+            }
+        }
+    }
+    sfree(grid); sfree(sol);
+    if (!out && !*error)
+        *error = _("No logical next step found");
+    return out;
+}
+
 static char *solve_game(const game_state *state, const game_state *currstate,
                         const char *ai, const char **error)
 {
@@ -5857,6 +5929,7 @@ const struct game thegame = {
     false,                               /* wants_statusbar */
     false, game_timing_state,
     REQUIRE_RBUTTON | REQUIRE_NUMPAD,  /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER

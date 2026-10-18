@@ -81,11 +81,10 @@ sealed class BackendName(
         }
     }
 
-    /** Games whose Solve move is a list of items, so "Show next step" can apply one at a time. */
+    /** Games that can show one logically deducible next step (game->hint in C). */
     val supportsSolveStep by lazy {
         this in setOf(
-            BRIDGES, DOMINOSA, FLOW, GALAXIES, LIGHTUP, MAGNETS, MAP, NET, PEARL, SINGLES, SLANT,
-            SPOKES, STELLAR, TENTS, TRACKS, UNDEAD, UNDEAD_PLUS, UNTANGLE, WALLS
+            TOWERS, KEEN, UNEQUAL, UNEQUAL_PLUS, SOLO, SOLO_PLUS
         )
     }
 

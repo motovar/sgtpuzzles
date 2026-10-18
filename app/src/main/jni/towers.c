@@ -1071,6 +1071,23 @@ static char *solve_game(const game_state *state, const game_state *currstate,
     return out;
 }
 
+static int hint_run(digit *soln, int diff, void *ctx)
+{
+    game_state *st = (game_state *)ctx;
+    return solver(st->par.w, st->clues->clues, soln, diff);
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int w = curr->par.w;
+    char *r = latin_hint_move(curr->clues->immutable, curr->grid, w, DIFFCOUNT-1,
+                              hint_run, (void *)curr, error);
+    if (!r && error && !*error)
+        *error = _("No logical next step found");
+    return r;
+}
+
 static bool game_can_format_as_text_now(const game_params *params)
 {
     return true;
@@ -2215,6 +2232,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     REQUIRE_RBUTTON | REQUIRE_NUMPAD,  /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER

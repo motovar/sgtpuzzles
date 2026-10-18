@@ -36,6 +36,13 @@ struct latin_solver {
 /* Place a value at a specific location. */
 void latin_solver_place(struct latin_solver *solver, int x, int y, int n);
 
+/* Hint support: log placements made by the solver. latin_hint_move() runs
+ * run(soln, difficulty, ctx) for increasing difficulty and returns the first
+ * placement into a cell that is empty in 'start' as a "R<x>,<y>,<n>" move. */
+char *latin_hint_move(const digit *givens, const digit *start, int o, int ndiff,
+                      int (*run)(digit *soln, int diff, void *ctx), void *ctx,
+                      const char **error);
+
 /* Positional elimination. */
 int latin_solver_elim(struct latin_solver *solver, int start, int step
 #ifdef STANDALONE_SOLVER

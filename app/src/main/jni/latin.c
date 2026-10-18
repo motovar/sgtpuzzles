@@ -31,9 +31,72 @@ int solver_show_working, solver_recurse_depth;
  * a particular number in it. The y-coordinate passed in here is
  * transformed.
  */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+
+char *latin_hint_move(const digit *givens, const digit *start, int o, int ndiff,
+                      int (*run)(digit *soln, int diff, void *ctx), void *ctx,
+                      const char **error)
+{
+    static char errbuf[96];
+    digit *soln = snewn(o*o, digit);
+    digit *sol = snewn(o*o, digit);
+    char *out = NULL;
+    int d, i;
+    bool have_sol;
+
+    /* Full solution (including guessing) from the givens, to spot mistakes. */
+    memcpy(sol, givens, o*o);
+    run(sol, ndiff, ctx);
+    have_sol = true;
+    for (i = 0; i < o*o; i++) if (!sol[i]) have_sol = false;
+    if (have_sol) {
+        for (i = 0; i < o*o; i++) {
+            if (start[i] && start[i] != sol[i]) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"),
+                        i / o + 1, i % o + 1);
+                if (error) *error = errbuf;
+                sfree(soln); sfree(sol);
+                return NULL;
+            }
+        }
+    }
+
+    for (d = 0; d < ndiff && !out; d++) {
+        memcpy(soln, start, o*o);
+        hint_n = 0;
+        hint_on = true;
+        run(soln, d, ctx);
+        hint_on = false;
+        for (i = 0; i < hint_n; i++) {
+            int x = hint_log[3*i], y = hint_log[3*i+1], n = hint_log[3*i+2];
+            if (!start[y*o+x] && (!have_sol || sol[y*o+x] == n)) {
+                char buf[64];
+                sprintf(buf, "R%d,%d,%d", x, y, n);
+                out = dupstr(buf);
+                break;
+            }
+        }
+    }
+    sfree(soln); sfree(sol);
+    return out;
+}
+
 void latin_solver_place(struct latin_solver *solver, int x, int y, int n)
 {
     int i, o = solver->o;
+
+    if (hint_on) {
+        if (hint_n >= hint_cap) {
+            hint_cap = hint_cap ? hint_cap * 2 : 256;
+            hint_log = sresize(hint_log, 3 * hint_cap, int);
+        }
+        hint_log[3*hint_n] = x;
+        hint_log[3*hint_n+1] = y;
+        hint_log[3*hint_n+2] = n;
+        hint_n++;
+    }
 
     assert(n <= o);
     assert(cube(x,y,n));

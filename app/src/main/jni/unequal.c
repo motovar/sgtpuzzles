@@ -1446,6 +1446,32 @@ static char *solve_game(const game_state *state, const game_state *currstate,
     return ret;
 }
 
+static int hint_run(digit *soln, int diff, void *ctx)
+{
+    const game_state *st = (const game_state *)ctx;
+    game_state *s = dup_game(st);
+    int ret;
+    memcpy(s->nums, soln, st->order * st->order);
+    ret = solver_state(s, diff);
+    free_game(s);
+    return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int o = curr->order, i;
+    digit *zero = snewn(o*o, digit);
+    char *r;
+    for (i = 0; i < o*o; i++)
+        zero[i] = (curr->flags[i] & F_IMMUTABLE) ? curr->nums[i] : 0;
+    r = latin_hint_move(zero, curr->nums, o, DIFFCOUNT-1, hint_run, (void *)curr, error);
+    sfree(zero);
+    if (!r && error && !*error)
+        *error = _("No logical next step found");
+    return r;
+}
+
 /* ----------------------------------------------------------
  * Game UI input processing.
  */
@@ -2290,6 +2316,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     REQUIRE_RBUTTON | REQUIRE_NUMPAD,  /* flags */
+    hint_game,
 };
 
 /* ----------------------------------------------------------------------

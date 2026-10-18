@@ -785,6 +785,9 @@ struct game {
     bool is_timed;
     bool (*timing_state)(const game_state *state, game_ui *ui);
     int flags;
+    /* Optional: a single logically deducible next move for the current position. */
+    char *(*hint)(const game_state *orig, const game_state *curr,
+                  const char **error);
 };
 
 #define GET_HANDLE_AS_TYPE(dr, type) ((type*)((dr)->handle))

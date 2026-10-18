@@ -1512,6 +1512,27 @@ static char *solve_game(const game_state *state, const game_state *currstate,
     return out;
 }
 
+static int hint_run(digit *soln, int diff, void *ctx)
+{
+    game_state *st = (game_state *)ctx;
+    return solver(st->par.w, st->clues->dsf, st->clues->clues, soln, diff);
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int w = curr->par.w;
+    digit *zero = snewn(w*w, digit);
+    char *r;
+    memset(zero, 0, w*w);
+    r = latin_hint_move(zero, curr->grid, w, DIFFCOUNT-1,
+                        hint_run, (void *)curr, error);
+    sfree(zero);
+    if (!r && error && !*error)
+        *error = _("No logical next step found");
+    return r;
+}
+
 struct game_ui {
     /*
      * These are the coordinates of the currently highlighted
@@ -2615,6 +2636,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     REQUIRE_RBUTTON | REQUIRE_NUMPAD,  /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
