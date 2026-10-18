@@ -2156,6 +2156,138 @@ const char *midend_solve(midend *me)
     return NULL;
 }
 
+/*
+ * "Show next step": for games whose Solve move is a ';'-separated list of
+ * items ("S;item;item;..."), apply just one not-yet-applied item that
+ * changes the position, as an ordinary (undoable) move.
+ */
+static char *midend_state_text(midend *me, const game_state *st)
+{
+    if (!me->ourgame->can_format_as_text_ever || !me->ourgame->text_format)
+        return NULL;
+    return me->ourgame->text_format(st);
+}
+
+const char *midend_solve_step(midend *me)
+{
+    const char *msg = NULL;
+    char *movestr, *prefix, *items, *item, *next, *chosen = NULL;
+    const char *semi;
+    game_state *cur, *s = NULL, *cand;
+    char *curtext;
+    int i, plen;
+    const char *err = NULL;
+    bool fallback_done = false;
+
+    if (!me->ourgame->can_solve)
+        return _("This game does not support the Solve operation");
+    if (me->statepos < 1)
+        return _("No game set up to solve");
+    cur = me->states[me->statepos-1].state;
+    if (me->ourgame->status(cur) != 0)
+        return _("Game is already solved");
+
+    movestr = me->ourgame->solve(me->states[0].state, cur, me->aux_info, &msg);
+    if (!movestr)
+        return msg ? msg : _("Solve operation failed");
+    semi = strchr(movestr, ';');
+    if (!semi || semi == movestr) {
+        sfree(movestr);
+        return _("Showing the next step is not available for this game");
+    }
+    plen = semi - movestr;
+    prefix = snewn(plen + 1, char);
+    memcpy(prefix, movestr, plen);
+    prefix[plen] = 0;
+    items = dupstr(semi + 1);
+    char *fullmove = movestr;
+
+    curtext = midend_state_text(me, cur);
+
+    /* two passes: first skip items that change nothing visible, then take any unused */
+    for (int pass = 0; pass < 2 && !chosen; pass++) {
+        for (item = items; item && *item; item = next) {
+            char *mv;
+            next = strchr(item, ';');
+            if (next) *next++ = 0;
+            if (!*item) continue;
+            /* Try the bare item first (a leading 'S' often means "reset the
+             * board and mark as cheated"), then with the solve prefix. */
+            cand = NULL; mv = NULL;
+            for (int variant = 0; variant < 2 && !cand; variant++) {
+                sfree(mv);
+                mv = snewn(plen + strlen(item) + 2, char);
+                if (variant == 0) sprintf(mv, ";%s", item);
+                else sprintf(mv, "%s;%s", prefix, item);
+                bool done = false;
+                for (i = 1; i < me->statepos; i++)
+                    if (me->states[i].movetype == MOVE && me->states[i].movestr &&
+                        !strcmp(me->states[i].movestr, mv)) { done = true; break; }
+                if (done) { cand = NULL; break; }
+                cand = me->ourgame->execute_move(cur, mv);
+            }
+            if (!cand) { sfree(mv); continue; }
+            if (pass == 0 && curtext) {
+                char *t = midend_state_text(me, cand);
+                bool same = t && !strcmp(t, curtext);
+                sfree(t);
+                if (same) {
+                    me->ourgame->free_game(cand);
+                    sfree(mv);
+                    continue;
+                }
+            }
+            chosen = mv;
+            s = cand;
+            break;
+        }
+        /* items string was modified by strtok-like splitting; rebuild for pass 2 */
+        if (!chosen && pass == 0) {
+            sfree(items);
+            items = dupstr(semi + 1);
+            (void)fallback_done;
+        }
+    }
+    sfree(curtext);
+    sfree(items);
+    sfree(prefix);
+    if (!chosen) {
+        /* all single items used: finish with the complete solution */
+        for (i = 1; i < me->statepos; i++)
+            if (me->states[i].movestr && !strcmp(me->states[i].movestr, fullmove)) {
+                sfree(fullmove);
+                return _("No further steps");
+            }
+        s = me->ourgame->execute_move(cur, fullmove);
+        if (!s) { sfree(fullmove); return _("No further steps"); }
+        chosen = fullmove;
+    } else
+        sfree(fullmove);
+    (void)err;
+
+    midend_stop_anim(me);
+    midend_purge_states(me);
+    ensure(me);
+    me->states[me->nstates].state = s;
+    me->states[me->nstates].movestr = chosen;
+    me->states[me->nstates].movetype = MOVE;
+    me->statepos = ++me->nstates;
+    me->dir = +1;
+    {
+        bool just_completed = me->ourgame->changed_state(me->ui,
+                me->states[me->statepos-2].state,
+                me->states[me->statepos-1].state);
+        if (just_completed) android_completed(me->frontend);
+    }
+    changed_state(me->drawing, me->statepos > 1, me->statepos < me->nstates);
+    me->anim_time = 0.0;
+    midend_finish_move(me);
+    if (me->drawing)
+        midend_redraw(me);
+    midend_set_timer(me);
+    return NULL;
+}
+
 int midend_status(midend *me)
 {
     /*

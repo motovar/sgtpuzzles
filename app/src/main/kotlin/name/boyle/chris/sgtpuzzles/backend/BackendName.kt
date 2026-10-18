@@ -81,6 +81,14 @@ sealed class BackendName(
         }
     }
 
+    /** Games whose Solve move is a list of items, so "Show next step" can apply one at a time. */
+    val supportsSolveStep by lazy {
+        this in setOf(
+            BRIDGES, DOMINOSA, FLOW, GALAXIES, LIGHTUP, MAGNETS, MAP, NET, PEARL, SINGLES, SLANT,
+            SPOKES, STELLAR, TENTS, TRACKS, UNDEAD, UNDEAD_PLUS, UNTANGLE, WALLS
+        )
+    }
+
     /**
      * The extra puzzles (extras-*) have no hand-made night palette, so their colours are derived
      * automatically (see GameView.refreshColours).

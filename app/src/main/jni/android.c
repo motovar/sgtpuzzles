@@ -446,6 +446,14 @@ JNIEXPORT void JNICALL Java_name_boyle_chris_sgtpuzzles_backend_GameEngineImpl_s
 	throwIllegalArgumentException(env, msg);
 }
 
+JNIEXPORT void JNICALL Java_name_boyle_chris_sgtpuzzles_backend_GameEngineImpl_solveStepEvent(JNIEnv *env, jobject gameEngine)
+{
+	ENV_TO_FE_OR_RETURN()
+	const char *msg = midend_solve_step(fe->me);
+	if (! msg) return;
+	throwIllegalArgumentException(env, msg);
+}
+
 JNIEXPORT void JNICALL Java_name_boyle_chris_sgtpuzzles_backend_GameEngineImpl_restartEvent(JNIEnv *env, jobject gameEngine)
 {
 	ENV_TO_FE_OR_RETURN()

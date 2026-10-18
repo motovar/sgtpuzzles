@@ -99,6 +99,7 @@ Version %s"</string>
     <string name="Redo">Redo</string>
     <string name="Settings">Settings</string>
     <string name="Show_solution">Show solution</string>
+    <string name="Show_next_step">Show next step</string>
     <!--  Settings -->
     <string name="gameChooser">Game chooser</string>
     <string name="chooserStyle">Game chooser style</string>

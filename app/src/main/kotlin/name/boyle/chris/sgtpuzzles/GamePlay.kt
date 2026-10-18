@@ -653,6 +653,14 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
         }
     }
 
+    private fun solveStepMenuItemClicked() {
+        try {
+            gameEngine.solveStepEvent()
+        } catch (e: IllegalArgumentException) {
+            messageBox(getString(R.string.Error), e.message, false)
+        }
+    }
+
     private val typeClickListener = MenuItem.OnMenuItemClickListener { item: MenuItem ->
         val itemId = item.itemId
         if (itemId == R.id.custom) {
@@ -728,6 +736,11 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
                 isEnabled = solveEnabled
                 isVisible = solveEnabled
             }
+            menu.findItem(R.id.solve_step).apply {
+                val show = solveEnabled && currentBackend?.supportsSolveStep == true
+                isEnabled = show
+                isVisible = show
+            }
             menu.findItem(R.id.this_game).title = MessageFormat.format(
                 getString(R.string.how_to_play_game), this@GamePlay.title
             )
@@ -740,6 +753,10 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
                     }
                     R.id.solve -> {
                         solveMenuItemClicked()
+                        return@setOnMenuItemClickListener true
+                    }
+                    R.id.solve_step -> {
+                        solveStepMenuItemClicked()
                         return@setOnMenuItemClickListener true
                     }
                     R.id.feedback -> {

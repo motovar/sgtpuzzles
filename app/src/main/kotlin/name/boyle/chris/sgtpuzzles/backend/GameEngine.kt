@@ -74,6 +74,7 @@ interface GameEngine {
     fun keyEvent(x: Int, y: Int, k: Int)
     fun restartEvent()
     fun solveEvent()
+    fun solveStepEvent()
     fun resizeEvent(x: Int, y: Int, bottomInset: Int)
     fun serialise(baos: ByteArrayOutputStream)
     val currentParams: String?
@@ -115,6 +116,7 @@ interface GameEngine {
             override fun keyEvent(x: Int, y: Int, k: Int) {}
             override fun restartEvent() {}
             override fun solveEvent() {}
+            override fun solveStepEvent() {}
             override fun resizeEvent(x: Int, y: Int, bottomInset: Int) {}
             override fun serialise(baos: ByteArrayOutputStream) {}
             override val currentParams: String? get() = null
