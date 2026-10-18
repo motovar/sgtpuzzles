@@ -1079,6 +1079,28 @@ static bool learn_bitmap_deductions(struct solver_state *s, int w, int h)
     return learn;
 }
 
+/* Hint support: record the order in which squares are filled by the solver. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static unsigned char *hint_seen = NULL;
+static void hint_scan(const int *board, const int *orig, int sz)
+{
+    int i;
+    for (i = 0; i < sz; i++) {
+        if (board[i] != EMPTY && orig[i] == EMPTY && !hint_seen[i]) {
+            hint_seen[i] = 1;
+            if (hint_n >= hint_cap) {
+                hint_cap = hint_cap ? hint_cap * 2 : 128;
+                hint_log = sresize(hint_log, 2 * hint_cap, int);
+            }
+            hint_log[2*hint_n] = i;
+            hint_log[2*hint_n+1] = board[i];
+            hint_n++;
+        }
+    }
+}
+
 static bool solver(const int *orig, int w, int h, char **solution) {
     const int sz = w * h;
 
@@ -1097,6 +1119,7 @@ static bool solver(const int *orig, int w, int h, char **solution) {
 
     init_solver_state(&ss, w, h);
     do {
+	if (hint_on) hint_scan(ss.board, orig, sz);
 	if (learn_blocked_expansion(&ss, w, h)) continue;
 	if (learn_expand_or_one(&ss, w, h)) continue;
 	if (learn_critical_square(&ss, w, h)) continue;
@@ -1104,6 +1127,7 @@ static bool solver(const int *orig, int w, int h, char **solution) {
 	break;
     } while (ss.nempty);
 
+    if (hint_on) hint_scan(ss.board, orig, sz);
     printv("best guess:\n");
     print_board(ss.board, w, h);
 
@@ -1373,6 +1397,44 @@ static void free_game(game_state *state)
         sfree(state->shared);
     }
     sfree(state);
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    const int w = orig->shared->params.w, h = orig->shared->params.h, sz = w * h;
+    char *aux = NULL, *out = NULL, buf[64];
+    int i;
+    bool ok;
+
+    hint_seen = snewn(sz, unsigned char);
+    memset(hint_seen, 0, sz);
+    hint_n = 0;
+    hint_on = true;
+    ok = solver(orig->board, w, h, &aux);
+    hint_on = false;
+    sfree(hint_seen); hint_seen = NULL;
+    if (ok) {
+        for (i = 0; i < sz; i++) {
+            if (curr->board[i] != EMPTY && curr->board[i] != aux[i + 1] - '0') {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+                *error = errbuf;
+                sfree(aux);
+                return NULL;
+            }
+        }
+    }
+    sfree(aux);
+    for (i = 0; i < hint_n; i++) {
+        int pos = hint_log[2*i], v = hint_log[2*i+1];
+        if (curr->board[pos] == v) continue;
+        sprintf(buf, "%d_%d", pos, v);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -2218,6 +2280,7 @@ const struct game thegame = {
     false,				   /* wants_statusbar */
     false, NULL,                       /* timing_state */
     REQUIRE_NUMPAD,		       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER /* solver? hah! */
