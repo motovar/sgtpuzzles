@@ -1612,6 +1612,90 @@ static char *solve_game(const game_state *state_start, const game_state *currsta
     return move;
 }
 
+static char *hint_game(const game_state *state_start, const game_state *currstate,
+                       const char **error)
+{
+    static char errbuf[96];
+    int p, n = state_start->common->num_total;
+    game_state *st = dup_game(currstate);
+    int *old = snewn(n, int);
+    char *out = NULL, buf[32];
+    bool bad = false;
+
+    for (p = 0; p < n; p++)
+        old[p] = st->guess[p] = st->common->fixed[p] ? state_start->guess[p] : 7;
+
+    while (!out) {
+        bool no_change = true, solved, inconsistent = false;
+        solved = solve_iterative(st, st->common->paths);
+        for (p = 0; p < n; p++) {
+            if (st->guess[p] == 0) inconsistent = true;
+            if (st->guess[p] != old[p]) no_change = false;
+        }
+        if (inconsistent) { bad = true; break; }
+        /* mistakes: a placed monster that contradicts a deduced one */
+        for (p = 0; p < n; p++) {
+            int g = st->guess[p], c = currstate->guess[p];
+            if ((g == 1 || g == 2 || g == 4) && (c == 1 || c == 2 || c == 4) && c != g) {
+                sprintf(errbuf, _("There is a mistake at monster %d"), p + 1);
+                *error = errbuf;
+                sfree(old); free_game(st);
+                return NULL;
+            }
+        }
+        for (p = 0; p < n && !out; p++) {
+            int g = st->guess[p];
+            if ((g == 1 || g == 2 || g == 4) && !(old[p] == 1 || old[p] == 2 || old[p] == 4) &&
+                currstate->guess[p] != g) {
+                sprintf(buf, "%c%d", g == 1 ? 'G' : g == 2 ? 'V' : 'Z', p);
+                out = dupstr(buf);
+            }
+        }
+        if (out || solved || no_change) break;
+        for (p = 0; p < n; p++) old[p] = st->guess[p];
+    }
+    (void)bad;
+    if (!out) {
+        /* Look-ahead: try each remaining possibility for a monster; if all
+         * but one lead to a contradiction using the same iterative rules,
+         * the remaining one is forced. */
+        for (p = 0; p < n && !out; p++) {
+            int g = st->guess[p], v, nleft = 0, last = 0;
+            if (g == 1 || g == 2 || g == 4 || g == 0) continue;
+            for (v = 1; v <= 4; v *= 2) {
+                int q;
+                game_state *t;
+                bool inconsistent = false;
+                if (!(g & v)) continue;
+                t = dup_game(st);
+                t->guess[p] = v;
+                for (;;) {
+                    bool no_change = true, done;
+                    int *prev = snewn(n, int);
+                    for (q = 0; q < n; q++) prev[q] = t->guess[q];
+                    done = solve_iterative(t, t->common->paths);
+                    for (q = 0; q < n; q++) {
+                        if (t->guess[q] == 0) inconsistent = true;
+                        if (t->guess[q] != prev[q]) no_change = false;
+                    }
+                    sfree(prev);
+                    if (inconsistent || done || no_change) break;
+                }
+                free_game(t);
+                if (!inconsistent) { nleft++; last = v; }
+            }
+            if (nleft == 1 && currstate->guess[p] != last) {
+                sprintf(buf, "%c%d", last == 1 ? 'G' : last == 2 ? 'V' : 'Z', p);
+                out = dupstr(buf);
+            }
+        }
+    }
+    sfree(old);
+    free_game(st);
+    if (!out) *error = _("No logical next step found");
+    return out;
+}
+
 static bool game_can_format_as_text_now(const game_params *params)
 {
     return true;
@@ -2923,4 +3007,5 @@ const struct game thegame = {
     false,                 /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,                     /* flags */
+    hint_game,
 };
