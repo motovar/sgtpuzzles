@@ -389,6 +389,11 @@ static void decr_exits(struct solver_scratch *sc, int i)
     }
 }
 
+/* Hint support: record the order in which squares are filled. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+
 static bool fill_square(int w, int h, int x, int y, int v,
 			signed char *soln,
 			DSF *connected, struct solver_scratch *sc)
@@ -437,6 +442,14 @@ static bool fill_square(int w, int h, int x, int y, int v,
 #endif
     }
 
+    if (hint_on) {
+        if (hint_n >= hint_cap) {
+            hint_cap = hint_cap ? hint_cap * 2 : 256;
+            hint_log = sresize(hint_log, 3 * hint_cap, int);
+        }
+        hint_log[3*hint_n] = x; hint_log[3*hint_n+1] = y; hint_log[3*hint_n+2] = v;
+        hint_n++;
+    }
     soln[y*w+x] = v;
 
     if (sc) {
@@ -1549,6 +1562,42 @@ static bool check_completion(game_state *state)
     return true;
 }
 
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int w = curr->p.w, h = curr->p.h, i, ret;
+    struct solver_scratch *sc = new_scratch(w, h);
+    signed char *soln = snewn(w*h, signed char);
+    char *out = NULL, buf[64];
+
+    hint_n = 0;
+    hint_on = true;
+    ret = slant_solve(w, h, orig->clues->clues, soln, sc, DIFF_HARD);
+    hint_on = false;
+    free_scratch(sc);
+    if (ret == 1) {
+        for (i = 0; i < w*h; i++) {
+            if (curr->soln[i] && curr->soln[i] != soln[i]) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+                *error = errbuf;
+                sfree(soln);
+                return NULL;
+            }
+        }
+    }
+    sfree(soln);
+    for (i = 0; i < hint_n; i++) {
+        int x = hint_log[3*i], y = hint_log[3*i+1], v = hint_log[3*i+2];
+        if (curr->soln[y*w+x] == v) continue;
+        sprintf(buf, "%c%d,%d", v < 0 ? '\\' : '/', x, y);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
+}
+
 static char *solve_game(const game_state *state, const game_state *currstate,
                         const char *aux, const char **error)
 {
@@ -2357,6 +2406,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
