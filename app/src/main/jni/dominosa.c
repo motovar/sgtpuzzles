@@ -1696,6 +1696,33 @@ static bool deduce_forcing_chain(struct solver_scratch *sc)
  *   2 = multiple possibilities remain (puzzle is ambiguous or solver is not
  *                                      smart enough)
  */
+/* Hint support: record the order in which placements become certain. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static void hint_scan(struct solver_scratch *sc)
+{
+    int i;
+    if (!hint_on) return;
+    for (i = 0; i < sc->pc; i++) {
+        struct solver_placement *p = &sc->placements[i];
+        if (p->active && p->domino && p->domino->nplacements == 1) {
+            int j, seen = 0;
+            for (j = 0; j < hint_n; j++)
+                if (hint_log[2*j] == p->squares[0]->index &&
+                    hint_log[2*j+1] == p->squares[1]->index) { seen = 1; break; }
+            if (seen) continue;
+            if (hint_n >= hint_cap) {
+                hint_cap = hint_cap ? hint_cap * 2 : 128;
+                hint_log = sresize(hint_log, 2 * hint_cap, int);
+            }
+            hint_log[2*hint_n] = p->squares[0]->index;
+            hint_log[2*hint_n+1] = p->squares[1]->index;
+            hint_n++;
+        }
+    }
+}
+
 static int run_solver(struct solver_scratch *sc, int max_diff_allowed)
 {
     int di, si, pi;
@@ -1717,6 +1744,7 @@ static int run_solver(struct solver_scratch *sc, int max_diff_allowed)
 
     do {
         done_something = false;
+        hint_scan(sc);
 
         for (di = 0; di < sc->dc; di++)
             if (deduce_domino_single_placement(sc, di))
@@ -1804,6 +1832,7 @@ static int run_solver(struct solver_scratch *sc, int max_diff_allowed)
         }
 
     } while (done_something);
+    hint_scan(sc);
 
 #ifdef SOLVER_DIAGNOSTICS
     if (solver_diagnostics) {
@@ -2659,6 +2688,46 @@ static char *solve_game(const game_state *state, const game_state *currstate,
     return ret;
 }
 
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int n = curr->params.n, i, j;
+    struct solver_scratch *sc = solver_make_scratch(n);
+    char *out = NULL, buf[64];
+
+    solver_setup_grid(sc, orig->numbers->numbers);
+    hint_n = 0;
+    hint_on = true;
+    run_solver(sc, DIFFCOUNT);
+    hint_on = false;
+    /* mistakes: a placed domino that is not part of the solution */
+    for (i = 0; i < curr->w * curr->h; i++) {
+        int partner = curr->grid[i];
+        int ok = 0;
+        if (partner == i || partner < i) continue;
+        for (j = 0; j < hint_n; j++)
+            if (hint_log[2*j] == i && hint_log[2*j+1] == partner) { ok = 1; break; }
+        if (!ok && hint_n > 0) {
+            sprintf(errbuf, _("There is a mistake in row %d, column %d"),
+                    i / curr->w + 1, i % curr->w + 1);
+            *error = errbuf;
+            solver_free_scratch(sc);
+            return NULL;
+        }
+    }
+    for (j = 0; j < hint_n; j++) {
+        int a = hint_log[2*j], b = hint_log[2*j+1];
+        if (curr->grid[a] == b) continue;
+        sprintf(buf, "D%d,%d", a, b);
+        out = dupstr(buf);
+        break;
+    }
+    solver_free_scratch(sc);
+    if (!out) *error = _("No logical next step found");
+    return out;
+}
+
 static bool game_can_format_as_text_now(const game_params *params)
 {
     return params->n < 1000;
@@ -3503,6 +3572,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER

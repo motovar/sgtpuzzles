@@ -460,6 +460,28 @@ static int todo_get(struct todo *todo) {
  * failed to narrow down to a unique solution, +1 means we solved it
  * fully.
  */
+/* Hint support: record the order in which tiles become fully determined. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static unsigned char *hint_seen = NULL;
+static void hint_scan(const unsigned char *tilestate, int n)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        if (!hint_seen[i] && tilestate[i*4] != 255 && tilestate[i*4+1] == 255) {
+            hint_seen[i] = 1;
+            if (hint_n >= hint_cap) {
+                hint_cap = hint_cap ? hint_cap * 2 : 128;
+                hint_log = sresize(hint_log, 2 * hint_cap, int);
+            }
+            hint_log[2*hint_n] = i;
+            hint_log[2*hint_n+1] = tilestate[i*4];
+            hint_n++;
+        }
+    }
+}
+
 static int net_solver(int w, int h, unsigned char *tiles,
 		      unsigned char *barriers, bool wrapping)
 {
@@ -606,6 +628,8 @@ static int net_solver(int w, int h, unsigned char *tiles,
     done_something = true;	       /* prevent instant termination! */
     while (1) {
 	int index;
+
+	if (hint_on) hint_scan(tilestate, w*h);
 
 	/*
 	 * Take a tile index off the todo list and process it.
@@ -1885,6 +1909,39 @@ static char *solve_game(const game_state *state, const game_state *currstate,
     sfree(tiles);
 
     return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int w = curr->width, h = curr->height, i;
+    unsigned char *tiles = snewn(w*h, unsigned char);
+    char *out = NULL, buf[64];
+
+    memcpy(tiles, orig->tiles, w*h);
+    hint_seen = snewn(w*h, unsigned char);
+    memset(hint_seen, 0, w*h);
+    hint_n = 0;
+    hint_on = true;
+    net_solver(w, h, tiles, orig->imm->barriers, orig->wrapping);
+    hint_on = false;
+    sfree(hint_seen); hint_seen = NULL;
+    sfree(tiles);
+    for (i = 0; i < hint_n; i++) {
+        int pos = hint_log[2*i], tt = hint_log[2*i+1];
+        int ft = curr->tiles[pos] & (R|L|U|D);
+        int x = pos % w, y = pos / w, chr = 0;
+        if (ft == tt) continue;
+        if (tt == A(ft)) chr = 'A';
+        else if (tt == C(ft)) chr = 'C';
+        else if (tt == F(ft)) chr = 'F';
+        else continue;
+        sprintf(buf, "%c%d,%d", chr, x, y);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 /* ----------------------------------------------------------------------
@@ -3404,4 +3461,5 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
