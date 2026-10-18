@@ -573,6 +573,29 @@ static bool solve_check(const game_params *params, struct desc_cell *desc,
     return solved == board_size;
 }
 
+/* Hint support: record the order in which cells are determined. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static unsigned char *hint_seen = NULL;
+static void hint_scan(const struct solution_cell *sol, int n)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        int c = sol[i].cell & STATE_OK_NUM;
+        if (c && !hint_seen[i]) {
+            hint_seen[i] = 1;
+            if (hint_n >= hint_cap) {
+                hint_cap = hint_cap ? hint_cap * 2 : 256;
+                hint_log = sresize(hint_log, 2 * hint_cap, int);
+            }
+            hint_log[2*hint_n] = i;
+            hint_log[2*hint_n+1] = c;
+            hint_n++;
+        }
+    }
+}
+
 static bool solve_game_actual(const game_params *params,
                               struct board_cell *desc,
                               struct solution_cell **sol_return)
@@ -602,6 +625,7 @@ static bool solve_game_actual(const game_params *params,
                     made_progress = true;
                 }
                 solved += curr;
+                if (hint_on && curr > 0) hint_scan(sol, board_size);
             }
         }
     }
@@ -972,6 +996,51 @@ static char *solve_game(const game_state *state,
 
     sfree(sol);
     return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    struct solution_cell *sol = NULL;
+    game_params param;
+    int w = curr->width, size = curr->width * curr->height, i;
+    bool solved;
+    char *out = NULL, buf[64];
+
+    param.width = curr->width;
+    param.height = curr->height;
+    hint_seen = snewn(size, unsigned char);
+    memset(hint_seen, 0, size);
+    hint_n = 0;
+    hint_on = true;
+    solved = solve_game_actual(&param, orig->board->actual_board, &sol);
+    hint_on = false;
+    sfree(hint_seen); hint_seen = NULL;
+    if (solved) {
+        for (i = 0; i < size; i++) {
+            int c = curr->cells_contents[i] & STATE_OK_NUM;
+            int t = sol[i].cell & STATE_OK_NUM;
+            if (c && t && c != t) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+                *error = errbuf;
+                sfree(sol);
+                return NULL;
+            }
+        }
+    }
+    sfree(sol);
+    for (i = 0; i < hint_n; i++) {
+        int pos = hint_log[2*i], t = hint_log[2*i+1];
+        int c = curr->cells_contents[pos] & STATE_OK_NUM;
+        int k = (t - c + 3) % 3;
+        if (k == 0) continue;
+        sprintf(buf, "%c%d,%d", k == 1 ? 't' : 'T', pos % w, pos / w);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static bool game_can_format_as_text_now(const game_params *params)
@@ -1635,4 +1704,5 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
