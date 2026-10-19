@@ -3175,6 +3175,11 @@ struct game_ui {
 	char drag_from, drag_to;
 	bool drag_ok;
 	int dsx, dex, dsy, dey;
+	/* Free-form dragging (right button / long press): paints any cells the
+	 * finger passes over, not just a single row or column. */
+	bool freedrag;
+	unsigned char *dpath;
+	int dpw, dph;
 };
 
 static game_ui *new_ui(const game_state *state)
@@ -3187,12 +3192,18 @@ static game_ui *new_ui(const game_state *state)
 	ret->cx = ret->cy = 0;
 	ret->cursor = false;
 	ret->drag_ok = false;
+	ret->freedrag = false;
+	ret->dpw = state->w;
+	ret->dph = state->h;
+	ret->dpath = snewn(state->w * state->h, unsigned char);
+	memset(ret->dpath, 0, state->w * state->h);
 	
 	return ret;
 }
 
 static void free_ui(game_ui *ui)
 {
+	sfree(ui->dpath);
 	sfree(ui);
 }
 
@@ -3312,9 +3323,64 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
 			ui->dsx = ui->dex = gx;
 			ui->dsy = ui->dey = gy;
 			ui->cursor = false;
+			ui->freedrag = (button == RIGHT_BUTTON) && ui->dpath && ui->dpw == w && ui->dph == h;
+			if(ui->freedrag)
+			{
+				memset(ui->dpath, 0, w*h);
+				ui->dpath[gy*w+gx] = 1;
+			}
 			
 			return MOVE_UI_UPDATE;
 		}
+	}
+	
+	if ((IS_MOUSE_DRAG(button) || IS_MOUSE_RELEASE(button)) &&
+		ui->drag_to != 0 && ui->freedrag)
+	{
+		if (gx >= 0 && gy >= 0 && gx < w && gy < h)
+		{
+			/* Mark every cell on the line from the last position. */
+			int x0 = ui->dex, y0 = ui->dey, x1 = gx, y1 = gy;
+			int dx = abs(x1 - x0), dy = abs(y1 - y0);
+			int sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+			int err = dx - dy;
+			while(true)
+			{
+				ui->dpath[y0*w+x0] = 1;
+				if(x0 == x1 && y0 == y1) break;
+				if(2*err > -dy) { err -= dy; x0 += sx; }
+				if(2*err < dx) { err += dx; y0 += sy; }
+			}
+			ui->dex = gx;
+			ui->dey = gy;
+		}
+		ui->drag_ok = true;
+		
+		if(IS_MOUSE_RELEASE(button))
+		{
+			char *out = snewn(w*h*20 + 1, char), *p = out;
+			int cx, cy;
+			
+			ui->drag_ok = false;
+			ui->freedrag = false;
+			for(cy = 0; cy < h; cy++)
+			for(cx = 0; cx < w; cx++)
+			{
+				if(!ui->dpath[cy*w+cx]) continue;
+				if(!boats_validate_move(state, cx, cy, cx, cy, ui->drag_from, ui->drag_to))
+					continue;
+				p += sprintf(p, "%sP%d,%d,%d,%d,%c,%c", p == out ? "" : ";",
+					cx, cy, cx, cy, ui->drag_from, ui->drag_to);
+			}
+			memset(ui->dpath, 0, w*h);
+			if(p == out)
+			{
+				sfree(out);
+				return MOVE_UI_UPDATE;
+			}
+			return out;
+		}
+		return MOVE_UI_UPDATE;
 	}
 	
 	if ((IS_MOUSE_DRAG(button) || IS_MOUSE_RELEASE(button)) &&
@@ -3414,7 +3480,32 @@ static char *interpret_move(const game_state *state, game_ui *ui, const game_dra
 	return NULL;
 }
 
+static game_state *execute_move_one(const game_state *state, const char *move);
+
 static game_state *execute_move(const game_state *state, const char *move)
+{
+	/* Several 'P' moves in one string, separated by ';' (free-form drags). */
+	if(move[0] == 'P' && strchr(move, ';'))
+	{
+		game_state *cur = dup_game(state), *next;
+		char *copy = dupstr(move), *tok = copy, *semi;
+		while(tok && *tok)
+		{
+			semi = strchr(tok, ';');
+			if(semi) *semi = '\0';
+			next = execute_move(cur, tok);
+			free_game(cur);
+			cur = next;
+			if(!cur) break;
+			tok = semi ? semi + 1 : NULL;
+		}
+		sfree(copy);
+		return cur;
+	}
+	return execute_move_one(state, move);
+}
+
+static game_state *execute_move_one(const game_state *state, const char *move)
 {
 	int sx, sy, ex, ey, x, y;
 	int w = state->w;
@@ -3905,8 +3996,8 @@ static void game_redraw(drawing *dr, game_drawstate *ds, const game_state *oldst
 			: state->grid[y*w+x];
 		
 		/* Check if this square is being changed by a drag */
-		if(ui->drag_ok && x >= xmin && x <= xmax &&
-			y >= ymin && y <= ymax && state->gridclues[y*w+x] == EMPTY &&
+		if(ui->drag_ok && (ui->freedrag ? (ui->dpath[y*w+x] != 0) : (x >= xmin && x <= xmax &&
+			y >= ymin && y <= ymax)) && state->gridclues[y*w+x] == EMPTY &&
 				(ui->drag_from == '*' || 
 					(ui->drag_from == '-' && ship == EMPTY) ||
 					(ui->drag_from == 'W' && ship == WATER) ||
