@@ -934,6 +934,21 @@ static int solve_set_sflag(game_state *state, int x, int y,
     return 1;
 }
 
+/* Hint support: record the order in which the solver lays track edges. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static void hint_record(int x, int y, int d)
+{
+    if (!hint_on) return;
+    if (hint_n >= hint_cap) {
+        hint_cap = hint_cap ? hint_cap * 2 : 128;
+        hint_log = sresize(hint_log, 3 * hint_cap, int);
+    }
+    hint_log[3*hint_n] = x; hint_log[3*hint_n+1] = y; hint_log[3*hint_n+2] = d;
+    hint_n++;
+}
+
 static int solve_set_eflag(game_state *state, int x, int y, int d,
                            unsigned int f, const char *why)
 {
@@ -941,6 +956,8 @@ static int solve_set_eflag(game_state *state, int x, int y, int d,
 
     if (sf & f)
         return 0;
+    if (f == E_TRACK && !(sf & E_NOTRACK))
+        hint_record(x, y, d);
     solverdebug(("edge (%d,%d)/%c -> %s: %s", x, y,
            (d == U) ? 'U' : (d == D) ? 'D' : (d == L) ? 'L' : 'R',
            (f == S_TRACK ? "TRACK" : "NOTRACK"), why));
@@ -1685,6 +1702,46 @@ static char *solve_game(const game_state *state, const game_state *currstate,
 
     free_game(solved);
     return move;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int w = orig->p.w, h = orig->p.h, i, j, ret;
+    game_state *t = dup_game(orig);
+    char *out = NULL, buf[64];
+
+    hint_n = 0;
+    hint_on = true;
+    ret = tracks_solve(t, DIFFCOUNT, NULL);
+    hint_on = false;
+    if (ret == 1) {
+        for (i = 0; i < w*h; i++) {
+            unsigned cf = S_E_DIRS(curr, i%w, i/w, E_TRACK);
+            unsigned sf = S_E_DIRS(t, i%w, i/w, E_TRACK);
+            if (cf & ~sf) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+                *error = errbuf;
+                free_game(t);
+                return NULL;
+            }
+        }
+    }
+    free_game(t);
+    for (i = 0; i < hint_n; i++) {
+        int x = hint_log[3*i], y = hint_log[3*i+1], d = hint_log[3*i+2];
+        int p = 0;
+        if (S_E_DIRS(curr, x, y, E_TRACK) & d) continue;
+        for (j = 0; j < 4; j++)
+            if ((1<<j) == d && (S_E_DIRS(curr, x, y, E_NOTRACK) & d))
+                p += sprintf(buf+p, "n%c%d,%d;", MOVECHAR(d), x, y);
+        sprintf(buf+p, "T%c%d,%d", MOVECHAR(d), x, y);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static bool game_can_format_as_text_now(const game_params *params)
@@ -3067,6 +3124,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
