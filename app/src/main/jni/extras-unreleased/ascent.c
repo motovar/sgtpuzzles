@@ -853,8 +853,24 @@ static void free_scratch(struct solver_scratch *scratch)
 	sfree(scratch);
 }
 
+/* Hint support: record the order of the solver's placements. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+
 static int solver_place(struct solver_scratch *scratch, cell pos, number num)
 {
+	if(hint_on)
+	{
+		if(hint_n >= hint_cap)
+		{
+			hint_cap = hint_cap ? hint_cap * 2 : 128;
+			hint_log = sresize(hint_log, 2 * hint_cap, int);
+		}
+		hint_log[2*hint_n] = pos; hint_log[2*hint_n+1] = num;
+		hint_n++;
+	}
+
 	int w = scratch->w, s = w*scratch->h;
 	cell i; number n;
 	
@@ -1988,6 +2004,49 @@ static void free_game(game_state *state)
 	sfree(state->immutable);
 	sfree(state->path);
 	sfree(state);
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+	const char **error)
+{
+	static char errbuf[96];
+	int w = orig->w, h = orig->h, s = w*h, i;
+	struct solver_scratch *scratch = new_scratch(w, h, orig->mode, orig->last);
+	char *out = NULL, buf[40];
+	bool complete = true;
+
+	hint_n = 0;
+	hint_on = true;
+	ascent_solve(orig->grid, DIFFCOUNT, scratch);
+	hint_on = false;
+	for(i = 0; i < s; i++)
+		if(scratch->grid[i] < 0) complete = false;
+	if(complete)
+	{
+		for(i = 0; i < s; i++)
+		{
+			if(curr->grid[i] >= 0 && curr->grid[i] != scratch->grid[i])
+			{
+				sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+				*error = errbuf;
+				free_scratch(scratch);
+				return NULL;
+			}
+		}
+	}
+	free_scratch(scratch);
+	for(i = 0; i < hint_n; i++)
+	{
+		int cl = hint_log[2*i], n = hint_log[2*i+1];
+		if(curr->grid[cl] >= 0) continue;
+		if(GET_BIT(orig->immutable, cl)) continue;
+		sprintf(buf, "P%d,%d", cl, n);
+		out = dupstr(buf);
+		break;
+	}
+	(void)h;
+	if(!out) *error = _("No logical next step found");
+	return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -4071,6 +4130,7 @@ const struct game thegame = {
 	false, /* wants_statusbar */
 	false, game_timing_state,
 	REQUIRE_RBUTTON, /* flags */
+	hint_game,
 };
 
 /* ***************** *
