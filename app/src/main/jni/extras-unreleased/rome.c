@@ -637,6 +637,21 @@ static game_state *dup_game(const game_state *state)
  * Solver *
  * ****** */
  
+/* Hint support: record the order of the solver's placements. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static void hint_record(int i, int arrow)
+{
+	if (!hint_on) return;
+	if (hint_n >= hint_cap) {
+		hint_cap = hint_cap ? hint_cap * 2 : 128;
+		hint_log = sresize(hint_log, 2 * hint_cap, int);
+	}
+	hint_log[2*hint_n] = i; hint_log[2*hint_n+1] = arrow;
+	hint_n++;
+}
+
 static int rome_solver_single(game_state *state)
 {
 	/* If a square has a single possibility, place it */
@@ -652,21 +667,25 @@ static int rome_solver_single(game_state *state)
 		if(state->marks[i] == FM_UP)
 		{
 			state->grid[i] = FM_UP;
+			hint_record(i, FM_UP);
 			ret++;
 		}
 		if(state->marks[i] == FM_DOWN)
 		{
 			state->grid[i] = FM_DOWN;
+			hint_record(i, FM_DOWN);
 			ret++;
 		}
 		if(state->marks[i] == FM_LEFT)
 		{
 			state->grid[i] = FM_LEFT;
+			hint_record(i, FM_LEFT);
 			ret++;
 		}
 		if(state->marks[i] == FM_RIGHT)
 		{
 			state->grid[i] = FM_RIGHT;
+			hint_record(i, FM_RIGHT);
 			ret++;
 		}
 	}
@@ -1030,6 +1049,43 @@ static char rome_solve(game_state *state, int maxdiff)
 	sfree(sets);
 	
 	return status;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+	const char **error)
+{
+	static char errbuf[96];
+	int w = orig->w, s = w * orig->h, i;
+	game_state *t = dup_game(orig);
+	char *out = NULL, buf[40];
+	char status;
+
+	hint_n = 0;
+	hint_on = true;
+	status = rome_solve(t, DIFFCOUNT);
+	hint_on = false;
+	if (status == STATUS_COMPLETE) {
+		for (i = 0; i < s; i++) {
+			cell c = curr->grid[i] & FM_ARROWMASK;
+			if (c && c != (t->grid[i] & FM_ARROWMASK)) {
+				sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+				*error = errbuf;
+				free_game(t);
+				return NULL;
+			}
+		}
+	}
+	free_game(t);
+	for (i = 0; i < hint_n; i++) {
+		int cl = hint_log[2*i], a = hint_log[2*i+1];
+		if (curr->grid[cl] & FM_ARROWMASK) continue;
+		sprintf(buf, "R%d,%d,%c", cl % w, cl / w,
+			a == FM_UP ? 'U' : a == FM_DOWN ? 'D' : a == FM_LEFT ? 'L' : 'R');
+		out = dupstr(buf);
+		break;
+	}
+	if (!out) *error = _("No logical next step found");
+	return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -2304,4 +2360,5 @@ const struct game thegame = {
 	false,			       /* wants_statusbar */
 	false, game_timing_state,
 	REQUIRE_RBUTTON, /* flags */
+	hint_game,
 };
