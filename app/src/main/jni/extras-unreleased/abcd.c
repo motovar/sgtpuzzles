@@ -551,8 +551,22 @@ static char *abcd_format_letters(const game_state *state, char solve)
 	return ret;
 }
 
+/* Hint support: record the order of the solver's letter placements. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+
 static void abcd_place_letter(game_state *state, int x, int y, char l, int *remaining)
 {
+	if (hint_on) {
+		if (hint_n >= hint_cap) {
+			hint_cap = hint_cap ? hint_cap * 2 : 128;
+			hint_log = sresize(hint_log, 3 * hint_cap, int);
+		}
+		hint_log[3*hint_n] = x; hint_log[3*hint_n+1] = y; hint_log[3*hint_n+2] = l;
+		hint_n++;
+	}
+
 	/*
 	* Place one letter in the grid, rule the letter out for all adjacent squares,
 	* and subtract the corresponding remaining values (if available)
@@ -1007,6 +1021,40 @@ if(solver_verbose)
 }
 
 #undef MULTIPLE
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+	const char **error)
+{
+	static char errbuf[96];
+	int w = orig->w, h = orig->h, n = orig->n, i, err;
+	game_state *t = blank_state(w, h, n, orig->diag);
+	char *out = NULL, buf[40];
+
+	hint_n = 0;
+	hint_on = true;
+	err = abcd_solve_game(orig->numbers, t);
+	hint_on = false;
+	if (err == 0) {
+		for (i = 0; i < w*h; i++) {
+			if (curr->grid[i] != EMPTY && curr->grid[i] != t->grid[i]) {
+				sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+				*error = errbuf;
+				free_game(t);
+				return NULL;
+			}
+		}
+	}
+	free_game(t);
+	for (i = 0; i < hint_n; i++) {
+		int x = hint_log[3*i], y = hint_log[3*i+1], l = hint_log[3*i+2];
+		if (curr->grid[y*w+x] != EMPTY) continue;
+		sprintf(buf, "R%d,%d,%c", x, y, 'A' + l);
+		out = dupstr(buf);
+		break;
+	}
+	if (!out) *error = _("No logical next step found");
+	return out;
+}
 
 static char *solve_game(const game_state *state, const game_state *currstate,
 			const char *aux, const char **error)
@@ -2202,6 +2250,7 @@ const struct game thegame = {
 	false, /* wants_statusbar */
 	false, game_timing_state,
 	REQUIRE_RBUTTON | REQUIRE_NUMPAD, /* flags */
+	hint_game,
 };
 
 /* ***************** *
