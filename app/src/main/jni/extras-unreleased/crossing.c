@@ -836,6 +836,11 @@ static int crossing_solver_marks(game_state *state, struct crossing_solver *solv
 	return ret;
 }
 
+/* Hint support: record the order of the solver's placements. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+
 static int crossing_solver_confirm(game_state *state)
 {
 	int ret = 0;
@@ -852,6 +857,16 @@ static int crossing_solver_confirm(game_state *state)
 			{
 				ret++;
 				state->grid[i] = j;
+				if(hint_on)
+				{
+					if(hint_n >= hint_cap)
+					{
+						hint_cap = hint_cap ? hint_cap * 2 : 128;
+						hint_log = sresize(hint_log, 2 * hint_cap, int);
+					}
+					hint_log[2*hint_n] = i; hint_log[2*hint_n+1] = j;
+					hint_n++;
+				}
 			}
 		}
 	}
@@ -1189,6 +1204,45 @@ static char *new_game_desc(const game_params *params, random_state *rs,
 	
 	free_puzzle(puzzle);
 	return buf;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+	const char **error)
+{
+	static char errbuf[96];
+	int w = orig->puzzle->w, s = w * orig->puzzle->h, i;
+	game_state *t = dup_game(orig);
+	char *out = NULL, buf[40];
+	int status;
+
+	hint_n = 0;
+	hint_on = true;
+	status = crossing_solve_game(t);
+	hint_on = false;
+	if(status == STATUS_VALID)
+	{
+		for(i = 0; i < s; i++)
+		{
+			if(curr->grid[i] && curr->grid[i] != t->grid[i])
+			{
+				sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+				*error = errbuf;
+				free_game(t);
+				return NULL;
+			}
+		}
+	}
+	free_game(t);
+	for(i = 0; i < hint_n; i++)
+	{
+		int cl = hint_log[2*i], v = hint_log[2*i+1];
+		if(curr->grid[cl]) continue;
+		sprintf(buf, "R%d,%d,%c", cl % w, cl / w, '0' + v);
+		out = dupstr(buf);
+		break;
+	}
+	if(!out) *error = _("No logical next step found");
+	return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -1960,6 +2014,7 @@ const struct game thegame = {
 	false,                 /* wants_statusbar */
 	false, game_timing_state,
 	REQUIRE_RBUTTON, /* flags */
+	hint_game,
 };
 
 /* ***************** *
