@@ -1173,6 +1173,28 @@ static bool solve_exit_parity(game_state *state, struct solver_scratch *scratch)
     return false;
 }
 
+/* Hint support: record, pass by pass, which path edges the solver lays. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static unsigned char *hint_prev = NULL;
+
+static void hint_snap(const game_state *state) {
+    int w = state->w, h = state->h, nh = w*(h+1), nv = (w+1)*h, i;
+    if (!hint_on || !hint_prev) return;
+    for (i = 0; i < nh + nv; i++) {
+        unsigned char now = (i < nh) ? state->edge_h[i] : state->edge_v[i-nh];
+        if ((now & FLAG_PATH) && !(hint_prev[i] & FLAG_PATH)) {
+            if (hint_n >= hint_cap) {
+                hint_cap = hint_cap ? hint_cap * 2 : 128;
+                hint_log = sresize(hint_log, hint_cap, int);
+            }
+            hint_log[hint_n++] = i;
+        }
+        hint_prev[i] = now;
+    }
+}
+
 static int walls_solve(game_state *state, int difficulty, bool verbose) {
     int i;
     int w = state->w;
@@ -1187,8 +1209,15 @@ static int walls_solve(game_state *state, int difficulty, bool verbose) {
     scratch->difficulty = difficulty;
     scratch->verbose = verbose;
     for (i=0;i<islands;i++) scratch->done_islands[i] = false;
+    if (hint_on) {
+        int nh = w*(h+1), nv = (w+1)*h;
+        hint_prev = snewn(nh + nv, unsigned char);
+        for (i = 0; i < nh; i++) hint_prev[i] = state->edge_h[i];
+        for (i = 0; i < nv; i++) hint_prev[nh+i] = state->edge_v[i];
+    }
 
     while(true) {
+        hint_snap(state);
         if (difficulty >= DIFF_EASY   && solve_single_cells(state, scratch)) continue;
         if (difficulty >= DIFF_EASY   && solve_early_exits(state, scratch)) continue;
         if (!verbose && check_solution(state, false) == SOLVED) break;
@@ -1202,6 +1231,8 @@ static int walls_solve(game_state *state, int difficulty, bool verbose) {
         break;
     }
 
+    hint_snap(state);
+    if (hint_prev) { sfree(hint_prev); hint_prev = NULL; }
     sfree(scratch->done_islands);
     dsf_free(scratch->loopdsf);
     sfree(scratch);
@@ -1601,6 +1632,43 @@ static game_state *dup_game(const game_state *state) {
 
 static void free_game(game_state *state) {
     free_state(state);
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error) {
+    static char errbuf[96];
+    int w = orig->w, h = orig->h, nh = w*(h+1), nv = (w+1)*h, i;
+    game_state *t = dup_game(orig);
+    char *out = NULL, buf[40];
+    int res;
+
+    hint_n = 0;
+    hint_on = true;
+    res = walls_solve(t, DIFF_HARD, false);
+    hint_on = false;
+    if (res == SOLVED) {
+        for (i = 0; i < nh + nv; i++) {
+            unsigned char c = (i < nh) ? curr->edge_h[i] : curr->edge_v[i-nh];
+            unsigned char sv = (i < nh) ? t->edge_h[i] : t->edge_v[i-nh];
+            if ((c & FLAG_PATH) && !(sv & FLAG_PATH)) {
+                *error = _("Some of your path segments are incorrect");
+                free_game(t);
+                return NULL;
+            }
+        }
+    }
+    free_game(t);
+    for (i = 0; i < hint_n; i++) {
+        int e = hint_log[i];
+        unsigned char c = (e < nh) ? curr->edge_h[e] : curr->edge_v[e-nh];
+        if (c & FLAG_PATH) continue;
+        sprintf(buf, "P%d", e);
+        out = dupstr(buf);
+        break;
+    }
+    (void)errbuf;
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -2352,6 +2420,7 @@ const struct game thegame = {
     false,                 /* wants_statusbar */
     false, game_timing_state,
     REQUIRE_RBUTTON,       /* flags */
+    hint_game,
 };
 
 #ifdef DEVELOP
