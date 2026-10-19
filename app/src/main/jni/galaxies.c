@@ -1930,6 +1930,21 @@ static int solver_obvious(game_state *state)
     return didsth;
 }
 
+/* Hint support: order in which the solver sets edges. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static void hint_record(const space *e)
+{
+    if (!hint_on) return;
+    if (hint_n >= hint_cap) {
+        hint_cap = hint_cap ? hint_cap * 2 : 128;
+        hint_log = sresize(hint_log, 2 * hint_cap, int);
+    }
+    hint_log[2*hint_n] = e->x; hint_log[2*hint_n+1] = e->y;
+    hint_n++;
+}
+
 static int solver_lines_opposite_cb(game_state *state, space *edge, void *ctx)
 {
     int didsth = 0, n, dx, dy;
@@ -1952,6 +1967,7 @@ static int solver_lines_opposite_cb(game_state *state, space *edge, void *ctx)
          * associated with different dots; add the edge. */
         solvep(("%*sSetting edge %d,%d - tiles different dots.\n",
                solver_recurse_depth*4, "", edge->x, edge->y));
+        hint_record(edge);
         edge->flags |= F_EDGE_SET;
         didsth = 1;
     }
@@ -1981,6 +1997,7 @@ static int solver_lines_opposite_cb(game_state *state, space *edge, void *ctx)
             solvep(("%*sSetting edge %d,%d as opposite %d,%d\n",
                    solver_recurse_depth*4, "",
                    tile_opp->x+dx, tile_opp->y+dy, edge->x, edge->y));
+            hint_record(edge_opp);
             edge_opp->flags |= F_EDGE_SET;
             didsth = 1;
         }
@@ -2674,6 +2691,45 @@ solved:
     return ret;
 }
 #endif
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    game_state *t = dup_game(orig);
+    char buf[40], *out = NULL;
+    int i, x, y, solved;
+
+    hint_n = 0;
+    hint_on = true;
+    solver_state(t, DIFF_NORMAL);
+    hint_on = false;
+    solved = check_complete(t, NULL, NULL);
+    if (solved) {
+        for (x = 0; x < t->sx; x++)
+            for (y = 0; y < t->sy; y++) {
+                const space *a = &SPACE(t, x, y), *b = &SPACE(curr, x, y);
+                if (a->type == s_edge && (b->flags & F_EDGE_SET) &&
+                    !(a->flags & F_EDGE_SET)) {
+                    sprintf(errbuf, _("There is a mistake near row %d, column %d"),
+                            y / 2 + 1, x / 2 + 1);
+                    *error = errbuf;
+                    free_game(t);
+                    return NULL;
+                }
+            }
+    }
+    free_game(t);
+    for (i = 0; i < hint_n; i++) {
+        x = hint_log[2*i]; y = hint_log[2*i+1];
+        if (SPACE(curr, x, y).flags & F_EDGE_SET) continue;
+        sprintf(buf, "E%d,%d", x, y);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
+}
 
 /* ----------------------------------------------------------
  * User interface.
@@ -4177,6 +4233,11 @@ const struct game thegame = {
 #endif
     false, NULL,                       /* timing_state */
     REQUIRE_RBUTTON,		       /* flags */
+#ifndef EDITOR
+    hint_game,
+#else
+    NULL,
+#endif
 };
 
 #ifdef STANDALONE_SOLVER
