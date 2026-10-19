@@ -538,6 +538,21 @@ unsigned char solver_combinations(game_state *state) {
     return done_something;
 }
 
+/* Hint support: record the order of the solver's definite placements. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static void hint_record(int idx, int code)
+{
+    if (!hint_on) return;
+    if (hint_n >= hint_cap) {
+        hint_cap = hint_cap ? hint_cap * 2 : 128;
+        hint_log = sresize(hint_log, 2 * hint_cap, int);
+    }
+    hint_log[2*hint_n] = idx; hint_log[2*hint_n+1] = code;
+    hint_n++;
+}
+
 unsigned char solver_singles(game_state *state) {
     int done_something;
     int i, size, c, rowcol;
@@ -565,6 +580,7 @@ unsigned char solver_singles(game_state *state) {
             }
             if (sc == 1 && state->grid[get_index(size, c, rowcol, sp)] != CODE_STAR) {
                 state->grid[get_index(size, c, rowcol, sp)] = CODE_STAR;
+                hint_record(get_index(size, c, rowcol, sp), CODE_STAR);
                 done_something = SOLVER_DID_ONE_STEP;
                 for (i = 0; i<size; i++) {
                     if (state->grid[get_index(size, (c==0) ? 1:0, sp, i)] & CODE_GUESS)
@@ -578,6 +594,7 @@ unsigned char solver_singles(game_state *state) {
             }
             if (cc == 1 && state->grid[get_index(size, c, rowcol, cp)] != CODE_CLOUD) {
                 state->grid[get_index(size, c, rowcol, cp)] = CODE_CLOUD;
+                hint_record(get_index(size, c, rowcol, cp), CODE_CLOUD);
                 done_something = SOLVER_DID_ONE_STEP;
                 for (i = 0; i<size; i++) {
                     if (state->grid[get_index(size, (c==0) ? 1:0, cp, i)] & CODE_GUESS)
@@ -893,6 +910,50 @@ static game_state *new_game(midend *me, const game_params *params, const char *d
     }
 
     return state;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int size = orig->params.size, g = size * size, i;
+    game_state *t = dup_game(orig);
+    char *out = NULL, buf[40];
+    unsigned char res;
+
+    /* Full solution (may use guessing) to spot mistakes. */
+    res = solve_stellar(t, DIFF_HARD);
+    if (res == SOLUTION_UNIQUE) {
+        for (i = 0; i < g; i++) {
+            if (curr->grid[i] & CODE_PLANET) continue;
+            if ((curr->grid[i] == CODE_STAR && t->grid[i] != CODE_STAR) ||
+                (curr->grid[i] == CODE_CLOUD && t->grid[i] != CODE_CLOUD)) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / size + 1, i % size + 1);
+                *error = errbuf;
+                free_game(t);
+                return NULL;
+            }
+        }
+    }
+    free_game(t);
+
+    /* Logical order: non-guessing solver only. */
+    t = dup_game(orig);
+    hint_n = 0;
+    hint_on = true;
+    initialize_solver(t);
+    solve_sequential(t);
+    hint_on = false;
+    free_game(t);
+    for (i = 0; i < hint_n; i++) {
+        int idx = hint_log[2*i], code = hint_log[2*i+1];
+        if (curr->grid[idx] == code) continue;
+        sprintf(buf, "%c%d", code == CODE_STAR ? 'S' : 'C', idx);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -1672,6 +1733,7 @@ const struct game thegame = {
     false,                   /* wants_statusbar */
     false, game_timing_state,
     0,                       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
