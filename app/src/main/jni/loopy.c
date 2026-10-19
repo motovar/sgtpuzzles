@@ -1261,6 +1261,11 @@ static void check_caches(const solver_state* sstate)
  * Solver utility functions
  */
 
+/* Hint support: record the order of the solver's YES-line decisions. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+
 /* Sets the line (with index i) to the new state 'line_new', and updates
  * the cached counts of any affected faces and dots.
  * Returns true if this actually changed the line's state. */
@@ -1283,6 +1288,13 @@ static bool solver_set_line(solver_state *sstate, int i,
         return false; /* nothing changed */
     }
     state->lines[i] = line_new;
+    if (hint_on && line_new == LINE_YES) {
+        if (hint_n >= hint_cap) {
+            hint_cap = hint_cap ? hint_cap * 2 : 128;
+            hint_log = sresize(hint_log, hint_cap, int);
+        }
+        hint_log[hint_n++] = i;
+    }
 
 #ifdef SHOW_WORKING
     fprintf(stderr, "solver: set line [%d] to %s (%s)\n",
@@ -3070,6 +3082,44 @@ static solver_state *solve_game_rec(const solver_state *sstate_start)
     return sstate;
 }
 
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    solver_state *sstate, *res;
+    char *out = NULL, buf[32];
+    int i, ne = orig->game_grid->num_edges;
+
+    hint_n = 0;
+    hint_on = true;
+    sstate = new_solver_state(orig, DIFF_MAX);
+    res = solve_game_rec(sstate);
+    hint_on = false;
+
+    if (res->solver_status == SOLVER_SOLVED) {
+        for (i = 0; i < ne; i++) {
+            bool sy = res->state->lines[i] == LINE_YES;
+            if ((curr->lines[i] == LINE_YES && !sy) ||
+                (curr->lines[i] == LINE_NO && sy)) {
+                *error = _("Some of your lines are incorrect");
+                free_solver_state(res);
+                free_solver_state(sstate);
+                return NULL;
+            }
+        }
+    }
+    free_solver_state(res);
+    free_solver_state(sstate);
+
+    for (i = 0; i < hint_n; i++) {
+        if (curr->lines[hint_log[i]] == LINE_YES) continue;
+        sprintf(buf, "%dy", hint_log[i]);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
+}
+
 static char *solve_game(const game_state *state, const game_state *currstate,
                         const char *aux, const char **error)
 {
@@ -3940,6 +3990,7 @@ const struct game thegame = {
     false /* wants_statusbar */,
     false, NULL,                       /* timing_state */
     0,                                       /* mouse_priorities */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
