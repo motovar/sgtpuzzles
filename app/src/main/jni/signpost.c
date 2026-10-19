@@ -1261,6 +1261,21 @@ static game_state *new_game(midend *me, const game_params *params,
 
 /* --- Solver --- */
 
+/* Hint support: record the order of the solver's link decisions. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static void hint_record(int from, int to)
+{
+    if (!hint_on) return;
+    if (hint_n >= hint_cap) {
+        hint_cap = hint_cap ? hint_cap * 2 : 128;
+        hint_log = sresize(hint_log, 2 * hint_cap, int);
+    }
+    hint_log[2*hint_n] = from; hint_log[2*hint_n+1] = to;
+    hint_n++;
+}
+
 /* If a tile has a single tile it can link _to_, or there's only a single
  * location that can link to a given tile, fill that link in. */
 static int solve_single(game_state *state, game_state *copy, int *from)
@@ -1320,6 +1335,7 @@ static int solve_single(game_state *state, game_state *copy, int *from)
         } else {
             debug(("Solver: linking (%d,%d) to only possible next (%d,%d).",
                    sx, sy, poss%w, poss/w));
+            hint_record(i, poss);
             makelink(copy, i, poss);
             nlinks++;
         }
@@ -1340,6 +1356,7 @@ static int solve_single(game_state *state, game_state *copy, int *from)
         } else {
             debug(("Solver: linking only possible prev (%d,%d) to (%d,%d).",
                    from[i]%w, from[i]/w, x, y));
+            hint_record(from[i], i);
             makelink(copy, from[i], i);
             nlinks++;
         }
@@ -1374,6 +1391,39 @@ static int solve_state(game_state *state)
            ret < 0 ? "impossible" : ret > 0 ? "solved" : "not solved"));
     debug_state("After solver: ", state);
     return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    game_state *t = dup_game(orig);
+    int w = orig->w, i, res;
+    char *out = NULL, buf[64];
+
+    hint_n = 0;
+    hint_on = true;
+    res = solve_state(t);
+    hint_on = false;
+    if (res > 0) {
+        for (i = 0; i < orig->n; i++)
+            if (curr->next[i] != -1 && curr->next[i] != t->next[i]) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+                *error = errbuf;
+                free_game(t);
+                return NULL;
+            }
+    }
+    free_game(t);
+    for (i = 0; i < hint_n; i++) {
+        int f = hint_log[2*i], to = hint_log[2*i+1];
+        if (curr->next[f] == to) continue;
+        sprintf(buf, "L%d,%d-%d,%d", f % w, f / w, to % w, to / w);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -2388,6 +2438,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     REQUIRE_RBUTTON,		       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
