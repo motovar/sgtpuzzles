@@ -2028,6 +2028,122 @@ static char *solve_game(const game_state *state_start, const game_state *currsta
     return move;
 }
 
+static int *hint_new_counts(const game_state *st)
+{
+    int p, monster, position;
+    int *pc = snewn(st->common->num_paths*18, int);
+    for (p = 0; p < st->common->num_paths; p++)
+        for (monster = 0; monster < 3; monster++)
+            for (position = 0; position < 3; position++) {
+                pc[0+position*2+monster*2*3+p*2*3*3] =
+                    (st->common->paths[p].num_monsters > 0) ? 1000 : 0;
+                pc[1+position*2+monster*2*3+p*2*3*3] = 0;
+            }
+    return pc;
+}
+
+/* Run the iterative rules to a fixed point on guess[]; returns false if
+ * the position is inconsistent. */
+static bool hint_propagate(const game_state *st, int *guess, int *pc, int *log, int *nlog)
+{
+    int n = st->common->num_total, q;
+    int *prev = snewn(n, int);
+    bool ok = true;
+    for (;;) {
+        bool no_change = true, done;
+        memcpy(prev, guess, n * sizeof(int));
+        done = solve_iterative((game_state *)st, guess, pc);
+        for (q = 0; q < n; q++) {
+            if (guess[q] == 0) ok = false;
+            if (guess[q] != prev[q]) {
+                no_change = false;
+                if (log && (guess[q] == 1 || guess[q] == 2 || guess[q] == 4) &&
+                    !(prev[q] == 1 || prev[q] == 2 || prev[q] == 4)) {
+                    log[2*(*nlog)] = q; log[2*(*nlog)+1] = guess[q];
+                    (*nlog)++;
+                }
+            }
+        }
+        if (ok && !done && no_change) {
+            /* Stronger (combination) rules when the simple ones stall. */
+            memcpy(prev, guess, n * sizeof(int));
+            solve_combinations((game_state *)st, guess, pc);
+            for (q = 0; q < n; q++) {
+                if (guess[q] == 0) ok = false;
+                if (guess[q] != prev[q]) {
+                    no_change = false;
+                    if (log && (guess[q] == 1 || guess[q] == 2 || guess[q] == 4) &&
+                        !(prev[q] == 1 || prev[q] == 2 || prev[q] == 4)) {
+                        log[2*(*nlog)] = q; log[2*(*nlog)+1] = guess[q];
+                        (*nlog)++;
+                    }
+                }
+            }
+        }
+        if (!ok || done || no_change) break;
+    }
+    sfree(prev);
+    return ok;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int n = orig->common->num_total, p, i, nlog = 0;
+    int *guess = snewn(n, int), *pc = hint_new_counts(orig);
+    int *log = snewn(2*n + 2, int);
+    char *out = NULL, buf[32];
+
+    for (p = 0; p < n; p++)
+        guess[p] = orig->common->fixed[p] ? orig->guess[p] : 7;
+    hint_propagate(orig, guess, pc, log, &nlog);
+
+    /* mistakes: a placed monster that contradicts a deduced one */
+    for (p = 0; p < n; p++) {
+        int g = guess[p], c = curr->guess[p];
+        if ((g == 1 || g == 2 || g == 4) && (c == 1 || c == 2 || c == 4) && c != g) {
+            sprintf(errbuf, _("There is a mistake at monster %d"), p + 1);
+            *error = errbuf;
+            sfree(guess); sfree(pc); sfree(log);
+            return NULL;
+        }
+    }
+    for (i = 0; i < nlog && !out; i++) {
+        int q = log[2*i], g = log[2*i+1];
+        if (curr->guess[q] == g) continue;
+        sprintf(buf, "%c%d", g == 1 ? 'G' : g == 2 ? 'V' : 'Z', q);
+        out = dupstr(buf);
+    }
+    if (!out) {
+        /* Look-ahead: if all but one possibility for a monster lead to a
+         * contradiction under the same rules, the remaining one is forced. */
+        for (p = 0; p < n && !out; p++) {
+            int g = guess[p], v, nleft = 0, last = 0;
+            if (g == 1 || g == 2 || g == 4 || g == 0) continue;
+            for (v = 1; v <= 4; v *= 2) {
+                int *tg, *tpc;
+                bool ok;
+                if (!(g & v)) continue;
+                tg = snewn(n, int);
+                memcpy(tg, guess, n * sizeof(int));
+                tg[p] = v;
+                tpc = hint_new_counts(orig);
+                ok = hint_propagate(orig, tg, tpc, NULL, NULL);
+                sfree(tg); sfree(tpc);
+                if (ok) { nleft++; last = v; }
+            }
+            if (nleft == 1 && curr->guess[p] != last) {
+                sprintf(buf, "%c%d", last == 1 ? 'G' : last == 2 ? 'V' : 'Z', p);
+                out = dupstr(buf);
+            }
+        }
+    }
+    sfree(guess); sfree(pc); sfree(log);
+    if (!out) *error = _("No logical next step found");
+    return out;
+}
+
 static bool game_can_format_as_text_now(const game_params *params)
 {
     return true;
@@ -3226,4 +3342,5 @@ const struct game thegame = {
     false,                 /* wants_statusbar */
     false, game_timing_state,
     0,                     /* flags */
+    hint_game,
 };
