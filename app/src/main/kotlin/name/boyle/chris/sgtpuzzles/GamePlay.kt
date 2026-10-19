@@ -1309,6 +1309,14 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
     override fun setStatus(status: String) {
         statusBar.apply {
             text = status.ifEmpty { " " } // Ensure consistent height
+            // Kakuro's combination helper is multi-line: reserve a fixed height
+            // so the puzzle is not resized as the text changes.
+            if (currentBackend === BackendName.KAKURO && status.isNotEmpty()) {
+                setLines(3)
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            } else {
+                minLines = 0; maxLines = Int.MAX_VALUE
+            }
             importantForAccessibility =
                 if (status.isEmpty()) View.IMPORTANT_FOR_ACCESSIBILITY_NO else View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }

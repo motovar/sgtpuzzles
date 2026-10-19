@@ -2040,7 +2040,7 @@ static game_ui *new_ui(const game_state *state)
 
     ui->hx = ui->hy = 0;
     ui->advx = 1; ui->advy = 0;
-    ui->show_hints = 1;
+    ui->show_hints = 0;
     ui->hpencil = ui->hshow = ui->hcursor = 0;
 #ifdef MULTIDIGIT
     ui->pending = 0;
