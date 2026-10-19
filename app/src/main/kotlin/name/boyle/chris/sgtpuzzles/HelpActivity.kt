@@ -162,7 +162,7 @@ class HelpActivity : ActivityWithNightMode() {
 
     companion object {
         const val TOPIC = "name.boyle.chris.sgtpuzzles.TOPIC"
-        private val ALLOWED_TOPICS = Pattern.compile("^[a-z]+$")
+        private val ALLOWED_TOPICS = Pattern.compile("^[a-z0-9_]+$")
         const val ASSETS_PATH = "/assets/"
         const val ASSETS_URL = "https://" + WebViewAssetLoader.DEFAULT_DOMAIN + ASSETS_PATH
         private fun helpPath(lang: String, topic: String?): String {
