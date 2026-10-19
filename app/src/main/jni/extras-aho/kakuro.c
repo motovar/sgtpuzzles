@@ -3006,6 +3006,37 @@ static void kh_rec(struct kh_dfs *d, int k, int rest, long used)
     }
 }
 
+/* Propagate run-sum constraints to a fixpoint; returns false on contradiction. */
+static bool kh_propagate(const struct kh_run *runs, int nr, long *cand, int a,
+                         int *order, int *norder, bool *logged)
+{
+    int i, changed;
+    (void)a;
+    do {
+        changed = 0;
+        for (i = 0; i < nr; i++) {
+            struct kh_dfs d;
+            int k;
+            memset(&d, 0, sizeof d);
+            d.r = &runs[i]; d.cand = cand; d.guard = 2000000;
+            kh_rec(&d, 0, runs[i].clue, 0);
+            if (d.guard <= 0) continue;
+            for (k = 0; k < runs[i].n; k++) {
+                int c = runs[i].cell[k];
+                long nc = cand[c] & d.found[k];
+                if (nc != cand[c]) {
+                    cand[c] = nc; changed = 1;
+                    if (!nc) return false;
+                    if (order && !(nc & (nc - 1)) && !logged[c]) {
+                        logged[c] = true; order[(*norder)++] = c;
+                    }
+                }
+            }
+        }
+    } while (changed);
+    return true;
+}
+
 static char *hint_game(const game_state *orig, const game_state *curr,
                        const char **error)
 {
@@ -3044,27 +3075,35 @@ static char *hint_game(const game_state *orig, const game_state *curr,
     }
     for (i = 0; i < a; i++)
         if (cand[i] && !(cand[i] & (cand[i] - 1))) { logged[i] = true; }
-    do {
-        changed = 0;
-        for (i = 0; i < nr; i++) {
-            struct kh_dfs d;
-            int k;
-            memset(&d, 0, sizeof d);
-            d.r = &runs[i]; d.cand = cand; d.guard = 2000000;
-            kh_rec(&d, 0, runs[i].clue, 0);
-            if (d.guard <= 0) continue;
-            for (k = 0; k < runs[i].n; k++) {
-                int c = runs[i].cell[k];
-                long nc = cand[c] & d.found[k];
-                if (nc != cand[c]) {
-                    cand[c] = nc; changed = 1;
-                    if (nc && !(nc & (nc - 1)) && !logged[c]) {
-                        logged[c] = true; order[norder++] = c;
+    {
+        int tries = 0;
+        bool prog = true;
+        if (!kh_propagate(runs, nr, cand, a, order, &norder, logged)) prog = false;
+        /* Tier 2: assume a candidate; if propagation contradicts, eliminate it. */
+        while (prog && tries++ < 400) {
+            int c, v;
+            long *t = snewn(a, long);
+            prog = false;
+            for (c = 0; c < a && !prog; c++) {
+                if (!cand[c] || !(cand[c] & (cand[c] - 1))) continue;
+                for (v = 1; v <= max && !prog; v++) {
+                    if (!(cand[c] & (1L << v))) continue;
+                    memcpy(t, cand, a * sizeof(long));
+                    t[c] = 1L << v;
+                    if (!kh_propagate(runs, nr, t, a, NULL, NULL, NULL)) {
+                        cand[c] &= ~(1L << v);
+                        if (!(cand[c] & (cand[c] - 1)) && !logged[c]) {
+                            logged[c] = true; order[norder++] = c;
+                        }
+                        if (!kh_propagate(runs, nr, cand, a, order, &norder, logged))
+                            ;
+                        prog = true;
                     }
                 }
             }
+            sfree(t);
         }
-    } while (changed);
+    }
     ncell = 0;
     for (i = 0; i < a; i++) if (orig->clues->playable[i]) {
         ncell++;
