@@ -409,6 +409,11 @@ static void seismic_solver_init(game_state *state)
 	}
 }
 
+/* Hint support: record the order of the solver's placements. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+
 static int seismic_solver_marks(game_state *state)
 {
 	/* Check if a cell has one mark left, then place that number */
@@ -428,7 +433,19 @@ static int seismic_solver_marks(game_state *state)
 		for(j = 1; j <= 9; j++)
 		{
 			if(state->marks[i] == NUM_BIT(j))
+			{
+				if(hint_on)
+				{
+					if(hint_n >= hint_cap)
+					{
+						hint_cap = hint_cap ? hint_cap * 2 : 128;
+						hint_log = sresize(hint_log, 2 * hint_cap, int);
+					}
+					hint_log[2*hint_n] = i; hint_log[2*hint_n+1] = j;
+					hint_n++;
+				}
 				ret += seismic_place_number(state, i%w, i/w, j);
+			}
 		}
 	}
 	
@@ -1220,6 +1237,44 @@ static game_state *new_game(midend *me, const game_params *params, const char *d
 	seismic_read_desc(params, desc, &state);
 	
 	return state;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+	const char **error)
+{
+	static char errbuf[96];
+	int w = orig->w, s = w * orig->h, i, res;
+	game_state *t = dup_game(orig);
+	char *out = NULL, buf[40];
+
+	hint_n = 0;
+	hint_on = true;
+	res = seismic_solve_game(t, DIFFCOUNT);
+	hint_on = false;
+	if(res != -1)
+	{
+		for(i = 0; i < s; i++)
+		{
+			if(curr->grid[i] && curr->grid[i] != t->grid[i])
+			{
+				sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+				*error = errbuf;
+				free_game(t);
+				return NULL;
+			}
+		}
+	}
+	free_game(t);
+	for(i = 0; i < hint_n; i++)
+	{
+		int cl = hint_log[2*i], v = hint_log[2*i+1];
+		if(curr->grid[cl]) continue;
+		sprintf(buf, "R%d,%d,%c", cl % w, cl / w, '0' + v);
+		out = dupstr(buf);
+		break;
+	}
+	if(!out) *error = _("No logical next step found");
+	return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -2020,6 +2075,7 @@ const struct game thegame = {
 	false,			       /* wants_statusbar */
 	false, game_timing_state,
 	REQUIRE_RBUTTON, /* flags */
+	hint_game,
 };
 
 /* ***************** *
