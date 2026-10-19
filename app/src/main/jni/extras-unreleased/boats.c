@@ -2485,6 +2485,42 @@ static int boats_solver_borderclues_last(game_state *state)
 	return ret;
 }
 
+/* Hint support: record, pass by pass, which cells the solver fills. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static char *hint_prev = NULL;
+
+static void hint_snap(const game_state *state)
+{
+	int i, s = state->w * state->h;
+	if(!hint_on || !hint_prev) return;
+	for(i = 0; i < s; i++)
+	{
+		int kind = 0;
+		if(hint_prev[i] == state->grid[i]) continue;
+		if(hint_prev[i] == EMPTY)
+		{
+			if(state->grid[i] == WATER) kind = 1;
+			else if(IS_SHIP(state->grid[i])) kind = 2;
+		}
+		else if(IS_SHIP(hint_prev[i]) && IS_SHIP(state->grid[i]))
+		{
+			hint_prev[i] = state->grid[i];
+			continue;
+		}
+		hint_prev[i] = state->grid[i];
+		if(!kind) continue;
+		if(hint_n >= hint_cap)
+		{
+			hint_cap = hint_cap ? hint_cap * 2 : 128;
+			hint_log = sresize(hint_log, 2 * hint_cap, int);
+		}
+		hint_log[2*hint_n] = i; hint_log[2*hint_n+1] = kind;
+		hint_n++;
+	}
+}
+
 static int boats_solve_game(game_state *state, int maxdiff)
 {
 	int w = state->w;
@@ -2542,10 +2578,16 @@ static int boats_solve_game(game_state *state, int maxdiff)
 	}
 	if(maxdiff >= DIFF_HARD)
 		tmpgrid = snewn(w*h, char);
+	if(hint_on)
+	{
+		hint_prev = snewn(w*h, char);
+		memcpy(hint_prev, state->grid, w*h*sizeof(char));
+	}
 	boats_solver_initial(state);
 	
 	while(true)
 	{
+		hint_snap(state);
 		/* Validation */
 		if(boats_validate_full_state(state, blankcounts, shipcounts, fleetcount, dsf) != STATUS_INCOMPLETE)
 			break;
@@ -2635,6 +2677,8 @@ static int boats_solve_game(game_state *state, int maxdiff)
 		break;
 	}
 	
+	hint_snap(state);
+	if(hint_prev) { sfree(hint_prev); hint_prev = NULL; }
 	status = boats_validate_full_state(state, blankcounts, shipcounts, fleetcount, NULL);
 	
 	if(status == STATUS_INCOMPLETE)
@@ -2654,6 +2698,51 @@ static int boats_solve_game(game_state *state, int maxdiff)
 	dsf_free(dsf);
 	
 	return diff;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+	const char **error)
+{
+	static char errbuf[96];
+	int w = orig->w, h = orig->h, s = w * h, i, diff;
+	game_state *t = dup_game(orig);
+	char *out = NULL, buf[64];
+
+	hint_n = 0;
+	hint_on = true;
+	diff = boats_solve_game(t, DIFFCOUNT);
+	hint_on = false;
+	if(diff >= 0)
+	{
+		for(i = 0; i < s; i++)
+		{
+			bool sship, cship;
+			if(orig->gridclues[i] != EMPTY) continue;
+			if(curr->grid[i] == EMPTY) continue;
+			sship = IS_SHIP(t->grid[i]);
+			cship = IS_SHIP(curr->grid[i]);
+			if(sship != cship)
+			{
+				sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+				*error = errbuf;
+				free_game(t);
+				return NULL;
+			}
+		}
+	}
+	free_game(t);
+	for(i = 0; i < hint_n; i++)
+	{
+		int cl = hint_log[2*i], kind = hint_log[2*i+1];
+		if(orig->gridclues[cl] != EMPTY) continue;
+		if(curr->grid[cl] != EMPTY) continue;
+		sprintf(buf, "P%d,%d,%d,%d,-,%c", cl % w, cl / w, cl % w, cl / w, kind == 2 ? 'B' : 'W');
+		out = dupstr(buf);
+		break;
+	}
+	(void)h;
+	if(!out) *error = _("No logical next step found");
+	return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -4098,6 +4187,7 @@ const struct game thegame = {
 	false,			       /* wants_statusbar */
 	false, game_timing_state,
 	REQUIRE_RBUTTON, /* flags */
+	hint_game,
 };
 
 /* ***************** *
