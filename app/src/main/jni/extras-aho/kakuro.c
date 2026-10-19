@@ -2989,6 +2989,7 @@ struct kh_dfs {
     long found[KH_MAXRUN];
     int dig[KH_MAXRUN];
     long guard;
+    const long *forbid; int nforbid;   /* digit sets used by other runs (no-same mode) */
 };
 
 static void kh_rec(struct kh_dfs *d, int k, int rest, long used)
@@ -2996,7 +2997,11 @@ static void kh_rec(struct kh_dfs *d, int k, int rest, long used)
     int dgt;
     if (d->guard-- <= 0) return;
     if (k == d->r->n) {
-        if (rest == 0) { int i; for (i = 0; i < k; i++) d->found[i] |= 1L << d->dig[i]; }
+        if (rest == 0) {
+            int i;
+            for (i = 0; i < d->nforbid; i++) if (d->forbid[i] == used) return;
+            for (i = 0; i < k; i++) d->found[i] |= 1L << d->dig[i];
+        }
         return;
     }
     for (dgt = 1; dgt <= rest && dgt <= MAXNUM; dgt++) {
@@ -3007,17 +3012,31 @@ static void kh_rec(struct kh_dfs *d, int k, int rest, long used)
 }
 
 /* Propagate run-sum constraints to a fixpoint; returns false on contradiction. */
-static bool kh_propagate(const struct kh_run *runs, int nr, long *cand, int a,
+static bool kh_propagate(const struct kh_run *runs, int nr, bool nosame, long *cand, int a,
                          int *order, int *norder, bool *logged)
 {
     int i, changed;
+    long *fb = nosame ? snewn(nr, long) : NULL;
     (void)a;
     do {
         changed = 0;
         for (i = 0; i < nr; i++) {
             struct kh_dfs d;
-            int k;
+            int k, j, nf = 0;
             memset(&d, 0, sizeof d);
+            if (nosame) {
+                for (j = 0; j < nr; j++) {
+                    long m = 0; int q;
+                    if (j == i) continue;
+                    for (q = 0; q < runs[j].n; q++) {
+                        long cc = cand[runs[j].cell[q]];
+                        if (!cc || (cc & (cc - 1))) break;
+                        m |= cc;
+                    }
+                    if (q == runs[j].n) fb[nf++] = m;
+                }
+                d.forbid = fb; d.nforbid = nf;
+            }
             d.r = &runs[i]; d.cand = cand; d.guard = 2000000;
             kh_rec(&d, 0, runs[i].clue, 0);
             if (d.guard <= 0) continue;
@@ -3026,7 +3045,7 @@ static bool kh_propagate(const struct kh_run *runs, int nr, long *cand, int a,
                 long nc = cand[c] & d.found[k];
                 if (nc != cand[c]) {
                     cand[c] = nc; changed = 1;
-                    if (!nc) return false;
+                    if (!nc) { sfree(fb); return false; }
                     if (order && !(nc & (nc - 1)) && !logged[c]) {
                         logged[c] = true; order[(*norder)++] = c;
                     }
@@ -3034,6 +3053,7 @@ static bool kh_propagate(const struct kh_run *runs, int nr, long *cand, int a,
             }
         }
     } while (changed);
+    sfree(fb);
     return true;
 }
 
@@ -3050,14 +3070,17 @@ static char *hint_game(const game_state *orig, const game_state *curr,
     char *out = NULL, buf[40];
     bool complete = true;
 
-    if (orig->par->oddeven_mode || orig->par->nosame_mode) {
-        *error = "Next step is not available in this variant";
-        goto done;
-    }
     for (i = 0; i < a; i++) {
         logged[i] = false;
         if (!orig->clues->playable[i]) { cand[i] = 0; continue; }
         cand[i] = orig->grid[i] > 0 ? 1L << orig->grid[i] : ((2L << max) - 2);
+        if (orig->par->oddeven_mode && orig->grid[i] <= 0) {
+            int ind = (i / sz - 1) * orig->par->size + (i % sz - 1);
+            int odd = ((orig->clues->oddeven == 2 ? 0 : 1) + ind +
+                       (orig->par->size % 2 ? 0 : ind / orig->par->size)) % 2;
+            long m = (odd ^ (max % 2)) ? (1L << max) / 3 : (2L << max) / 3;
+            cand[i] &= m << 1;
+        }
     }
     for (y = 0; y < sz; y++) for (x = 0; x < sz; x++) {
         int dir;
@@ -3078,7 +3101,7 @@ static char *hint_game(const game_state *orig, const game_state *curr,
     {
         int tries = 0;
         bool prog = true;
-        if (!kh_propagate(runs, nr, cand, a, order, &norder, logged)) prog = false;
+        if (!kh_propagate(runs, nr, orig->par->nosame_mode != 0, cand, a, order, &norder, logged)) prog = false;
         /* Tier 2: assume a candidate; if propagation contradicts, eliminate it. */
         while (prog && tries++ < 400) {
             int c, v;
@@ -3090,12 +3113,12 @@ static char *hint_game(const game_state *orig, const game_state *curr,
                     if (!(cand[c] & (1L << v))) continue;
                     memcpy(t, cand, a * sizeof(long));
                     t[c] = 1L << v;
-                    if (!kh_propagate(runs, nr, t, a, NULL, NULL, NULL)) {
+                    if (!kh_propagate(runs, nr, orig->par->nosame_mode != 0, t, a, NULL, NULL, NULL)) {
                         cand[c] &= ~(1L << v);
                         if (!(cand[c] & (cand[c] - 1)) && !logged[c]) {
                             logged[c] = true; order[norder++] = c;
                         }
-                        if (!kh_propagate(runs, nr, cand, a, order, &norder, logged))
+                        if (!kh_propagate(runs, nr, orig->par->nosame_mode != 0, cand, a, order, &norder, logged))
                             ;
                         prog = true;
                     }
