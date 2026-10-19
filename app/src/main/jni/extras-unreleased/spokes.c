@@ -758,6 +758,35 @@ static char *game_text_format(const game_state *state);
 
 #define ACTION_LIMIT 4
 
+/* Hint support: record, pass by pass, which spokes the solver decides. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static hub_t *hint_prev = NULL;
+
+static void hint_snap(const game_state *state)
+{
+	int i, d, s = state->w * state->h;
+	if(!hint_on || !hint_prev) return;
+	for(i = 0; i < s; i++)
+	{
+		for(d = 0; d < 4; d++)
+		{
+			int before = GET_SPOKE(hint_prev[i], d), now = GET_SPOKE(state->spokes[i], d);
+			if(before == now) continue;
+			if(before != SPOKE_EMPTY || (now != SPOKE_LINE && now != SPOKE_MARKED)) continue;
+			if(hint_n >= hint_cap)
+			{
+				hint_cap = hint_cap ? hint_cap * 2 : 128;
+				hint_log = sresize(hint_log, 3 * hint_cap, int);
+			}
+			hint_log[3*hint_n] = i; hint_log[3*hint_n+1] = d; hint_log[3*hint_n+2] = now;
+			hint_n++;
+		}
+		hint_prev[i] = state->spokes[i];
+	}
+}
+
 static int spokes_solve(game_state *state, struct spokes_scratch *solver, int diff)
 {
 	game_state *copy = NULL;
@@ -766,6 +795,14 @@ static int spokes_solve(game_state *state, struct spokes_scratch *solver, int di
 		solver = spokes_new_scratch(state);
 	int ret, action, total = 0;
 	
+	bool hint_here = hint_on && !hint_prev;
+	if(hint_here)
+	{
+		int hi;
+		hint_prev = snewn(state->w * state->h, hub_t);
+		for(hi = 0; hi < state->w * state->h; hi++) hint_prev[hi] = state->spokes[hi];
+	}
+	
 	spokes_solver_ones(state);
 
 	if(diff >= DIFF_TRICKY)
@@ -773,6 +810,7 @@ static int spokes_solve(game_state *state, struct spokes_scratch *solver, int di
 	
 	while(true)
 	{
+		if(hint_here) hint_snap(state);
 		if(spokes_validate(state, solver) != STATUS_INCOMPLETE)
 			break;
 		if(diff == DIFF_LIMITED && total >= ACTION_LIMIT)
@@ -803,6 +841,12 @@ static int spokes_solve(game_state *state, struct spokes_scratch *solver, int di
 		break;
 	}
 	
+	if(hint_here)
+	{
+		hint_snap(state);
+		sfree(hint_prev);
+		hint_prev = NULL;
+	}
 	ret = spokes_validate(state, solver);
 	
 	if(!hassolver)
@@ -829,6 +873,47 @@ static int spokes_solve(game_state *state, struct spokes_scratch *solver, int di
 #endif
 	
 	return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+	const char **error)
+{
+	static char errbuf[96];
+	int w = orig->w, s = w * orig->h, i, d, res;
+	game_state *t = dup_game(orig);
+	char *out = NULL, buf[64];
+
+	hint_n = 0;
+	hint_on = true;
+	res = spokes_solve(t, NULL, DIFFCOUNT);
+	hint_on = false;
+	if(res == STATUS_VALID)
+	{
+		for(i = 0; i < s; i++)
+			for(d = 0; d < 4; d++)
+			{
+				int c = GET_SPOKE(curr->spokes[i], d), sv = GET_SPOKE(t->spokes[i], d);
+				if((c == SPOKE_LINE && sv != SPOKE_LINE) ||
+					(c == SPOKE_MARKED && sv == SPOKE_LINE))
+				{
+					sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+					*error = errbuf;
+					free_game(t);
+					return NULL;
+				}
+			}
+	}
+	free_game(t);
+	for(i = 0; i < hint_n; i++)
+	{
+		int cl = hint_log[3*i], dir = hint_log[3*i+1], v = hint_log[3*i+2];
+		if(GET_SPOKE(curr->spokes[cl], dir) != SPOKE_EMPTY) continue;
+		sprintf(buf, "%d,%d,%d", cl, dir, v);
+		out = dupstr(buf);
+		break;
+	}
+	if(!out) *error = _("No logical next step found");
+	return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -1750,6 +1835,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, game_timing_state,
     REQUIRE_RBUTTON, /* flags */
+	hint_game,
 };
 
 /* ***************** *
