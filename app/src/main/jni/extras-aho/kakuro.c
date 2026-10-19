@@ -2977,6 +2977,130 @@ static void kakuro_hint_text(const game_state *state, const game_ui *ui, char *b
     snprintf(buf, size, "%s%s%s", a, (a[0] && b[0]) ? "\n" : "", b);
 }
 
+
+/* ---- Logical next step: candidate propagation over run sums ---- */
+
+#define KH_MAXRUN 24
+struct kh_run { int n, clue, cell[KH_MAXRUN]; };
+
+struct kh_dfs {
+    const struct kh_run *r;
+    const long *cand;
+    long found[KH_MAXRUN];
+    int dig[KH_MAXRUN];
+    long guard;
+};
+
+static void kh_rec(struct kh_dfs *d, int k, int rest, long used)
+{
+    int dgt;
+    if (d->guard-- <= 0) return;
+    if (k == d->r->n) {
+        if (rest == 0) { int i; for (i = 0; i < k; i++) d->found[i] |= 1L << d->dig[i]; }
+        return;
+    }
+    for (dgt = 1; dgt <= rest && dgt <= MAXNUM; dgt++) {
+        if (!(d->cand[d->r->cell[k]] & (1L << dgt)) || (used & (1L << dgt))) continue;
+        d->dig[k] = dgt;
+        kh_rec(d, k + 1, rest - dgt, used | (1L << dgt));
+    }
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int sz = orig->par->size + 1, a = sz * sz, max = orig->par->max;
+    int x, y, i, nr = 0, changed, ncell;
+    struct kh_run *runs = snewn(2 * a, struct kh_run);
+    long *cand = snewn(a, long);
+    int *order = snewn(a, int), norder = 0;
+    bool *logged = snewn(a, bool);
+    char *out = NULL, buf[40];
+    bool complete = true;
+
+    if (orig->par->oddeven_mode || orig->par->nosame_mode) {
+        *error = "Next step is not available in this variant";
+        goto done;
+    }
+    for (i = 0; i < a; i++) {
+        logged[i] = false;
+        if (!orig->clues->playable[i]) { cand[i] = 0; continue; }
+        cand[i] = orig->grid[i] > 0 ? 1L << orig->grid[i] : ((2L << max) - 2);
+    }
+    for (y = 0; y < sz; y++) for (x = 0; x < sz; x++) {
+        int dir;
+        for (dir = 0; dir < 2; dir++) {
+            int clue = dir ? orig->clues->hclues[y*sz+x] : orig->clues->vclues[y*sz+x];
+            int dx = dir, dy = !dir, px = x + dx, py = y + dy;
+            struct kh_run *r = &runs[nr];
+            if (clue < 0) continue;
+            r->n = 0; r->clue = clue;
+            while (px < sz && py < sz && orig->clues->playable[py*sz+px] && r->n < KH_MAXRUN) {
+                r->cell[r->n++] = py*sz + px; px += dx; py += dy;
+            }
+            if (r->n) nr++;
+        }
+    }
+    for (i = 0; i < a; i++)
+        if (cand[i] && !(cand[i] & (cand[i] - 1))) { logged[i] = true; }
+    do {
+        changed = 0;
+        for (i = 0; i < nr; i++) {
+            struct kh_dfs d;
+            int k;
+            memset(&d, 0, sizeof d);
+            d.r = &runs[i]; d.cand = cand; d.guard = 2000000;
+            kh_rec(&d, 0, runs[i].clue, 0);
+            if (d.guard <= 0) continue;
+            for (k = 0; k < runs[i].n; k++) {
+                int c = runs[i].cell[k];
+                long nc = cand[c] & d.found[k];
+                if (nc != cand[c]) {
+                    cand[c] = nc; changed = 1;
+                    if (nc && !(nc & (nc - 1)) && !logged[c]) {
+                        logged[c] = true; order[norder++] = c;
+                    }
+                }
+            }
+        }
+    } while (changed);
+    ncell = 0;
+    for (i = 0; i < a; i++) if (orig->clues->playable[i]) {
+        ncell++;
+        if (!cand[i] || (cand[i] & (cand[i] - 1))) complete = false;
+    }
+    if (complete) {
+        for (i = 0; i < a; i++) if (orig->clues->playable[i] && curr->grid[i] > 0 &&
+                                    cand[i] != (1L << curr->grid[i])) {
+            sprintf(errbuf, "There is a mistake in row %d, column %d", i / sz + 1, i % sz + 1);
+            *error = errbuf;
+            goto done;
+        }
+    }
+    for (i = 0; i < norder; i++) {
+        int c = order[i], v = 0;
+        if (curr->grid[c] > 0) continue;
+        while (!(cand[c] & (1L << v))) v++;
+        sprintf(buf, "R%d,%d,%d", c % sz, c / sz, v);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) {
+        /* givens already single but unfilled by player */
+        for (i = 0; i < a && !out; i++)
+            if (orig->clues->playable[i] && curr->grid[i] <= 0 && cand[i] && !(cand[i] & (cand[i]-1))) {
+                int v = 0; while (!(cand[i] & (1L << v))) v++;
+                sprintf(buf, "R%d,%d,%d", i % sz, i / sz, v);
+                out = dupstr(buf);
+            }
+    }
+    if (!out) *error = "No logical next step found";
+done:
+    sfree(runs); sfree(cand); sfree(order); sfree(logged);
+    return out;
+}
+
 static void game_redraw(drawing *dr, game_drawstate *ds, const game_state *oldstate,
 			const game_state *state, int dir, const game_ui *ui,
 			float animtime, float flashtime)
@@ -3148,4 +3272,5 @@ const struct game thegame = {
 #endif /* SHOWDIFF */
     false, game_timing_state,
     0,				       /* flags */
+    hint_game,
 };
