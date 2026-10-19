@@ -84,7 +84,7 @@ sealed class BackendName(
     /** Games that can show one logically deducible next step (game->hint in C). */
     val supportsSolveStep by lazy {
         this in setOf(
-            BRIDGES, DOMINOSA, FILLING, GALAXIES, KEEN, LIGHTUP, MAGNETS, MOSAIC, NET, PALISADE, PATTERN, PEARL, RANGE, SINGLES, SLANT, SOLO, SOLO_PLUS, TENTS, TOWERS, TRACKS, UNDEAD, UNEQUAL, UNEQUAL_PLUS, UNRULY
+            BRIDGES, DOMINOSA, FILLING, GALAXIES, KEEN, LIGHTUP, MAGNETS, MAP, MOSAIC, NET, PALISADE, PATTERN, PEARL, RANGE, SINGLES, SLANT, SOLO, SOLO_PLUS, TENTS, TOWERS, TRACKS, UNDEAD, UNEQUAL, UNEQUAL_PLUS, UNRULY
         )
     }
 

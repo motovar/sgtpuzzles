@@ -885,6 +885,11 @@ static int bitcount(int word)
 static const char colnames[FOUR] = { 'R', 'Y', 'G', 'B' };
 #endif
 
+/* Hint support: record the order of the solver's colour placements. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+
 static bool place_colour(struct solver_scratch *sc,
                          int *colouring, int index, int colour
 #ifdef SOLVER_DIAGNOSTICS
@@ -904,6 +909,14 @@ static bool place_colour(struct solver_scratch *sc,
 	return false;		       /* can't do it */
     }
 
+    if (hint_on && sc->depth == 0 && colouring[index] < 0) {
+        if (hint_n >= hint_cap) {
+            hint_cap = hint_cap ? hint_cap * 2 : 128;
+            hint_log = sresize(hint_log, 2 * hint_cap, int);
+        }
+        hint_log[2*hint_n] = index; hint_log[2*hint_n+1] = colour;
+        hint_n++;
+    }
     sc->possible[index] = 1 << colour;
     colouring[index] = colour;
 
@@ -2238,6 +2251,51 @@ static void free_game(game_state *state)
     sfree(state);
 }
 
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int n = orig->map->n, i, sret;
+    int *col = snewn(n, int);
+    struct solver_scratch *sc;
+    char *out = NULL, buf[40];
+
+    /* Full solution, to detect mistakes. */
+    memcpy(col, orig->colouring, n * sizeof(int));
+    sc = new_scratch(orig->map->graph, n, orig->map->ngraph);
+    sret = map_solver(sc, orig->map->graph, n, orig->map->ngraph, col,
+                      DIFFCOUNT-1);
+    free_scratch(sc);
+    if (sret == 1) {
+        for (i = 0; i < n; i++)
+            if (curr->colouring[i] >= 0 && curr->colouring[i] != col[i]) {
+                sprintf(errbuf, _("There is a mistake in region %d"), i + 1);
+                *error = errbuf;
+                sfree(col);
+                return NULL;
+            }
+    }
+
+    /* Logical order: non-guessing solver only. */
+    memcpy(col, orig->colouring, n * sizeof(int));
+    sc = new_scratch(orig->map->graph, n, orig->map->ngraph);
+    hint_n = 0;
+    hint_on = true;
+    map_solver(sc, orig->map->graph, n, orig->map->ngraph, col, DIFF_HARD);
+    hint_on = false;
+    free_scratch(sc);
+    sfree(col);
+    for (i = 0; i < hint_n; i++) {
+        int r = hint_log[2*i], c = hint_log[2*i+1];
+        if (curr->colouring[r] >= 0) continue;
+        sprintf(buf, "%d:%d", c, r);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
+}
+
 static char *solve_game(const game_state *state, const game_state *currstate,
                         const char *aux, const char **error)
 {
@@ -3430,6 +3488,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
