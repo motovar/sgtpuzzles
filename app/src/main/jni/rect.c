@@ -335,6 +335,12 @@ static void remove_number_placement(int w, int h, struct numberdata *number,
  * success; 2 for failure to complete a solution due to either
  * ambiguity or it being too difficult.
  */
+/* Hint support: record the order in which rectangles get pinned down. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static char *hint_seen = NULL;
+
 static int rect_solver(int w, int h, int nrects, struct numberdata *numbers,
                        unsigned char *hedge, unsigned char *vedge,
 		       random_state *rs)
@@ -494,12 +500,35 @@ static int rect_solver(int w, int h, int nrects, struct numberdata *numbers,
     }
 
     workspace = snewn(nrects, int);
+    if (hint_on) {
+        hint_seen = snewn(nrects, char);
+        memset(hint_seen, 0, nrects);
+    }
+
+#define HINT_SNAP() do { \
+    if (hint_on) { \
+        int hi_; \
+        for (hi_ = 0; hi_ < nrects; hi_++) \
+            if (!hint_seen[hi_] && rectpositions[hi_].n == 1) { \
+                struct rect *hr_ = &rectpositions[hi_].rects[0]; \
+                hint_seen[hi_] = 1; \
+                if (hint_n >= hint_cap) { \
+                    hint_cap = hint_cap ? hint_cap * 2 : 64; \
+                    hint_log = sresize(hint_log, 4 * hint_cap, int); \
+                } \
+                hint_log[4*hint_n] = hr_->x; hint_log[4*hint_n+1] = hr_->y; \
+                hint_log[4*hint_n+2] = hr_->w; hint_log[4*hint_n+3] = hr_->h; \
+                hint_n++; \
+            } \
+    } } while (0)
 
     /*
      * Now run the actual deduction loop.
      */
     while (1) {
         bool done_something = false;
+
+        HINT_SNAP();
 
 #ifdef SOLVER_DIAGNOSTICS
         printf("starting deduction loop\n");
@@ -868,6 +897,8 @@ static int rect_solver(int w, int h, int nrects, struct numberdata *numbers,
     }
 
     cleanup:
+    HINT_SNAP();
+    if (hint_seen) { sfree(hint_seen); hint_seen = NULL; }
     ret = 1;
     for (i = 0; i < nrects; i++) {
 #ifdef SOLVER_DIAGNOSTICS
@@ -1984,6 +2015,79 @@ static void free_game(game_state *state)
     sfree(state);
 }
 
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int w = orig->w, h = orig->h, i, j, n, x, y, ret;
+    struct numberdata *nd;
+    unsigned char *ve, *he;
+    char *out = NULL, buf[64];
+
+    for (i = n = 0; i < w * h; i++)
+        if (orig->grid[i])
+            n++;
+    nd = snewn(n, struct numberdata);
+    for (i = j = 0; i < w * h; i++)
+        if (orig->grid[i]) {
+            nd[j].area = orig->grid[i];
+            nd[j].npoints = 1;
+            nd[j].points = snewn(1, struct point);
+            nd[j].points[0].x = i % w;
+            nd[j].points[0].y = i / w;
+            j++;
+        }
+    ve = snewn(w * h, unsigned char);
+    he = snewn(w * h, unsigned char);
+    memset(ve, 0, w * h);
+    memset(he, 0, w * h);
+
+    hint_n = 0;
+    hint_on = true;
+    ret = rect_solver(w, h, n, nd, he, ve, NULL);
+    hint_on = false;
+
+    for (i = 0; i < n; i++)
+        sfree(nd[i].points);
+    sfree(nd);
+
+    if (ret == 1) {
+        for (y = 0; y < h; y++)
+            for (x = 0; x < w; x++) {
+                if ((x > 0 && vedge(curr, x, y) && !ve[y*w+x]) ||
+                    (y > 0 && hedge(curr, x, y) && !he[y*w+x])) {
+                    sprintf(errbuf, _("There is a mistake near row %d, column %d"), y + 1, x + 1);
+                    *error = errbuf;
+                    sfree(ve); sfree(he);
+                    return NULL;
+                }
+            }
+    }
+    sfree(ve); sfree(he);
+
+    for (i = 0; i < hint_n; i++) {
+        int rx = hint_log[4*i], ry = hint_log[4*i+1];
+        int rw = hint_log[4*i+2], rh = hint_log[4*i+3];
+        bool same = true;
+        for (y = ry; y < ry + rh && same; y++)
+            for (x = rx; x < rx + rw; x++) {
+                bool l = (x == rx), r = (x == rx + rw - 1);
+                bool t = (y == ry), b = (y == ry + rh - 1);
+                /* left edge of cell, then right, top, bottom, and interior */
+                if (x > 0 && (bool)vedge(curr, x, y) != l) { same = false; break; }
+                if (y > 0 && (bool)hedge(curr, x, y) != t) { same = false; break; }
+                if (r && x + 1 < w && !vedge(curr, x + 1, y)) { same = false; break; }
+                if (b && y + 1 < h && !hedge(curr, x, y + 1)) { same = false; break; }
+            }
+        if (same) continue;
+        sprintf(buf, "R%d,%d,%d,%d", rx, ry, rw, rh);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
+}
+
 static char *solve_game(const game_state *state, const game_state *currstate,
                         const char *ai, const char **error)
 {
@@ -3034,6 +3138,7 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
 
 /* vim: set shiftwidth=4 tabstop=8: */
