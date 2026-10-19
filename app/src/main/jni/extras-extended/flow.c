@@ -466,6 +466,29 @@ static void initialize_solver_flow(int w, int h, const signed char *clues,
     return;
 }
                       
+/* Hint support: record, pass by pass, which cells the solver fixes. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static signed char *hint_prev = NULL;
+
+static void hint_snap(int n, const signed char *soln)
+{
+    int i;
+    if (!hint_on || !hint_prev) return;
+    for (i = 0; i < n; i++) {
+        if (soln[i] != 0 && hint_prev[i] == 0) {
+            if (hint_n >= hint_cap) {
+                hint_cap = hint_cap ? hint_cap * 2 : 128;
+                hint_log = sresize(hint_log, 2 * hint_cap, int);
+            }
+            hint_log[2*hint_n] = i; hint_log[2*hint_n+1] = soln[i];
+            hint_n++;
+        }
+        hint_prev[i] = soln[i];
+    }
+}
+
 static int flow_solve(int w, int h, const signed char *clues,
                signed char *soln, struct solver_scratch_flow *scc,
                int difficulty)
@@ -479,6 +502,7 @@ static int flow_solve(int w, int h, const signed char *clues,
     
     do {
         done_something = false;
+        if (scc->depth == 0) hint_snap(w*h, soln);
 
      /* Any clue point with the number of remaining filled boxes equal
       * to zero or to the number of remaining unfilled
@@ -1001,6 +1025,47 @@ static void free_game(game_state *state)
         sfree(state->clues);
     }
     sfree(state);
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int w = orig->p.w, h = orig->p.h, i, ret;
+    signed char *soln = snewn(w*h, signed char);
+    struct solver_scratch_flow *scc = new_scratch_flow(w, h);
+    char *out = NULL, buf[40];
+
+    initialize_solver_flow(w, h, orig->clues->clues, soln, scc, DIFF_HARD);
+    hint_n = 0;
+    hint_prev = snewn(w*h, signed char);
+    memset(hint_prev, 0, w*h);
+    hint_on = true;
+    ret = flow_solve(w, h, orig->clues->clues, soln, scc, DIFF_HARD);
+    hint_snap(w*h, soln);
+    hint_on = false;
+    sfree(hint_prev); hint_prev = NULL;
+    free_scratch_flow(scc);
+    if (ret == 1) {
+        for (i = 0; i < w*h; i++) {
+            if (curr->soln[i] != 0 && soln[i] != 0 && curr->soln[i] != soln[i]) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+                *error = errbuf;
+                sfree(soln);
+                return NULL;
+            }
+        }
+    }
+    sfree(soln);
+    for (i = 0; i < hint_n; i++) {
+        int cl = hint_log[2*i], v = hint_log[2*i+1];
+        if (curr->soln[cl] == v) continue;
+        sprintf(buf, "%c%d,%d", v < 0 ? 'W' : 'B', cl % w, cl / w);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -1682,5 +1747,6 @@ const struct game thegame = {
     false,                             /* wants_statusbar */
     false, game_timing_state,
     REQUIRE_RBUTTON,                                 /* flags */
+    hint_game,
 };
 
