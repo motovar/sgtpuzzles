@@ -301,6 +301,34 @@ static const char *validate_params(const game_params *params, bool full)
  * Solver.
  */
 
+/* Hint support: record the order in which edges become connected. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static char *hint_seen = NULL;
+
+static void hint_snap(const short *workspace, int w, int h)
+{
+    int W = 2*w+1, x, y;
+    if (!hint_on || !hint_seen) return;
+    for (y = 0; y < 2*h+1; y++)
+        for (x = 0; x < W; x++) {
+            int cx, cy, d;
+            if (workspace[y*W+x] != 1 || hint_seen[y*W+x]) continue;
+            if ((x & 1) && !(y & 1)) { cx = x/2; cy = y/2 - 1; d = D; }
+            else if (!(x & 1) && (y & 1)) { cx = x/2 - 1; cy = y/2; d = R; }
+            else continue;
+            hint_seen[y*W+x] = 1;
+            if (hint_n >= hint_cap) {
+                hint_cap = hint_cap ? hint_cap * 2 : 128;
+                hint_log = sresize(hint_log, 3 * hint_cap, int);
+            }
+            hint_log[3*hint_n] = cx; hint_log[3*hint_n+1] = cy;
+            hint_log[3*hint_n+2] = d;
+            hint_n++;
+        }
+}
+
 static int pearl_solve(int w, int h, char *clues, char *result,
                        int difficulty, bool partial)
 {
@@ -368,6 +396,8 @@ static int pearl_solve(int w, int h, char *clues, char *result,
      */
     while (1) {
 	bool done_something = false;
+
+        hint_snap(workspace, w, h);
 
 #ifdef SOLVER_DIAGNOSTICS
         if (solver_show_working) {
@@ -873,6 +903,7 @@ done_deductions:
     }
 
 cleanup:
+    hint_snap(workspace, w, h);
 
     /*
      * If ret = 1 then we've successfully achieved a solution. This
@@ -1850,6 +1881,46 @@ static char *solve_game(const game_state *state, const game_state *currstate,
 done:
     free_game(solved);
     return move;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int w = orig->shared->w, h = orig->shared->h, i;
+    char *sol = snewn(w*h, char), *out = NULL, buf[120];
+    int ret;
+
+    memset(sol, 0, w*h);
+    hint_n = 0;
+    hint_seen = snewn((2*w+1)*(2*h+1), char);
+    memset(hint_seen, 0, (2*w+1)*(2*h+1));
+    hint_on = true;
+    ret = pearl_solve(w, h, orig->shared->clues, sol, DIFFCOUNT, false);
+    hint_on = false;
+    sfree(hint_seen); hint_seen = NULL;
+    if (ret == 1) {
+        for (i = 0; i < w*h; i++)
+            if (curr->lines[i] & ~sol[i]) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+                *error = errbuf;
+                sfree(sol);
+                return NULL;
+            }
+    }
+    sfree(sol);
+    for (i = 0; i < hint_n; i++) {
+        int x = hint_log[3*i], y = hint_log[3*i+1], d = hint_log[3*i+2];
+        int x2 = x + DX(d), y2 = y + DY(d), p = 0;
+        if (curr->lines[y*w+x] & d) continue;
+        if (curr->marks[y*w+x] & d) p += sprintf(buf+p, "M%d,%d,%d;", d, x, y);
+        if (curr->marks[y2*w+x2] & F(d)) p += sprintf(buf+p, "M%d,%d,%d;", F(d), x2, y2);
+        sprintf(buf+p, "L%d,%d,%d;L%d,%d,%d", d, x, y, F(d), x2, y2);
+        out = dupstr(buf);
+        break;
+    }
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static bool game_can_format_as_text_now(const game_params *params)
@@ -2845,6 +2916,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOAK_TEST
