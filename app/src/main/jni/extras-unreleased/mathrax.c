@@ -1045,6 +1045,32 @@ static game_state *new_game(midend *me, const game_params *params,
 	return state;
 }
 
+static int hint_run(digit *soln, int diff, void *ctx)
+{
+	const game_state *st = (const game_state *)ctx;
+	game_state *s = dup_game(st);
+	int ret;
+	memcpy(s->grid, soln, st->o * st->o);
+	ret = mathrax_solve(s, diff);
+	free_game(s);
+	return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+	const char **error)
+{
+	int o = curr->o, i;
+	digit *zero = snewn(o*o, digit);
+	char *r;
+	for (i = 0; i < o*o; i++)
+		zero[i] = (curr->flags[i] & F_IMMUTABLE) ? curr->grid[i] : 0;
+	r = latin_hint_move(zero, curr->grid, o, DIFFCOUNT-1, hint_run, (void *)curr, error);
+	sfree(zero);
+	if (!r && error && !*error)
+		*error = _("No logical next step found");
+	return r;
+}
+
 static char *solve_game(const game_state *state, const game_state *currstate,
 						const char *aux, const char **error)
 {
@@ -1870,4 +1896,5 @@ const struct game thegame = {
 	false,			       /* wants_statusbar */
 	false, game_timing_state,
 	REQUIRE_RBUTTON, /* flags */
+	hint_game,
 };
