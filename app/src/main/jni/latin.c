@@ -35,9 +35,21 @@ static bool hint_on = false;
 static int *hint_log = NULL;
 static int hint_n = 0, hint_cap = 0;
 
+char *latin_hint_move_skip(const digit *givens, const digit *start, int o, int ndiff,
+                           int (*run)(digit *soln, int diff, void *ctx), void *ctx,
+                           const char **error, const unsigned char *skip);
+
 char *latin_hint_move(const digit *givens, const digit *start, int o, int ndiff,
                       int (*run)(digit *soln, int diff, void *ctx), void *ctx,
                       const char **error)
+{
+    return latin_hint_move_skip(givens, start, o, ndiff, run, ctx, error, NULL);
+}
+
+/* As latin_hint_move, but never proposes a cell for which skip[] is set. */
+char *latin_hint_move_skip(const digit *givens, const digit *start, int o, int ndiff,
+                           int (*run)(digit *soln, int diff, void *ctx), void *ctx,
+                           const char **error, const unsigned char *skip)
 {
     static char errbuf[96];
     digit *soln = snewn(o*o, digit);
@@ -71,7 +83,7 @@ char *latin_hint_move(const digit *givens, const digit *start, int o, int ndiff,
         hint_on = false;
         for (i = 0; i < hint_n; i++) {
             int x = hint_log[3*i], y = hint_log[3*i+1], n = hint_log[3*i+2];
-            if (!start[y*o+x] && (!have_sol || sol[y*o+x] == n)) {
+            if (!start[y*o+x] && !(skip && skip[y*o+x]) && (!have_sol || sol[y*o+x] == n)) {
                 char buf[64];
                 sprintf(buf, "R%d,%d,%d", x, y, n);
                 out = dupstr(buf);

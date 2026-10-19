@@ -1179,6 +1179,80 @@ static char *salad_serialize(const digit *input, int s, char base)
 	return ret;
 }
 
+static int hint_run(digit *soln, int diff, void *ctx)
+{
+	const game_state *st = (const game_state *)ctx;
+	game_state *s = dup_game(st);
+	int ret;
+	memcpy(s->grid, soln, st->params->order * st->params->order);
+	ret = salad_solve(s, diff > DIFF_HARD ? DIFF_HARD : diff);
+	free_game(s);
+	return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+	const char **error)
+{
+	static char errbuf[96];
+	int o = curr->params->order, o2 = o*o, i;
+	digit *zero = snewn(o2, digit);
+	game_state *solved = dup_game(orig);
+	bool complete;
+	const char *err = NULL;
+	char *r = NULL;
+
+	for (i = 0; i < o2; i++)
+		zero[i] = (orig->gridclues[i] && orig->gridclues[i] != LATINH_CROSS &&
+			orig->gridclues[i] != LATINH_CIRCLE) ? orig->gridclues[i] : 0;
+
+	/* Full solution, to spot mistakes. */
+	complete = salad_solve(solved, DIFF_HARD) != 0;
+	if (complete) {
+		for (i = 0; i < o2; i++) {
+			bool sx = !(solved->grid[i] && solved->holes[i] != LATINH_CROSS);
+			if ((curr->grid[i] && (sx || curr->grid[i] != solved->grid[i])) ||
+				(curr->holes[i] == LATINH_CROSS && !sx)) {
+				sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / o + 1, i % o + 1);
+				*error = errbuf;
+				free_game(solved); sfree(zero);
+				return NULL;
+			}
+		}
+	}
+
+	{
+		unsigned char *skip = snewn(o2, unsigned char);
+		for (i = 0; i < o2; i++)
+			skip[i] = (curr->holes[i] == LATINH_CROSS && !curr->grid[i]);
+		r = latin_hint_move_skip(zero, curr->grid, o, DIFF_HARD + 1, hint_run, (void *)curr, &err, skip);
+		sfree(skip);
+	}
+	if (r) {
+		/* Values above the real numbers stand for holes (crosses). */
+		int hx, hy, hn;
+		if (sscanf(r + 1, "%d,%d,%d", &hx, &hy, &hn) == 3 && hn > curr->params->nums) {
+			char buf[40];
+			sfree(r);
+			sprintf(buf, "R%d,%d,X", hx, hy);
+			r = dupstr(buf);
+		}
+	}
+	if (!r && complete) {
+		/* Only holes are left: point at the first one not yet marked. */
+		for (i = 0; i < o2 && !r; i++) {
+			bool sx = !(solved->grid[i] && solved->holes[i] != LATINH_CROSS);
+			if (sx && !curr->grid[i] && curr->holes[i] != LATINH_CROSS) {
+				char buf[40];
+				sprintf(buf, "R%d,%d,X", i % o, i / o);
+				r = dupstr(buf);
+			}
+		}
+	}
+	free_game(solved); sfree(zero);
+	if (!r) *error = _("No logical next step found");
+	return r;
+}
+
 static char *solve_game(const game_state *state, const game_state *currstate,
 			const char *aux, const char **error)
 {
@@ -2591,6 +2665,7 @@ const struct game thegame = {
 #endif
 	false, game_timing_state,
 	REQUIRE_RBUTTON, /* flags */
+	hint_game,
 };
 
 /* ***************** *
