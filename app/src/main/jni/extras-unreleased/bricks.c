@@ -536,6 +536,21 @@ static void free_game(game_state *state)
  * Solver *
  * ****** */
 
+/* Hint support: record the order of the solver's deductions. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static void hint_record(int cell_i, int val)
+{
+	if (!hint_on) return;
+	if (hint_n >= hint_cap) {
+		hint_cap = hint_cap ? hint_cap * 2 : 128;
+		hint_log = sresize(hint_log, 2 * hint_cap, int);
+	}
+	hint_log[2*hint_n] = cell_i; hint_log[2*hint_n+1] = val;
+	hint_n++;
+}
+
 static int bricks_solver_try(game_state *state)
 {
 	int w = state->w, h = state->h, s = w * h;
@@ -554,6 +569,7 @@ static int bricks_solver_try(game_state *state)
 			if (bricks_validate(w, h, state->grid, false) == STATUS_INVALID)
 			{
 				state->grid[i] = d ? F_UNSHADE : F_SHADE;
+				hint_record(i, d ? F_UNSHADE : F_SHADE);
 				ret++;
 				break;
 			}
@@ -583,11 +599,17 @@ static int bricks_solver_recurse(game_state *state, int maxdiff, cell *temp)
 			/* See if this leads to an invalid state */
 			memcpy(temp, state->grid, s * sizeof(cell));
 			state->grid[i] = d ? F_SHADE : F_UNSHADE;
-			tempresult = bricks_solve_game(state, maxdiff - 1, NULL, false, false);
+			{
+				bool hs = hint_on;
+				hint_on = false;
+				tempresult = bricks_solve_game(state, maxdiff - 1, NULL, false, false);
+				hint_on = hs;
+			}
 			memcpy(state->grid, temp, s * sizeof(cell));
 			if (tempresult == STATUS_INVALID)
 			{
 				state->grid[i] = d ? F_UNSHADE : F_SHADE;
+				hint_record(i, d ? F_UNSHADE : F_SHADE);
 				ret++;
 				break;
 			}
@@ -630,6 +652,42 @@ static int bricks_solve_game(game_state *state, int maxdiff, cell *temp, bool cl
 	if (temp && !hastemp)
 		sfree(temp);
 	return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+	const char **error)
+{
+	static char errbuf[96];
+	int w = orig->w, s = w * orig->h, i;
+	game_state *t = dup_game(orig);
+	char *out = NULL, buf[40];
+
+	hint_n = 0;
+	hint_on = true;
+	bricks_solve_game(t, DIFF_NORMAL, NULL, true, true);
+	hint_on = false;
+	if (bricks_validate(orig->w, orig->h, t->grid, false) == STATUS_COMPLETE) {
+		for (i = 0; i < s; i++) {
+			cell c = curr->grid[i] & COL_MASK;
+			if ((orig->grid[i] & COL_MASK) && c != F_EMPTY &&
+				c != (t->grid[i] & COL_MASK)) {
+				sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+				*error = errbuf;
+				free_game(t);
+				return NULL;
+			}
+		}
+	}
+	free_game(t);
+	for (i = 0; i < hint_n; i++) {
+		int cl = hint_log[2*i], v = hint_log[2*i+1];
+		if ((curr->grid[cl] & COL_MASK) != F_EMPTY) continue;
+		sprintf(buf, "%c%d", v == F_SHADE ? 'A' : 'B', cl);
+		out = dupstr(buf);
+		break;
+	}
+	if (!out) *error = _("No logical next step found");
+	return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -1692,6 +1750,7 @@ const struct game thegame = {
 	false, /* wants_statusbar */
 	false, game_timing_state,
 	REQUIRE_RBUTTON, /* flags */
+	hint_game,
 };
 
 /* ***************** *
