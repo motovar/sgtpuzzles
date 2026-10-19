@@ -367,6 +367,11 @@ static void free_game(game_state *state)
  * Solver *
  * ****** */
 
+/* Hint support: record the order of the solver's single-cell deductions. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+
 static int clusters_solver_try(game_state *state)
 {
 	int s = state->w*state->h;
@@ -385,6 +390,15 @@ static int clusters_solver_try(game_state *state)
 			if (clusters_validate(state) == STATUS_INVALID)
 			{
 				state->grid[i] = d ? F_COLOR_0 : F_COLOR_1;
+				if (hint_on) {
+					if (hint_n >= hint_cap) {
+						hint_cap = hint_cap ? hint_cap * 2 : 128;
+						hint_log = sresize(hint_log, 2 * hint_cap, int);
+					}
+					hint_log[2*hint_n] = i;
+					hint_log[2*hint_n+1] = d ? 0 : 1;
+					hint_n++;
+				}
 				ret++;
 				break;
 			}
@@ -414,11 +428,23 @@ static int clusters_solver_recurse(game_state *state, char *temp)
 			/* See if this leads to an invalid state */
 			memcpy(temp, state->grid, s * sizeof(char));
 			state->grid[i] = d ? F_COLOR_1 : F_COLOR_0;
+			bool hs = hint_on;
+			hint_on = false;
 			tempresult = clusters_solve_game(state, 0, temp);
+			hint_on = hs;
 			memcpy(state->grid, temp, s * sizeof(char));
 			if (tempresult == STATUS_INVALID)
 			{
 				state->grid[i] = d ? F_COLOR_0 : F_COLOR_1;
+				if (hint_on) {
+					if (hint_n >= hint_cap) {
+						hint_cap = hint_cap ? hint_cap * 2 : 128;
+						hint_log = sresize(hint_log, 2 * hint_cap, int);
+					}
+					hint_log[2*hint_n] = i;
+					hint_log[2*hint_n+1] = d ? 0 : 1;
+					hint_n++;
+				}
 				ret++;
 				break;
 			}
@@ -453,6 +479,47 @@ static int clusters_solve_game(game_state *state, int maxdiff, char *temp)
 	if (!hastemp)
 		sfree(temp);
 	return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+	const char **error)
+{
+	static char errbuf[96];
+	int w = orig->w, s = w * orig->h, i;
+	game_state *t = dup_game(orig);
+	char *out = NULL, buf[40];
+
+	/* Mistake check against the full solution (may use look-ahead). */
+	clusters_solve_game(t, 1, NULL);
+	if (clusters_validate(t) == STATUS_COMPLETE) {
+		for (i = 0; i < s; i++) {
+			char c = curr->grid[i] & (F_COLOR_0 | F_COLOR_1);
+			if (c && c != (t->grid[i] & (F_COLOR_0 | F_COLOR_1))) {
+				sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+				*error = errbuf;
+				free_game(t);
+				return NULL;
+			}
+		}
+	}
+	free_game(t);
+
+	/* Logical order: the non-guessing solver only. */
+	t = dup_game(orig);
+	hint_n = 0;
+	hint_on = true;
+	clusters_solve_game(t, 1, NULL);
+	hint_on = false;
+	free_game(t);
+	for (i = 0; i < hint_n; i++) {
+		int cell = hint_log[2*i], col = hint_log[2*i+1];
+		if (curr->grid[cell] & (F_COLOR_0 | F_COLOR_1)) continue;
+		sprintf(buf, "%c%d", col ? 'B' : 'A', cell);
+		out = dupstr(buf);
+		break;
+	}
+	if (!out) *error = _("No logical next step found");
+	return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -1167,4 +1234,5 @@ const struct game thegame = {
 	false, /* wants_statusbar */
 	false, game_timing_state,
 	REQUIRE_RBUTTON, /* flags */
+	hint_game,
 };
