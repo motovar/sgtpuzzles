@@ -545,6 +545,21 @@ static void free_game(game_state *state)
 	sfree(state);
 }
 
+/* Hint support: record the order of the solver's single-cell deductions. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static void hint_record(int cell, int val)
+{
+	if (!hint_on) return;
+	if (hint_n >= hint_cap) {
+		hint_cap = hint_cap ? hint_cap * 2 : 128;
+		hint_log = sresize(hint_log, 2 * hint_cap, int);
+	}
+	hint_log[2*hint_n] = cell; hint_log[2*hint_n+1] = val;
+	hint_n++;
+}
+
 static int sticks_try(game_state *state, DSF *dsf, int *lengths)
 {
 	int s = state->w * state->h;
@@ -558,6 +573,7 @@ static int sticks_try(game_state *state, DSF *dsf, int *lengths)
 		if (sticks_validate(state, dsf, lengths) == STATUS_INVALID)
 		{
 			state->grid[i] = F_VER;
+			hint_record(i, F_VER);
 			return 1;
 		}
 
@@ -565,6 +581,7 @@ static int sticks_try(game_state *state, DSF *dsf, int *lengths)
 		if (sticks_validate(state, dsf, lengths) == STATUS_INVALID)
 		{
 			state->grid[i] = F_HOR;
+			hint_record(i, F_HOR);
 			return 1;
 		}
 
@@ -600,6 +617,42 @@ static int sticks_solve_game(game_state *state)
 	dsf_free(dsf);
 	sfree(lengths);
 	return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+	const char **error)
+{
+	static char errbuf[96];
+	int w = orig->w, s = w * orig->h, i;
+	game_state *t = dup_game(orig);
+	char *out = NULL, buf[40];
+	int res;
+
+	hint_n = 0;
+	hint_on = true;
+	res = sticks_solve_game(t);
+	hint_on = false;
+	if (res == STATUS_COMPLETE) {
+		for (i = 0; i < s; i++) {
+			char c = curr->grid[i] & (F_HOR | F_VER);
+			if (c && c != (t->grid[i] & (F_HOR | F_VER))) {
+				sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+				*error = errbuf;
+				free_game(t);
+				return NULL;
+			}
+		}
+	}
+	free_game(t);
+	for (i = 0; i < hint_n; i++) {
+		int cell = hint_log[2*i], v = hint_log[2*i+1];
+		if (curr->grid[cell] & (F_HOR | F_VER)) continue;
+		sprintf(buf, "%c%d", v == F_HOR ? 'A' : 'B', cell);
+		out = dupstr(buf);
+		break;
+	}
+	if (!out) *error = _("No logical next step found");
+	return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -1487,6 +1540,7 @@ const struct game thegame = {
 	false,			       /* wants_statusbar */
 	false, game_timing_state,
 	0,				       /* flags */
+	hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
