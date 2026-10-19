@@ -823,6 +823,37 @@ static int subsets_disjoint(const game_state *state, bool *cube)
     return ret;
 }
 
+/* Hint support: record the order in which bits become known / excluded. */
+static bool hint_on = false;
+static int *hint_log = NULL;
+static int hint_n = 0, hint_cap = 0;
+static unsigned int *hint_pk = NULL, *hint_pm = NULL;
+
+static void hint_snap(const game_state *state)
+{
+    int s = state->w * state->h, i, b;
+    if (!hint_on || !hint_pk) return;
+    for (i = 0; i < s; i++) {
+        for (b = 0; b < state->n; b++) {
+            int kind = -1;
+            if ((state->known[i] & (1u << b)) && !(hint_pk[i] & (1u << b)))
+                kind = 0;       /* now known */
+            else if (!(state->mask[i] & (1u << b)) && (hint_pm[i] & (1u << b)))
+                kind = 1;       /* now excluded */
+            if (kind < 0) continue;
+            if (hint_n >= hint_cap) {
+                hint_cap = hint_cap ? hint_cap * 2 : 128;
+                hint_log = sresize(hint_log, 3 * hint_cap, int);
+            }
+            hint_log[3*hint_n] = i; hint_log[3*hint_n+1] = b;
+            hint_log[3*hint_n+2] = kind;
+            hint_n++;
+        }
+        hint_pk[i] = state->known[i];
+        hint_pm[i] = state->mask[i];
+    }
+}
+
 static char subsets_solve_game(game_state *state)
 {
     const int s = state->w * state->h, n = state->n, n2 = 1 << n;
@@ -842,8 +873,18 @@ static char subsets_solve_game(game_state *state)
     for (i = 0; i < s * n2; i++)
         cube[i] = true;
 
+    if (hint_on) {
+        hint_pk = snewn(s, unsigned int);
+        hint_pm = snewn(s, unsigned int);
+        for (i = 0; i < s; i++) {
+            hint_pk[i] = state->known[i];
+            hint_pm[i] = state->mask[i];
+        }
+    }
+
     while ((ret = subsets_validate(state, NULL, counts)) == STATUS_UNFINISHED)
     {
+        hint_snap(state);
         subsets_sync_cube(state, cube);
         subsets_cube_single_count(state, counts, cube);
 
@@ -865,6 +906,8 @@ static char subsets_solve_game(game_state *state)
         break;
     }
 
+    hint_snap(state);
+    if (hint_pk) { sfree(hint_pk); sfree(hint_pm); hint_pk = hint_pm = NULL; }
     sfree(counts);
     sfree(cube);
 
@@ -949,6 +992,45 @@ static char *new_game_desc(const game_params *params, random_state *rs,
 
     ret = srealloc(ret, p - ret);
     return ret;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int w = orig->w, s = w * orig->h, i, b;
+    game_state *t = dup_game(orig);
+    char *out = NULL, buf[40];
+    char res;
+
+    hint_n = 0;
+    hint_on = true;
+    res = subsets_solve_game(t);
+    hint_on = false;
+    if (res == STATUS_COMPLETE) {
+        for (i = 0; i < s; i++) {
+            if ((curr->known[i] & ~t->known[i]) ||
+                (t->known[i] & ~curr->mask[i])) {
+                sprintf(errbuf, _("There is a mistake in row %d, column %d"), i / w + 1, i % w + 1);
+                *error = errbuf;
+                free_game(t);
+                return NULL;
+            }
+        }
+    }
+    free_game(t);
+    for (i = 0; i < hint_n; i++) {
+        int cl = hint_log[3*i], bit = hint_log[3*i+1], kind = hint_log[3*i+2];
+        if (orig->immutable[cl] & (1u << bit)) continue;
+        if (kind == 0 && (curr->known[cl] & (1u << bit))) continue;
+        if (kind == 1 && !(curr->mask[cl] & (1u << bit))) continue;
+        sprintf(buf, "%c%d,%d", kind == 0 ? 'K' : 'C', cl, bit);
+        out = dupstr(buf);
+        break;
+    }
+    (void)b;
+    if (!out) *error = _("No logical next step found");
+    return out;
 }
 
 static char *solve_game(const game_state *state, const game_state *currstate,
@@ -1625,6 +1707,7 @@ const struct game thegame = {
     false,                    /* wants_statusbar */
     false, NULL,              /* timing_state */
     0,                        /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
