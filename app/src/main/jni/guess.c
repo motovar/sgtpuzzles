@@ -1554,6 +1554,36 @@ static int game_status(const game_state *state)
 #define thegame guess
 #endif
 
+
+/* Next step: the first code consistent with all feedback so far. */
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    game_ui tmp;
+    int n = curr->params.npegs, i, ok = 1;
+    char *buf, *p;
+
+    if (curr->solved) { *error = "The game is over"; return NULL; }
+    memset(&tmp, 0, sizeof tmp);
+    tmp.curr_pegs = new_pegrow(n);
+    compute_hint(curr, &tmp);
+    for (i = 0; i < n; i++)
+        if (tmp.curr_pegs->pegs[i] < (curr->params.allow_blank ? 0 : 1)) ok = 0;
+    if (!ok) {
+        *error = "No consistent guess found";
+        buf = NULL;
+    } else {
+        buf = snewn(n * 12 + 4, char);
+        p = buf;
+        *p++ = 'G';
+        for (i = 0; i < n; i++)
+            p += sprintf(p, "%s%d", i ? "," : "", tmp.curr_pegs->pegs[i]);
+    }
+    free_pegrow(tmp.curr_pegs);
+    if (tmp.hint) free_pegrow(tmp.hint);
+    return buf;
+}
+
 const struct game thegame = {
     "Guess", "games.guess", "guess",
     default_params,
@@ -1598,6 +1628,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
 
 /* vim: set shiftwidth=4 tabstop=8: */
