@@ -84,6 +84,7 @@ import name.boyle.chris.sgtpuzzles.backend.GameEngineImpl.Companion.getPrefs
 import name.boyle.chris.sgtpuzzles.backend.GameEngineImpl.Companion.identifyBackend
 import name.boyle.chris.sgtpuzzles.backend.INERTIA
 import name.boyle.chris.sgtpuzzles.backend.KAKURO
+import name.boyle.chris.sgtpuzzles.backend.FACTORCROSS
 import name.boyle.chris.sgtpuzzles.backend.MINES
 import name.boyle.chris.sgtpuzzles.backend.NET
 import name.boyle.chris.sgtpuzzles.backend.PALISADE
@@ -1312,7 +1313,7 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
             text = status.ifEmpty { " " } // Ensure consistent height
             // Kakuro's combination helper is multi-line: reserve a fixed height
             // so the puzzle is not resized as the text changes.
-            if (currentBackend === KAKURO && status.isNotEmpty()) {
+            if ((currentBackend === KAKURO || currentBackend === FACTORCROSS) && status.isNotEmpty()) {
                 setLines(3)
                 ellipsize = android.text.TextUtils.TruncateAt.END
             } else {

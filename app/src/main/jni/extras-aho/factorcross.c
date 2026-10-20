@@ -1371,6 +1371,8 @@ struct game_ui {
      * in the message area.
      */
     int showhint;
+    /* Combination helper (preference, off by default) */
+    int show_combos;
 };
 
 static game_ui *new_ui(const game_state *state)
@@ -1380,6 +1382,7 @@ static game_ui *new_ui(const game_state *state)
     ui->hx = ui->hy = 0;
     ui->advx = 1; ui->advy = 0;
     ui->hpencil = ui->hshow = ui->hcursor = ui->showhint = 0;
+    ui->show_combos = 0;
 #ifdef MULTIDIGIT
     ui->pending = 0;
 #endif /* MULTIDIGIT */
@@ -2108,6 +2111,120 @@ static void draw_tile(drawing *dr, game_drawstate *ds, const game_params *par,
     draw_update(dr, cx, cy, cw, ch);
 }
 
+
+/* ---- Combination helper: shown in the status bar for the selected square ---- */
+
+struct fc_ctx {
+    char *buf; int size, len, count, limit;
+    long rest; int m, maxd, lo; long allowed;
+    int digits[24];
+};
+
+static void fc_emit(struct fc_ctx *c, int n)
+{
+    int i;
+    if (c->count++ >= c->limit) return;
+    if (c->len + 4 * n + 3 >= c->size) { c->count = c->limit + 1; return; }
+    if (c->len) c->buf[c->len++] = ' ';
+    for (i = 0; i < n; i++) {
+        if (c->maxd > 9 && i) c->buf[c->len++] = '+';
+        c->len += sprintf(c->buf + c->len, "%d", c->digits[i]);
+    }
+    c->buf[c->len] = 0;
+}
+
+static void fc_rec(struct fc_ctx *c, int from, int k, long rest)
+{
+    int d;
+    if (k == c->m) { if (rest == 1) fc_emit(c, k); return; }
+    if (c->count > c->limit) return;
+    for (d = from; d <= c->maxd; d++) {
+        if (!(c->allowed & (1L << d))) continue;
+        if (d == 0) continue;
+        if (rest % d) continue;
+        c->digits[k] = d;
+        fc_rec(c, d, k + 1, rest / d);
+    }
+}
+
+static void fc_run(const game_state *state, int x, int y, int dx, int dy,
+                   const char *name, char *out, int outsize)
+{
+    int sz = state->par->size + 1;
+    int cx = x, cy = y, px, py, empty = 0, len = 0, zero = 0;
+    long clue, rest;
+    struct fc_ctx c;
+    char list[200];
+
+    while (cx - dx >= 0 && cy - dy >= 0 &&
+           state->clues->playable[(cy-dy)*sz + (cx-dx)]) { cx -= dx; cy -= dy; }
+    cx -= dx; cy -= dy;
+    out[0] = 0;
+    if (cx < 0 || cy < 0) return;
+    clue = dx ? state->clues->hclues[cy*sz+cx] : state->clues->vclues[cy*sz+cx];
+    if (clue < 0) return;
+    rest = clue;
+    for (px = cx + dx, py = cy + dy; px < sz && py < sz && state->clues->playable[py*sz+px];
+         px += dx, py += dy) {
+        int d = state->grid[py*sz+px];
+        len++;
+        if (d == -1) empty++;
+        else if (d == 0) zero = 1;
+        else if (rest > 0 && rest % d == 0) rest /= d;
+        else rest = -1;
+    }
+    if (!empty) return;
+    if (clue == 0 || zero) {
+        snprintf(out, outsize, "%s %ld in %d: at least one 0", name, clue, len);
+        return;
+    }
+    if (rest < 0) { snprintf(out, outsize, "%s %ld in %d: no combination", name, clue, len); return; }
+    memset(&c, 0, sizeof c);
+    c.buf = list; c.size = sizeof list; c.limit = 14; list[0] = 0;
+    c.rest = rest; c.m = empty; c.maxd = state->par->max;
+    c.allowed = (2L << c.maxd) - 2;
+    if (state->par->notone_mode) c.allowed &= ~2L;
+    fc_rec(&c, 1, 0, rest);
+    if (c.count == 0)
+        snprintf(out, outsize, "%s %ld in %d: no combination", name, clue, len);
+    else if (c.count > c.limit)
+        snprintf(out, outsize, "%s %ld in %d: %s ...", name, clue, len, list);
+    else
+        snprintf(out, outsize, "%s %ld in %d: %s", name, clue, len, list);
+}
+
+static void fc_hint_text(const game_state *state, const game_ui *ui, char *buf, int size)
+{
+    int sz = state->par->size + 1;
+    char a[260], b[260];
+    buf[0] = 0;
+    if (!ui->hshow || ui->hx < 0 || ui->hx >= sz || ui->hy < 0 || ui->hy >= sz ||
+        !state->clues->playable[ui->hy*sz+ui->hx]) {
+        snprintf(buf, size, "Tap a white square to see the possible digit combinations.");
+        return;
+    }
+    fc_run(state, ui->hx, ui->hy, 1, 0, "Row", a, sizeof a);
+    fc_run(state, ui->hx, ui->hy, 0, 1, "Column", b, sizeof b);
+    snprintf(buf, size, "%s%s%s", a, (a[0] && b[0]) ? "\n" : "", b);
+}
+
+static config_item *get_prefs(game_ui *ui)
+{
+    config_item *ret = snewn(2, config_item);
+    ret[0].name = "Show possible digit combinations";
+    ret[0].kw = "show-combinations";
+    ret[0].type = C_BOOLEAN;
+    ret[0].u.boolean.bval = ui->show_combos != 0;
+    ret[1].name = NULL;
+    ret[1].type = C_END;
+    return ret;
+}
+
+static void set_prefs(game_ui *ui, const config_item *cfg)
+{
+    ui->show_combos = cfg[0].u.boolean.bval;
+}
+
 static void game_redraw(drawing *dr, game_drawstate *ds, const game_state *oldstate,
 			const game_state *state, int dir, const game_ui *ui,
 			float animtime, float flashtime)
@@ -2149,7 +2266,12 @@ static void game_redraw(drawing *dr, game_drawstate *ds, const game_state *oldst
 #endif /* MULTIDIGIT */
       check_errors(state, ds->errors);
 
-    status_bar(dr, "");
+    {
+        char hbuf[560];
+        if (ui->show_combos) fc_hint_text(state, ui, hbuf, sizeof hbuf);
+        else hbuf[0] = 0;
+        status_bar(dr, hbuf);
+    }
     for (y = 0; y < sz; y++) {
 	for (x = 0; x < sz; x++) {
 	    long tile = 0L;
@@ -2165,7 +2287,7 @@ static void game_redraw(drawing *dr, game_drawstate *ds, const game_state *oldst
 
 	    if (ui->hshow && ui->hx == x && ui->hy == y) {
 		tile |= (ui->hpencil ? DF_HIGHLIGHT_PENCIL : DF_HIGHLIGHT);
-                if (ui->showhint && 
+                if (!ui->show_combos && ui->showhint && 
                     (state->clues->vclues[y*sz+x] != -1 ||
                      state->clues->hclues[y*sz+x] != -1)) {
                   int i, j;
@@ -2478,7 +2600,7 @@ const struct game thegame = {
     free_game,
     true, solve_game,
     false, game_can_format_as_text_now, game_text_format,
-    NULL, NULL, /* get_prefs, set_prefs */
+    get_prefs, set_prefs,
     new_ui,
     free_ui,
     NULL, /* encode_ui */
