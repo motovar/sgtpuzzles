@@ -1273,6 +1273,7 @@ struct game_ui
 {
 	int cx, cy;
 	bool cshow, cpencil, ckey;
+	int lx, ly, advx, advy; /* last entered cell and auto-advance direction */
 	
 	int runcount;
 	struct crossing_run *runs;
@@ -1285,6 +1286,8 @@ static game_ui *new_ui(const game_state *state)
 	ui->cx = 0;
 	ui->cy = 0;
 	ui->cshow = ui->cpencil = ui->ckey = false;
+	ui->lx = ui->ly = -1;
+	ui->advx = 1; ui->advy = 0;
 	
 	/* Generate runs */
 	ui->runs = snewn(state->puzzle->w * state->puzzle->h, struct crossing_run);
@@ -1471,8 +1474,27 @@ static char *interpret_move(const game_state *state, game_ui *ui,
 				(char)(c != 0 ? '0' + c : '-')
 		);
 		
-		/* When not in keyboard mode, hide cursor */
-		if (!ui->ckey && !ui->cpencil)
+		if (!ui->cpencil && c != 0)
+		{
+			/* Move on to the next free square in the direction of typing */
+			int nx, ny;
+			if (ui->lx >= 0 && abs(cx - ui->lx) + abs(cy - ui->ly) == 1)
+			{
+				ui->advx = cx - ui->lx;
+				ui->advy = cy - ui->ly;
+			}
+			ui->lx = cx; ui->ly = cy;
+			nx = cx + ui->advx; ny = cy + ui->advy;
+			if (nx >= 0 && nx < w && ny >= 0 && ny < h &&
+				!state->puzzle->walls[ny*w+nx])
+			{
+				ui->cx = nx; ui->cy = ny;
+			}
+			else if (!ui->ckey)
+				ui->cshow = false;
+		}
+		else if (!ui->ckey && !ui->cpencil)
+			/* When not in keyboard mode, hide cursor */
 			ui->cshow = false;
 		
 		return dupstr(buf);
@@ -1566,11 +1588,13 @@ static void game_get_cursor_location(const game_ui *ui,
 	}
 }
 
+static float crossing_numhgt(int w, int h);
+
 static void game_compute_size(const game_params *params, int tilesize,
                               const game_ui *ui, int *x, int *y)
 {
 	*x = (params->w + 1) * tilesize;
-	*y = (params->h + 1 + 3) * tilesize;
+	*y = (int)((params->h + 1.2 + crossing_numhgt(params->w, params->h)) * tilesize + 0.99);
 }
 
 static void game_set_size(drawing *dr, game_drawstate *ds,
@@ -1580,7 +1604,7 @@ static void game_set_size(drawing *dr, game_drawstate *ds,
 }
 
 static const unsigned long bgcols[9] = {
-    0xffa07a, /* lightsalmon */
+    0xcfe0f5, /* neutral light blue (all digits) */
     0x98fb98, /* green */
     0x7fffd4, /* aquamarine */
     0x9370db, /* medium purple */
@@ -1706,33 +1730,21 @@ static void draw_triangle(drawing *dr, int tx, int ty, int tilesize)
 	draw_polygon(dr, coords, 3, COL_LOWLIGHT, COL_LOWLIGHT);
 }
 
-static void draw_numbers(drawing *dr, game_drawstate *ds, int w, int h, char **numbers, int numcount)
+/* Number list layout, in units of one tile. Returns the font size and fills
+ * in the number of rows and horizontal spacing. */
+static float numbers_layout(float wdt, float hgt, int numcount, const int *lens,
+                            int *rows_out, float *space_out)
 {
-	float tilesize = ds->tilesize;
-	float x, y;
-	int i = 0;
-	char *num;
-	int color;
-	int l = 0;
-	float hgt = 2.8 * tilesize;
-	float wdt = w * tilesize;
-	int rows = 4;
-	float fontsz;
-	float tmpwdt;
-	float whprop = 0.6;
-	float space = 0.8;
-	float yoff = (h + 1.2) * tilesize;
+	float fontsz, tmpwdt;
+	float whprop = 0.6, space = 0.8;
+	int rows = 4, i;
 
-	/* Figure out the number of rows and font size that make it all fit */
 	while (1)
 	{
 		fontsz = hgt / rows / 1.4;
 		tmpwdt = -space;
 		for (i = rows - 1; i < numcount + rows - 1; i += rows)
-		{
-			l = strlen(numbers[min(i, numcount - 1)]);
-			tmpwdt += l * whprop + space;
-		}
+			tmpwdt += lens[min(i, numcount - 1)] * whprop + space;
 		if (fontsz * tmpwdt <= wdt)
 		{
 			if (numcount > rows)
@@ -1746,18 +1758,56 @@ static void draw_numbers(drawing *dr, game_drawstate *ds, int w, int h, char **n
 		}
 		rows++;
 	}
+	*rows_out = rows;
+	*space_out = space;
+	return fontsz;
+}
+
+/* Height (in tiles) reserved under the grid for the number list. It can only
+ * depend on the parameters, so it is sized for a typical puzzle of this size
+ * and grows with the grid so that the digits stay readable. */
+static float crossing_numhgt(int w, int h)
+{
+	int n = (int)(0.32 * w * h) + 2, i, rows;
+	int lens[200];
+	float hgt, space;
+	int maxlen = max(w, h) > 9 ? 9 : max(w, h);
+
+	if (n > 200) n = 200;
+	for (i = 0; i < n; i++)
+		lens[i] = 2 + (maxlen - 2) * i / (n > 1 ? n - 1 : 1);
+	for (hgt = 2.8; hgt < 9.0; hgt += 0.4)
+		if (numbers_layout(w, hgt, n, lens, &rows, &space) >= 0.5)
+			break;
+	return hgt;
+}
+
+static void draw_numbers(drawing *dr, game_drawstate *ds, int w, int h, char **numbers, int numcount)
+{
+	float tilesize = ds->tilesize;
+	float x, y, fontsz, space;
+	int i, l = 0, rows;
+	float hgt = crossing_numhgt(w, h);
+	float yoff = (h + 1.2) * tilesize;
+	int *lens = snewn(numcount + 1, int);
+	int color;
+
+	for (i = 0; i < numcount; i++) lens[i] = strlen(numbers[i]);
+	fontsz = numbers_layout(w, hgt, numcount, lens, &rows, &space) * tilesize;
+	hgt *= tilesize;
+	sfree(lens);
 
 	x = 0.5 * tilesize - space * fontsz;
 	y = yoff;
 	l = 0;
 	for (i = 0; i < numcount; i++)
 	{
+		char *num = numbers[i];
 		if (i % rows == 0)
 		{
-			x += (l * whprop + space) * fontsz;
+			x += (l * 0.6 + space) * fontsz;
 			y = yoff;
 		}
-		num = numbers[i];
 		l = strlen(num);
 		color = ds->done[i] == 0 ? COL_GRID : ds->done[i] == 1 ? COL_LOWLIGHT : COL_ERROR;
 		draw_text(dr, x, y, FONT_FIXED, fontsz,
@@ -1787,8 +1837,11 @@ static void game_redraw(drawing *dr, game_drawstate *ds,
 	if(flashtime > 0)
 		flash = (int)(flashtime/FLASH_FRAME);
 	
-	draw_rect(dr, 0, 0, (w+1)*ds->tilesize, (h+1+3)*ds->tilesize, COL_OUTERBG);
-	draw_update(dr, 0, 0, (w+1)*ds->tilesize, (h+1+3)*ds->tilesize);
+	{
+		int totalh = (int)((h + 1.2 + crossing_numhgt(w, h)) * tilesize + 0.99);
+		draw_rect(dr, 0, 0, (w+1)*ds->tilesize, totalh, COL_OUTERBG);
+		draw_update(dr, 0, 0, (w+1)*ds->tilesize, totalh);
+	}
 	
 	/* Find errors */
 	memset(ds->gridfs, 0, w*h*sizeof(int));
@@ -1838,7 +1891,7 @@ static void game_redraw(drawing *dr, game_drawstate *ds,
 		else if(state->grid[y*w+x])
 		{
 			n = state->grid[y*w+x];
-			c = n-1;
+			c = 0;
 			buf[0] = n + '0';
 			if(flash)
 				c = (x+y+flash) % 9;
@@ -1904,7 +1957,7 @@ static void game_redraw(drawing *dr, game_drawstate *ds,
 				if (state->marks[y*w+x] & (1<<i))
 				{
 					int hx = j % hw, hy = j / hw;
-					color = COL_NUM1_L + (i*3);
+					color = COL_GRID;
 					buf[0] = i+'1';
 					
 					draw_text(dr,
