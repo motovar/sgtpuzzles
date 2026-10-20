@@ -2086,6 +2086,43 @@ static bool hint_propagate(const game_state *st, int *guess, int *pc, int *log, 
     return ok;
 }
 
+/* Propagation with nested assume-and-check look-ahead of the given depth. */
+static bool hint_prop_deep(const game_state *st, int *guess, int depth)
+{
+    int n = st->common->num_total, p, v;
+    int *pc = hint_new_counts(st);
+    bool ok = hint_propagate(st, guess, pc, NULL, NULL);
+    sfree(pc);
+    while (ok && depth > 0) {
+        bool any = false;
+        for (p = 0; p < n && ok; p++) {
+            int g = guess[p];
+            if (g == 1 || g == 2 || g == 4 || g == 0) continue;
+            for (v = 1; v <= 4; v *= 2) {
+                int *tg;
+                bool good;
+                if (!(g & v)) continue;
+                tg = snewn(n, int);
+                memcpy(tg, guess, n * sizeof(int));
+                tg[p] = v;
+                good = hint_prop_deep(st, tg, depth - 1);
+                sfree(tg);
+                if (!good) {
+                    guess[p] &= ~v; g = guess[p]; any = true;
+                    if (!g) ok = false;
+                }
+            }
+        }
+        if (!any || !ok) break;
+        {
+            int *pc2 = hint_new_counts(st);
+            ok = hint_propagate(st, guess, pc2, NULL, NULL);
+            sfree(pc2);
+        }
+    }
+    return ok;
+}
+
 static char *hint_game(const game_state *orig, const game_state *curr,
                        const char **error)
 {
@@ -2122,15 +2159,15 @@ static char *hint_game(const game_state *orig, const game_state *curr,
             int g = guess[p], v, nleft = 0, last = 0;
             if (g == 1 || g == 2 || g == 4 || g == 0) continue;
             for (v = 1; v <= 4; v *= 2) {
-                int *tg, *tpc;
+                int *tg, *tpc = NULL;
                 bool ok;
                 if (!(g & v)) continue;
                 tg = snewn(n, int);
                 memcpy(tg, guess, n * sizeof(int));
                 tg[p] = v;
-                tpc = hint_new_counts(orig);
-                ok = hint_propagate(orig, tg, tpc, NULL, NULL);
-                sfree(tg); sfree(tpc);
+                (void)tpc;
+                ok = hint_prop_deep(orig, tg, 1);
+                sfree(tg);
                 if (ok) { nleft++; last = v; }
             }
             if (nleft == 1 && curr->guess[p] != last) {

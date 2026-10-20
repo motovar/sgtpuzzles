@@ -1823,6 +1823,48 @@ static char *hint_game(const game_state *orig, const game_state *curr,
     hint_n = 0;
     hint_on = true;
     dosolve(work, F_SOLVE_FORCEUNIQUE | F_SOLVE_DISCOUNTSETS, NULL);
+    /* Look-ahead tier: assume a square is lit / blocked; a contradiction
+     * found by the plain solver proves the opposite. */
+    {
+        bool prog = true;
+        int guard = 0;
+        while (prog && guard++ < 400 && !grid_correct(work)) {
+            prog = false;
+            for (x = 0; x < work->w && !prog; x++) {
+                for (y = 0; y < work->h && !prog; y++) {
+                    unsigned wf = GRID(work, flags, x, y);
+                    int wl = GRID(work, lights, x, y), r;
+                    game_state *t;
+                    if (!could_place_light(wf, wl)) continue;
+                    hint_on = false;
+                    t = dup_game(work);
+                    set_light(t, x, y, true);
+                    r = dosolve(t, F_SOLVE_DISCOUNTSETS, NULL);
+                    free_game(t);
+                    if (r == 0) {
+                        hint_on = true;
+                        hint_record(x, y, 'I');
+                        GRID(work, flags, x, y) |= F_IMPOSSIBLE;
+                        prog = true;
+                    } else {
+                        t = dup_game(work);
+                        GRID(t, flags, x, y) |= F_IMPOSSIBLE;
+                        r = dosolve(t, F_SOLVE_DISCOUNTSETS, NULL);
+                        free_game(t);
+                        if (r == 0) {
+                            hint_on = true;
+                            set_light(work, x, y, true);
+                            prog = true;
+                        }
+                    }
+                }
+            }
+            if (prog) {
+                hint_on = true;
+                dosolve(work, F_SOLVE_FORCEUNIQUE | F_SOLVE_DISCOUNTSETS, NULL);
+            }
+        }
+    }
     hint_on = false;
     free_game(work);
     for (i = 0; i < hint_n; i++) {

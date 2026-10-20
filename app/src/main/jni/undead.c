@@ -1612,6 +1612,57 @@ static char *solve_game(const game_state *state_start, const game_state *currsta
     return move;
 }
 
+/* Iterative rules to a fixed point, optionally with nested assume-and-check
+ * look-ahead of the given depth; returns false if the position is inconsistent. */
+static bool und_prop(game_state *st, int depth)
+{
+    int n = st->common->num_total, q;
+    int *prev = snewn(n, int);
+    bool ok = true;
+    for (;;) {
+        bool changed = false, done;
+        for (;;) {
+            bool no_change = true;
+            for (q = 0; q < n; q++) prev[q] = st->guess[q];
+            done = solve_iterative(st, st->common->paths);
+            for (q = 0; q < n; q++) {
+                if (st->guess[q] == 0) ok = false;
+                if (st->guess[q] != prev[q]) { no_change = false; changed = true; }
+            }
+            if (!ok || done || no_change) break;
+        }
+        if (!ok || done || depth <= 0) break;
+        {
+            int p, v;
+            bool any = false;
+            for (p = 0; p < n && ok; p++) {
+                int g = st->guess[p];
+                if (g == 1 || g == 2 || g == 4 || g == 0) continue;
+                for (v = 1; v <= 4; v *= 2) {
+                    game_state *t;
+                    bool good;
+                    if (!(g & v)) continue;
+                    t = dup_game(st);
+                    t->guess[p] = v;
+                    good = und_prop(t, depth - 1);
+                    free_game(t);
+                    if (!good) {
+                        st->guess[p] &= ~v;
+                        any = true;
+                        if (st->guess[p] == 0) ok = false;
+                        g = st->guess[p];
+                    }
+                }
+            }
+            if (!any) break;
+            changed = true;
+        }
+        (void)changed;
+    }
+    sfree(prev);
+    return ok;
+}
+
 static char *hint_game(const game_state *state_start, const game_state *currstate,
                        const char **error)
 {
@@ -1665,22 +1716,11 @@ static char *hint_game(const game_state *state_start, const game_state *currstat
             for (v = 1; v <= 4; v *= 2) {
                 int q;
                 game_state *t;
-                bool inconsistent = false;
+                bool inconsistent;
                 if (!(g & v)) continue;
                 t = dup_game(st);
                 t->guess[p] = v;
-                for (;;) {
-                    bool no_change = true, done;
-                    int *prev = snewn(n, int);
-                    for (q = 0; q < n; q++) prev[q] = t->guess[q];
-                    done = solve_iterative(t, t->common->paths);
-                    for (q = 0; q < n; q++) {
-                        if (t->guess[q] == 0) inconsistent = true;
-                        if (t->guess[q] != prev[q]) no_change = false;
-                    }
-                    sfree(prev);
-                    if (inconsistent || done || no_change) break;
-                }
+                inconsistent = !und_prop(t, 1);
                 free_game(t);
                 if (!inconsistent) { nleft++; last = v; }
             }
