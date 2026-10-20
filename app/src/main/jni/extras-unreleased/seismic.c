@@ -16,9 +16,9 @@
 /*
  * To do list:
  *
- * - The generator doesn't scale properly. The generator takes a long time
- *   generating a 7x7 puzzle, and I couldn't get it to generate 8x8 or higher.
- *   Meanwhile, 10x10 is a common size for Hakyuu puzzles.
+ * - (done) The generator first grows a random region layout and then fills the
+ *   numbers with a backtracking search; Seismic up to 10x10 and Tectonic up
+ *   to 9x9 now generate in a few seconds at most.
  *
  * - Add symmetric clues
  *
@@ -93,7 +93,11 @@ const static struct game_params seismic_presets[] = {
 	{ 7,  7, DIFF_EASY, MODE_SEISMIC },
 	{ 7,  7, DIFF_EASY, MODE_TECTONIC },
 	{ 7,  7, DIFF_HARD, MODE_SEISMIC },
-	{ 7,  7, DIFF_HARD, MODE_TECTONIC }
+	{ 7,  7, DIFF_HARD, MODE_TECTONIC },
+	{ 8,  8, DIFF_EASY, MODE_SEISMIC },
+	{ 8,  8, DIFF_HARD, MODE_SEISMIC },
+	{ 8,  8, DIFF_EASY, MODE_TECTONIC },
+	{ 10, 10, DIFF_EASY, MODE_SEISMIC }
 };
 
 #define DEFAULT_PRESET 4
@@ -928,13 +932,198 @@ static bool seismic_gen_diff(game_state *state, int diff)
 	return ret;
 }
 
+/* ---- Region-first generator --------------------------------------------
+ * The old generator coloured the grid first and merged regions at random,
+ * which almost never produced valid layouts above 7x7. Instead we first grow
+ * a random partition into connected regions, then fill in the numbers with a
+ * randomised backtracking search that respects the region and distance rules.
+ */
+
+struct fill_ctx {
+	game_state *state;
+	int *region;       /* region id per cell */
+	int *rsize;        /* size per region id */
+	int nodes;
+	random_state *rs;
+	int *used;         /* bitmask of numbers placed, per region */
+};
+
+static bool fill_allowed(struct fill_ctx *c, int i, int n)
+{
+	game_state *st = c->state;
+	int w = st->w, h = st->h, x = i % w, y = i / w, j, k;
+
+	if (n > c->rsize[c->region[i]]) return false;
+	if (c->used[c->region[i]] & (1 << n)) return false;
+	if (st->mode == MODE_SEISMIC)
+	{
+		for (k = 1; k <= n; k++)
+		{
+			if (x+k < w && st->grid[y*w+x+k] == n) return false;
+			if (x-k >= 0 && st->grid[y*w+x-k] == n) return false;
+			if (y+k < h && st->grid[(y+k)*w+x] == n) return false;
+			if (y-k >= 0 && st->grid[(y-k)*w+x] == n) return false;
+		}
+	}
+	else
+	{
+		int dx, dy;
+		for (dx = -1; dx <= 1; dx++)
+			for (dy = -1; dy <= 1; dy++)
+			{
+				int xx = x + dx, yy = y + dy;
+				if ((!dx && !dy) || xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+				if (st->grid[yy*w+xx] == n) return false;
+			}
+	}
+	return true;
+}
+
+static bool fill_search(struct fill_ctx *c)
+{
+	game_state *st = c->state;
+	int s = st->w * st->h, i, best = -1, bestn = 99, n;
+	int cand[10], nc, order[10];
+
+	if (c->nodes++ > 5000) return false;
+	/* most constrained unfilled cell */
+	for (i = 0; i < s; i++)
+	{
+		int cnt = 0;
+		if (st->grid[i]) continue;
+		for (n = 1; n <= c->rsize[c->region[i]]; n++)
+			if (fill_allowed(c, i, n)) cnt++;
+		if (cnt == 0) return false;
+		if (cnt < bestn || (cnt == bestn && random_upto(c->rs, 2)))
+		{
+			bestn = cnt;
+			best = i;
+		}
+	}
+	if (best < 0) return true;
+	nc = 0;
+	for (n = 1; n <= c->rsize[c->region[best]]; n++)
+		if (fill_allowed(c, best, n)) cand[nc++] = n;
+	for (i = 0; i < nc; i++) order[i] = cand[i];
+	shuffle(order, nc, sizeof(int), c->rs);
+	for (i = 0; i < nc; i++)
+	{
+		st->grid[best] = order[i];
+		c->used[c->region[best]] |= 1 << order[i];
+		if (fill_search(c)) return true;
+		c->used[c->region[best]] &= ~(1 << order[i]);
+		st->grid[best] = 0;
+		if (c->nodes > 5000) return false;
+	}
+	return false;
+}
+
+static bool seismic_gen_region_first(game_state *state, random_state *rs)
+{
+	int w = state->w, h = state->h, s = w * h;
+	int cap = state->mode == MODE_TECTONIC ? 5 : 6;
+	int *region = snewn(s, int), *rsize = snewn(s, int);
+	int *cells = snewn(s, int), *front = snewn(4 * s + 4, int);
+	int nreg = 0, i, j;
+	struct fill_ctx ctx;
+	bool ok;
+
+	for (i = 0; i < s; i++) { region[i] = -1; cells[i] = i; }
+	shuffle(cells, s, sizeof(int), rs);
+	for (j = 0; j < s; j++)
+	{
+		int start = cells[j], target, size = 1, nf = 0, k;
+		if (region[start] >= 0) continue;
+		/* sizes 2..cap preferred; a few singletons are fine */
+		if (state->mode == MODE_TECTONIC)
+			target = 3 + random_upto(rs, cap - 2);
+		else
+		{
+			target = 1 + random_upto(rs, cap);
+			if (target == 1 && random_upto(rs, 3)) target = 2 + random_upto(rs, cap - 1);
+		}
+		region[start] = nreg;
+		for (;;)
+		{
+			int cur;
+			/* collect the frontier */
+			nf = 0;
+			for (cur = 0; cur < s; cur++)
+			{
+				int cx = cur % w, cy = cur / w, d;
+				if (region[cur] != nreg) continue;
+				for (d = 0; d < 4; d++)
+				{
+					int nx = cx + (d == 0) - (d == 1), ny = cy + (d == 2) - (d == 3);
+					if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+					if (region[ny*w+nx] < 0) front[nf++] = ny*w+nx;
+				}
+			}
+			if (size >= target || nf == 0) break;
+			k = front[random_upto(rs, nf)];
+			region[k] = nreg;
+			size++;
+		}
+		rsize[nreg] = size;
+		nreg++;
+	}
+
+	/* absorb undersized regions into a neighbour while the size cap allows */
+	{
+		int minsize = state->mode == MODE_TECTONIC ? 3 : 2, r, changed = 1, guard = 0;
+		while (changed && guard++ < 50)
+		{
+			changed = 0;
+			for (r = 0; r < nreg; r++)
+			{
+				int best = -1, bi;
+				if (rsize[r] == 0 || rsize[r] >= minsize) continue;
+				for (bi = 0; bi < s; bi++)
+				{
+					int cx = bi % w, cy = bi / w, d;
+					if (region[bi] != r) continue;
+					for (d = 0; d < 4; d++)
+					{
+						int nx = cx + (d == 0) - (d == 1), ny = cy + (d == 2) - (d == 3);
+						int o;
+						if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+						o = region[ny*w+nx];
+						if (o == r || rsize[o] + rsize[r] > cap) continue;
+						if (best < 0 || rsize[o] < rsize[best]) best = o;
+					}
+				}
+				if (best >= 0)
+				{
+					for (bi = 0; bi < s; bi++) if (region[bi] == r) region[bi] = best;
+					rsize[best] += rsize[r];
+					rsize[r] = 0;
+					changed = 1;
+				}
+			}
+		}
+	}
+
+	memset(state->grid, 0, s * sizeof(char));
+	dsf_reinit(state->dsf);
+	for (i = 0; i < s; i++)
+		for (j = i + 1; j < s; j++)
+			if (region[i] == region[j]) { dsf_merge(state->dsf, i, j); break; }
+	/* the loop above links each cell to the next one of its region only, which
+	 * is enough to join the whole region transitively */
+
+	ctx.used = snewn(nreg + 1, int);
+	memset(ctx.used, 0, (nreg + 1) * sizeof(int));
+	ctx.state = state; ctx.region = region; ctx.rsize = rsize; ctx.nodes = 0; ctx.rs = rs;
+	ok = fill_search(&ctx);
+	sfree(ctx.used);
+
+	sfree(region); sfree(rsize); sfree(cells); sfree(front);
+	return ok;
+}
+
 static bool seismic_gen_puzzle(game_state *state, random_state *rs, int diff)
 {
-	if (state->mode == MODE_TECTONIC && !tectonic_gen_numbers(state, rs))
-		return false;
-	if(state->mode == MODE_SEISMIC && !seismic_gen_numbers(state, rs))
-		return false;
-	if(!seismic_gen_areas(state, rs))
+	if (!seismic_gen_region_first(state, rs))
 		return false;
 	if(!seismic_gen_clues(state, rs, diff))
 		return false;
