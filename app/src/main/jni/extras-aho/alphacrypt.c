@@ -2063,6 +2063,145 @@ static bool game_timing_state(const game_state *state, game_ui *ui)
 #define thegame alphacrypt
 #endif
 
+
+/* ---- Logical next step: constraint propagation over letter domains ---- */
+
+static bool ah_propagate(const game_state *st, long *dom, int *order, int *norder,
+                         bool *logged)
+{
+    int n = st->par->size, i, v, changed;
+    const struct clues *cl = st->clues;
+    long all = (2L << n) - 2;
+    int idx[256];
+    for (i = 0; i < 256; i++) idx[i] = -1;
+    for (i = 0; i < n; i++) idx[(unsigned char)cl->letters[i]] = i;
+    do {
+        changed = 0;
+        for (i = 0; i < n; i++) {
+            Operator op = cl->ops[i];
+            int nary = op_nary[op];
+            long nz = 0, nx = 0, ny = 0;
+            int a, b, c, x1 = -1, x2 = -1;
+            if (nary == 0) continue;
+            x1 = idx[(unsigned char)cl->l1vec[i]];
+            if (nary == 2) x2 = idx[(unsigned char)cl->l2vec[i]];
+            if (x1 < 0 || (nary == 2 && x2 < 0)) continue;
+            for (a = 1; a <= n; a++) {
+                if (!(dom[i] & (1L << a))) continue;
+                for (b = 1; b <= n; b++) {
+                    if (!(dom[x1] & (1L << b))) continue;
+                    if (nary == 1) {
+                        if (verify_eq1(op, a, b)) { nz |= 1L << a; nx |= 1L << b; }
+                    } else {
+                        for (c = 1; c <= n; c++) {
+                            if (!(dom[x2] & (1L << c))) continue;
+                            if (verify_eq2(op, a, b, c)) {
+                                nz |= 1L << a; nx |= 1L << b; ny |= 1L << c;
+                            }
+                        }
+                    }
+                }
+            }
+            if (!nz || !nx || (nary == 2 && !ny)) return false;
+            if (dom[i] != nz) { dom[i] = nz; changed = 1; }
+            if (dom[x1] != nx) { dom[x1] = nx; changed = 1; }
+            if (nary == 2 && dom[x2] != ny) { dom[x2] = ny; changed = 1; }
+        }
+        /* all letters take different values */
+        for (i = 0; i < n; i++) {
+            long d = dom[i];
+            if (!d) return false;
+            if (!(d & (d - 1))) {
+                int j;
+                for (j = 0; j < n; j++)
+                    if (j != i && (dom[j] & d)) { dom[j] &= ~d; changed = 1; }
+            }
+        }
+        for (v = 1; v <= n; v++) {
+            int cnt = 0, who = -1;
+            for (i = 0; i < n; i++) if (dom[i] & (1L << v)) { cnt++; who = i; }
+            if (!cnt) return false;
+            if (cnt == 1 && dom[who] != (1L << v)) { dom[who] = 1L << v; changed = 1; }
+        }
+        for (i = 0; i < n; i++) {
+            long d = dom[i] & all;
+            if (order && !logged[i] && d && !(d & (d - 1))) {
+                logged[i] = true; order[(*norder)++] = i;
+            }
+        }
+    } while (changed);
+    return true;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int n = orig->par->size, i, norder = 0, tries = 0;
+    long all = (2L << n) - 2;
+    long *dom = snewn(n, long);
+    int *order = snewn(n, int);
+    bool *logged = snewn(n, bool);
+    bool prog = true, complete = true;
+    char *out = NULL, buf[40];
+
+    for (i = 0; i < n; i++) {
+        logged[i] = false;
+        dom[i] = orig->grid[i] > 0 ? 1L << orig->grid[i] : all;
+    }
+    if (!ah_propagate(orig, dom, order, &norder, logged)) prog = false;
+    while (prog && tries++ < 500) {
+        int c, v;
+        long *t = snewn(n, long);
+        prog = false;
+        for (c = 0; c < n && !prog; c++) {
+            if (!(dom[c] & (dom[c] - 1))) continue;
+            for (v = 1; v <= n && !prog; v++) {
+                if (!(dom[c] & (1L << v))) continue;
+                memcpy(t, dom, n * sizeof(long));
+                t[c] = 1L << v;
+                if (!ah_propagate(orig, t, NULL, NULL, NULL)) {
+                    dom[c] &= ~(1L << v);
+                    ah_propagate(orig, dom, order, &norder, logged);
+                    if (!(dom[c] & (dom[c] - 1)) && !logged[c]) {
+                        logged[c] = true; order[norder++] = c;
+                    }
+                    prog = true;
+                }
+            }
+        }
+        sfree(t);
+    }
+    for (i = 0; i < n; i++)
+        if (!dom[i] || (dom[i] & (dom[i] - 1))) complete = false;
+    if (complete) {
+        for (i = 0; i < n; i++)
+            if (curr->grid[i] > 0 && dom[i] != (1L << curr->grid[i])) {
+                sprintf(errbuf, "Letter %c has a wrong value", orig->clues->letters[i]);
+                *error = errbuf;
+                goto done;
+            }
+    }
+    for (i = 0; i < norder; i++) {
+        int c = order[i], v = 1;
+        if (curr->grid[c] > 0) continue;
+        while (!(dom[c] & (1L << v))) v++;
+        sprintf(buf, "r%c%d", orig->clues->letters[c], v);
+        out = dupstr(buf);
+        break;
+    }
+    for (i = 0; i < n && !out; i++)
+        if (curr->grid[i] <= 0 && dom[i] && !(dom[i] & (dom[i] - 1))) {
+            int v = 1; while (!(dom[i] & (1L << v))) v++;
+            sprintf(buf, "r%c%d", orig->clues->letters[i], v);
+            out = dupstr(buf);
+        }
+    if (!out) *error = "No logical next step found";
+done:
+    sfree(dom); sfree(order); sfree(logged);
+    return out;
+}
+
 const struct game thegame = {
     "Alphacrypt", "games.alphacrypt", "alphacrypt",
     default_params,
@@ -2110,4 +2249,5 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, game_timing_state,
     0,				       /* flags */
+    hint_game,
 };
