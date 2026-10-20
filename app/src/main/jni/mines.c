@@ -3348,6 +3348,244 @@ static bool game_timing_state(const game_state *state, game_ui *ui)
 #define thegame mines
 #endif
 
+
+/* ---- Logical next step: local deductions from the visible numbers ---- */
+
+
+/* Exhaustive enumeration of the frontier: finds cells that are a mine (or
+ * safe) in every consistent arrangement. */
+struct mh_ctx {
+    int m, nc;
+    int *cons_r, *cons_rem, *cons_cur;
+    int **cons_cells, *cons_n;
+    int **cell_cons, *cell_nc;
+    char *val;
+    long *minecount, nsol, nodes;
+    int maxmines, minmines;
+};
+
+static void mh_rec(struct mh_ctx *c, int k, int mines)
+{
+    int i, j;
+    if (c->nodes++ > 3000000) return;
+    if (k == c->m) {
+        if (mines > c->maxmines || mines < c->minmines) return;
+        c->nsol++;
+        for (i = 0; i < c->m; i++) if (c->val[i]) c->minecount[i]++;
+        return;
+    }
+    for (j = 0; j < 2; j++) {
+        bool ok = true;
+        c->val[k] = j;
+        for (i = 0; i < c->cell_nc[k]; i++) {
+            int q = c->cell_cons[k][i];
+            c->cons_rem[q]--;
+            c->cons_cur[q] += j;
+        }
+        for (i = 0; i < c->cell_nc[k]; i++) {
+            int q = c->cell_cons[k][i];
+            if (c->cons_cur[q] > c->cons_r[q] ||
+                c->cons_cur[q] + c->cons_rem[q] < c->cons_r[q]) ok = false;
+        }
+        if (ok && mines + j <= c->maxmines) mh_rec(c, k + 1, mines + j);
+        for (i = 0; i < c->cell_nc[k]; i++) {
+            int q = c->cell_cons[k][i];
+            c->cons_rem[q]++;
+            c->cons_cur[q] -= j;
+        }
+    }
+}
+
+static char *mh_hint(const game_state *curr, int nflags)
+{
+    int w = curr->w, h = curr->h, i, x, y, nc = 0, m = 0, nonfront = 0;
+    int *fidx = snewn(w*h, int);
+    struct mh_ctx c;
+    char *out = NULL, buf[40];
+    int *cells = snewn(w*h, int);
+
+    memset(&c, 0, sizeof c);
+    for (i = 0; i < w*h; i++) fidx[i] = -1;
+    c.cons_r = snewn(w*h, int); c.cons_rem = snewn(w*h, int); c.cons_cur = snewn(w*h, int);
+    c.cons_cells = snewn(w*h, int *); c.cons_n = snewn(w*h, int);
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+        int v = curr->grid[y*w+x], dx, dy, fl = 0, n2 = 0;
+        int lst[8];
+        if (v < 0 || v > 8) continue;
+        for (dy = -1; dy <= 1; dy++) for (dx = -1; dx <= 1; dx++) {
+            int xx = x + dx, yy = y + dy, g;
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h || (!dx && !dy)) continue;
+            g = curr->grid[yy*w+xx];
+            if (g == -1) fl++;
+            else if (g == -2 || g == -3) {
+                if (fidx[yy*w+xx] < 0) { fidx[yy*w+xx] = m; cells[m++] = yy*w+xx; }
+                lst[n2++] = fidx[yy*w+xx];
+            }
+        }
+        if (!n2) continue;
+        c.cons_r[nc] = v - fl; c.cons_rem[nc] = n2; c.cons_cur[nc] = 0;
+        c.cons_cells[nc] = snewn(n2, int);
+        memcpy(c.cons_cells[nc], lst, n2 * sizeof(int));
+        c.cons_n[nc] = n2;
+        nc++;
+    }
+    c.m = m; c.nc = nc;
+    if (m == 0 || m > 80) goto done;
+    for (i = 0; i < w*h; i++)
+        if ((curr->grid[i] == -2 || curr->grid[i] == -3) && fidx[i] < 0) nonfront++;
+    c.cell_cons = snewn(m, int *); c.cell_nc = snewn(m, int);
+    for (i = 0; i < m; i++) { c.cell_cons[i] = snewn(nc + 1, int); c.cell_nc[i] = 0; }
+    for (i = 0; i < nc; i++) {
+        int j;
+        for (j = 0; j < c.cons_n[i]; j++) {
+            int cell = c.cons_cells[i][j];
+            c.cell_cons[cell][c.cell_nc[cell]++] = i;
+        }
+    }
+    c.val = snewn(m, char);
+    c.minecount = snewn(m, long);
+    for (i = 0; i < m; i++) c.minecount[i] = 0;
+    c.maxmines = curr->n - nflags;
+    c.minmines = c.maxmines - nonfront;
+    mh_rec(&c, 0, 0);
+    if (c.nodes <= 3000000 && c.nsol > 0) {
+        for (i = 0; i < m && !out; i++) {
+            if (c.minecount[i] == 0) {
+                sprintf(buf, "O%d,%d", cells[i] % w, cells[i] / w);
+                out = dupstr(buf);
+            } else if (c.minecount[i] == c.nsol && curr->grid[cells[i]] == -2) {
+                sprintf(buf, "F%d,%d", cells[i] % w, cells[i] / w);
+                out = dupstr(buf);
+            }
+        }
+    }
+    for (i = 0; i < m; i++) sfree(c.cell_cons[i]);
+    sfree(c.cell_cons); sfree(c.cell_nc); sfree(c.val); sfree(c.minecount);
+done:
+    for (i = 0; i < nc; i++) sfree(c.cons_cells[i]);
+    sfree(c.cons_r); sfree(c.cons_rem); sfree(c.cons_cur); sfree(c.cons_cells); sfree(c.cons_n);
+    sfree(fidx); sfree(cells);
+    return out;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int w = curr->w, h = curr->h, n = curr->n, i, x, y;
+    char buf[40];
+    int nflags = 0, nunk = 0;
+
+    if (curr->dead || curr->won) { *error = "The game is over"; return NULL; }
+    if (!curr->layout->mines) {
+        /* The first square opened is always safe: start in the middle. */
+        sprintf(buf, "O%d,%d", w / 2, h / 2);
+        return dupstr(buf);
+    }
+    for (i = 0; i < w * h; i++) {
+        if (curr->grid[i] == -1) {
+            nflags++;
+            if (!curr->layout->mines[i]) {
+                sprintf(errbuf, "There is a wrong flag in row %d, column %d", i / w + 1, i % w + 1);
+                *error = errbuf;
+                return NULL;
+            }
+        } else if (curr->grid[i] == -2 || curr->grid[i] == -3) nunk++;
+    }
+    /* Rules a and b: a single number */
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+        int v = curr->grid[y*w+x], dx, dy, fl = 0, un = 0, first = -1;
+        if (v < 0 || v > 8) continue;
+        for (dy = -1; dy <= 1; dy++) for (dx = -1; dx <= 1; dx++) {
+            int xx = x + dx, yy = y + dy, g;
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h || (!dx && !dy)) continue;
+            g = curr->grid[yy*w+xx];
+            if (g == -1) fl++;
+            else if (g == -2 || g == -3) { un++; if (g == -2 && first < 0) first = yy*w+xx; }
+        }
+        if (!un) continue;
+        if (v == fl) {
+            sprintf(buf, "C%d,%d", x, y);
+            return dupstr(buf);
+        }
+        if (v - fl == un && first >= 0) {
+            sprintf(buf, "F%d,%d", first % w, first / w);
+            return dupstr(buf);
+        }
+    }
+    /* Rule c: one number's unknown neighbours contained in another's */
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+        int va = curr->grid[y*w+x], ra = 0, dx, dy;
+        int ua[8], na = 0;
+        if (va < 0 || va > 8) continue;
+        for (dy = -1; dy <= 1; dy++) for (dx = -1; dx <= 1; dx++) {
+            int xx = x + dx, yy = y + dy, g;
+            if (xx < 0 || yy < 0 || xx >= w || yy >= h || (!dx && !dy)) continue;
+            g = curr->grid[yy*w+xx];
+            if (g == -1) ra++;
+            else if (g == -2 || g == -3) ua[na++] = yy*w+xx;
+        }
+        if (!na) continue;
+        ra = va - ra;
+        for (dy = -2; dy <= 2; dy++) for (dx = -2; dx <= 2; dx++) {
+            int bx = x + dx, by = y + dy, vb, rb = 0, ex, ey, nb = 0, ndiff = 0, i2, j2;
+            int ub[8], diff[8];
+            bool subset = true;
+            if (bx < 0 || by < 0 || bx >= w || by >= h || (!dx && !dy)) continue;
+            vb = curr->grid[by*w+bx];
+            if (vb < 0 || vb > 8) continue;
+            for (ey = -1; ey <= 1; ey++) for (ex = -1; ex <= 1; ex++) {
+                int xx = bx + ex, yy = by + ey, g;
+                if (xx < 0 || yy < 0 || xx >= w || yy >= h || (!ex && !ey)) continue;
+                g = curr->grid[yy*w+xx];
+                if (g == -1) rb++;
+                else if (g == -2 || g == -3) ub[nb++] = yy*w+xx;
+            }
+            rb = vb - rb;
+            if (nb <= na) continue;
+            for (i2 = 0; i2 < na && subset; i2++) {
+                for (j2 = 0; j2 < nb && ub[j2] != ua[i2]; j2++);
+                if (j2 == nb) subset = false;
+            }
+            if (!subset) continue;
+            for (j2 = 0; j2 < nb; j2++) {
+                for (i2 = 0; i2 < na && ua[i2] != ub[j2]; i2++);
+                if (i2 == na) diff[ndiff++] = ub[j2];
+            }
+            if (rb - ra == 0) {
+                sprintf(buf, "O%d,%d", diff[0] % w, diff[0] / w);
+                return dupstr(buf);
+            }
+            if (rb - ra == ndiff) {
+                for (i2 = 0; i2 < ndiff; i2++)
+                    if (curr->grid[diff[i2]] == -2) {
+                        sprintf(buf, "F%d,%d", diff[i2] % w, diff[i2] / w);
+                        return dupstr(buf);
+                    }
+            }
+        }
+    }
+    /* Rule d: total mine count */
+    if (nunk > 0 && n - nflags == 0) {
+        for (i = 0; i < w * h; i++) if (curr->grid[i] == -2 || curr->grid[i] == -3) {
+            sprintf(buf, "O%d,%d", i % w, i / w);
+            return dupstr(buf);
+        }
+    }
+    if (nunk > 0 && n - nflags == nunk) {
+        for (i = 0; i < w * h; i++) if (curr->grid[i] == -2) {
+            sprintf(buf, "F%d,%d", i % w, i / w);
+            return dupstr(buf);
+        }
+    }
+    {
+        char *r = mh_hint(curr, nflags);
+        if (r) return r;
+    }
+    *error = "No logical next step found";
+    return NULL;
+}
+
 const struct game thegame = {
     "Mines", "games.mines", "mines",
     default_params,
@@ -3392,6 +3630,7 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     true, game_timing_state,
     BUTTON_BEATS(LEFT_BUTTON, RIGHT_BUTTON) | REQUIRE_RBUTTON,
+    hint_game,
 };
 
 #ifdef STANDALONE_OBFUSCATOR
