@@ -1363,6 +1363,23 @@ static float game_flash_length(const game_state *oldstate,
 #define thegame flood
 #endif
 
+
+/* Next step: the first move of the solver's suggested sequence. */
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    char *sol = solve_game(curr, curr, NULL, error), *out;
+    if (!sol) return NULL;
+    out = dupstr(sol);
+    out[0] = 'M';
+    {
+        char *comma = strchr(out, ',');
+        if (comma) *comma = 0;
+    }
+    sfree(sol);
+    return out;
+}
+
 const struct game thegame = {
     "Flood", "games.flood", "flood",
     default_params,
@@ -1407,4 +1424,5 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };

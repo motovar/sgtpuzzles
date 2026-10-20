@@ -1320,6 +1320,26 @@ static int game_status(const game_state *state)
 #define thegame flip
 #endif
 
+
+/* Next step: a flip taken from the shortest solution of the current position. */
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int w = curr->w, wh = w * curr->h, i;
+    char *sol = solve_game(curr, curr, NULL, error), *out = NULL;
+    if (!sol) return NULL;
+    for (i = 0; i < wh; i++)
+        if (sol[i+1] == '1') {
+            char buf[40];
+            sprintf(buf, "M%d,%d", i % w, i / w);
+            out = dupstr(buf);
+            break;
+        }
+    sfree(sol);
+    if (!out) *error = "The puzzle is already solved";
+    return out;
+}
+
 const struct game thegame = {
     "Flip", "games.flip", "flip",
     default_params,
@@ -1364,4 +1384,5 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
