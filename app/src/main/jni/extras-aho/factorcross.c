@@ -2253,6 +2253,212 @@ static bool game_timing_state(const game_state *state, game_ui *ui)
 #define thegame factorcross
 #endif
 
+
+/* ---- Logical next step: candidate propagation over run products ---- */
+
+#define FH_MAXRUN 24
+#define FH_MAXDIV 4096
+struct fh_run { int n; long clue; int cell[FH_MAXRUN]; };
+
+static int fh_divisors(long clue, long *div)
+{
+    long d; int n = 0;
+    for (d = 1; d * d <= clue; d++)
+        if (clue % d == 0) {
+            if (n + 2 > FH_MAXDIV) return -1;
+            div[n++] = d;
+            if (d != clue / d) div[n++] = clue / d;
+        }
+    return n;
+}
+
+static int fh_find(const long *div, int nd, long v)
+{
+    int i;
+    for (i = 0; i < nd; i++) if (div[i] == v) return i;
+    return -1;
+}
+
+/* Restrict candidates of one run; returns false on contradiction. */
+static bool fh_run(const struct fh_run *r, long *cand, bool *changed)
+{
+    int k, i, d;
+    if (r->clue == 0) {
+        /* product zero: at least one zero among the cells */
+        int nz = 0, lastz = -1;
+        for (k = 0; k < r->n; k++)
+            if (cand[r->cell[k]] & 1L) { nz++; lastz = k; }
+        if (!nz) return false;
+        if (nz == 1) {
+            if (cand[r->cell[lastz]] != 1L) { cand[r->cell[lastz]] = 1L; *changed = true; }
+        }
+        return true;
+    } else {
+        static long div[FH_MAXDIV];
+        static char *F = NULL, *B = NULL;
+        static size_t cap = 0;
+        int nd = fh_divisors(r->clue, div), n = r->n;
+        size_t need = (size_t)(n + 1) * (nd > 0 ? nd : 1);
+        long newc[FH_MAXRUN];
+        if (nd < 0) return true;
+        if (need > cap) {
+            sfree(F); sfree(B);
+            F = snewn(need, char); B = snewn(need, char); cap = need;
+        }
+        memset(F, 0, need); memset(B, 0, need);
+        F[0 * nd + fh_find(div, nd, r->clue)] = 1;
+        for (k = 0; k < n; k++) {
+            long c = cand[r->cell[k]];
+            for (i = 0; i < nd; i++) if (F[k * nd + i])
+                for (d = 1; d <= MAXNUM; d++)
+                    if ((c & (1L << d)) && div[i] % d == 0) {
+                        int j = fh_find(div, nd, div[i] / d);
+                        if (j >= 0) F[(k + 1) * nd + j] = 1;
+                    }
+        }
+        B[n * nd + fh_find(div, nd, 1)] = 1;
+        for (k = n - 1; k >= 0; k--) {
+            long c = cand[r->cell[k]];
+            for (i = 0; i < nd; i++)
+                for (d = 1; d <= MAXNUM; d++)
+                    if ((c & (1L << d)) && div[i] % d == 0) {
+                        int j = fh_find(div, nd, div[i] / d);
+                        if (j >= 0 && B[(k + 1) * nd + j]) { B[k * nd + i] = 1; break; }
+                    }
+        }
+        for (k = 0; k < n; k++) {
+            long c = cand[r->cell[k]], nc = 0;
+            for (d = 1; d <= MAXNUM; d++) {
+                if (!(c & (1L << d))) continue;
+                for (i = 0; i < nd; i++)
+                    if (F[k * nd + i] && div[i] % d == 0) {
+                        int j = fh_find(div, nd, div[i] / d);
+                        if (j >= 0 && B[(k + 1) * nd + j]) { nc |= 1L << d; break; }
+                    }
+            }
+            newc[k] = nc;
+        }
+        for (k = 0; k < n; k++) {
+            int cc = r->cell[k];
+            if (!newc[k]) return false;
+            if (newc[k] != cand[cc]) { cand[cc] = newc[k]; *changed = true; }
+        }
+        return true;
+    }
+}
+
+static bool fh_propagate(const struct fh_run *runs, int nr, long *cand,
+                         int *order, int *norder, bool *logged, int a)
+{
+    bool changed;
+    int i, c;
+    (void)a;
+    do {
+        changed = false;
+        for (i = 0; i < nr; i++) {
+            if (!fh_run(&runs[i], cand, &changed)) return false;
+        }
+        if (order)
+            for (i = 0; i < nr; i++) for (c = 0; c < runs[i].n; c++) {
+                int cc = runs[i].cell[c];
+                long v = cand[cc];
+                if (!logged[cc] && v && !(v & (v - 1))) { logged[cc] = true; order[(*norder)++] = cc; }
+            }
+    } while (changed);
+    return true;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static char errbuf[96];
+    int sz = orig->par->size + 1, a = sz * sz, max = orig->par->max;
+    int x, y, i, nr = 0, norder = 0, tries = 0;
+    struct fh_run *runs = snewn(2 * a, struct fh_run);
+    long *cand = snewn(a, long);
+    int *order = snewn(a, int);
+    bool *logged = snewn(a, bool);
+    long base = (2L << max) - 2;
+    bool prog = true, complete = true;
+    char *out = NULL, buf[40];
+
+    if (orig->par->zero_mode) base |= 1L;
+    if (orig->par->notone_mode) base &= ~2L;
+    for (i = 0; i < a; i++) {
+        logged[i] = false;
+        if (!orig->clues->playable[i]) { cand[i] = 0; continue; }
+        cand[i] = orig->grid[i] >= 0 ? 1L << orig->grid[i] : base;
+    }
+    for (y = 0; y < sz; y++) for (x = 0; x < sz; x++) {
+        int dir;
+        if (orig->clues->playable[y*sz+x]) continue;
+        for (dir = 0; dir < 2; dir++) {
+            long clue = dir ? orig->clues->hclues[y*sz+x] : orig->clues->vclues[y*sz+x];
+            int dx = dir, dy = !dir, px = x + dx, py = y + dy;
+            struct fh_run *r = &runs[nr];
+            if (clue < 0) continue;
+            r->n = 0; r->clue = clue;
+            while (px < sz && py < sz && orig->clues->playable[py*sz+px] && r->n < FH_MAXRUN) {
+                r->cell[r->n++] = py*sz + px; px += dx; py += dy;
+            }
+            if (r->n) nr++;
+        }
+    }
+    for (i = 0; i < a; i++)
+        if (cand[i] && !(cand[i] & (cand[i] - 1))) logged[i] = true;
+    if (!fh_propagate(runs, nr, cand, order, &norder, logged, a)) prog = false;
+    while (prog && tries++ < 400) {
+        int c, v;
+        long *t = snewn(a, long);
+        prog = false;
+        for (c = 0; c < a && !prog; c++) {
+            if (!cand[c] || !(cand[c] & (cand[c] - 1))) continue;
+            for (v = 0; v <= max && !prog; v++) {
+                if (!(cand[c] & (1L << v))) continue;
+                memcpy(t, cand, a * sizeof(long));
+                t[c] = 1L << v;
+                if (!fh_propagate(runs, nr, t, NULL, NULL, NULL, a)) {
+                    cand[c] &= ~(1L << v);
+                    fh_propagate(runs, nr, cand, order, &norder, logged, a);
+                    if (!(cand[c] & (cand[c] - 1)) && !logged[c]) {
+                        logged[c] = true; order[norder++] = c;
+                    }
+                    prog = true;
+                }
+            }
+        }
+        sfree(t);
+    }
+    for (i = 0; i < a; i++) if (orig->clues->playable[i] &&
+                                (!cand[i] || (cand[i] & (cand[i] - 1)))) complete = false;
+    if (complete) {
+        for (i = 0; i < a; i++) if (orig->clues->playable[i] && curr->grid[i] >= 0 &&
+                                    cand[i] != (1L << curr->grid[i])) {
+            sprintf(errbuf, "There is a mistake in row %d, column %d", i / sz + 1, i % sz + 1);
+            *error = errbuf;
+            goto done;
+        }
+    }
+    for (i = 0; i < norder; i++) {
+        int c = order[i], v = 0;
+        if (curr->grid[c] >= 0) continue;
+        while (!(cand[c] & (1L << v))) v++;
+        sprintf(buf, "R%d,%d,%d", c % sz, c / sz, v);
+        out = dupstr(buf);
+        break;
+    }
+    for (i = 0; i < a && !out; i++)
+        if (orig->clues->playable[i] && curr->grid[i] < 0 && cand[i] && !(cand[i] & (cand[i] - 1))) {
+            int v = 0; while (!(cand[i] & (1L << v))) v++;
+            sprintf(buf, "R%d,%d,%d", i % sz, i / sz, v);
+            out = dupstr(buf);
+        }
+    if (!out) *error = "No logical next step found";
+done:
+    sfree(runs); sfree(cand); sfree(order); sfree(logged);
+    return out;
+}
+
 const struct game thegame = {
     "Factorcross", "games.factorcross", "factorcross",
     default_params,
@@ -2300,4 +2506,5 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, game_timing_state,
     0,				       /* flags */
+    hint_game,
 };
