@@ -578,49 +578,69 @@ void calc_needed_positions(Shape* shape, Shape* board, int reflmask, int* smask,
 
 void mark_inconsistent(Shape* board, Shape* shape, int smask, int np1, int np2, char* poss)
 {
-  int bpix, spix;
-  for (int y=0; y<board->height; y++)
-    for (int x=0; x<board->width; x++)
-      if ((bpix = ShapePix(board, x, y, 1)) != ID_UNKNOWN) {
-        int ir1=0, ir2=0;
-        for (int b=1, i=0; i<8; i++, b<<=1)
-          if (smask&b) {
-            for (int yy = imax(y+ShapeHeight(shape, b)-board->height, -1); yy <= imin(ShapeHeight(shape, b), y); yy++)
-              for (int xx = imax(x+ShapeWidth(shape, b)-board->width, -1); xx <= imin(ShapeWidth(shape, b), x); xx++)
-                if ((spix = ShapePix(shape, xx, yy, b)) != ID_UNKNOWN && spix != bpix)
-                  poss[np1*ir1 + np2*ir2 + (y-yy) * (board->width-ShapeWidth(shape, b)+1) + (x-xx)] = 0;
-            if (ID_REFL_SWAP & b)
-              ir2++;
-            else
-              ir1++;
+  int ir1=0, ir2=0;
+  for (int b=1, i=0; i<8; i++, b<<=1)
+    if (smask&b) {
+      int sw = ShapeWidth(shape, b), sh = ShapeHeight(shape, b);
+      int pw = board->width-sw+1, ph = board->height-sh+1;
+      for (int py=0; py<ph; py++)
+        for (int px=0; px<pw; px++) {
+          char *pp = &poss[np1*ir1 + np2*ir2 + py*pw + px];
+          if (*pp == 0) continue;
+          for (int yy=-1; yy<=sh && *pp; yy++) {
+            int y = py+yy;
+            if (y < 0 || y >= board->height) continue;
+            for (int xx=-1; xx<=sw; xx++) {
+              int x = px+xx, bpix, spix;
+              if (x < 0 || x >= board->width) continue;
+              if ((bpix = ShapePix(board, x, y, 1)) == ID_UNKNOWN) continue;
+              if ((spix = ShapePix(shape, xx, yy, b)) != ID_UNKNOWN && spix != bpix) {
+                *pp = 0;
+                break;
+              }
             }
-      }
+          }
+        }
+      if (ID_REFL_SWAP & b)
+        ir2++;
+      else
+        ir1++;
+    }
 }
 
 void accumulate_possibilities(Shape* board, Shape* shape, int smask, int np1, int np2, char* poss, int* bpos, int* bneg)
 {
-  char spix;
-  for (int y=0; y<board->height; y++)
-    for (int x=0; x<board->width; x++)
-      if (ShapePix(board, x,y,1) == ID_UNKNOWN) {
-        int ir1=0, ir2=0;
-        for (int b=1, i=0; i<8; i++, b<<=1)
-          if (smask&b) {
-            for (int yy = imax(y+ShapeHeight(shape, b)-board->height, -1); yy <= imin(ShapeHeight(shape, b), y); yy++)
-              for (int xx = imax(x+ShapeWidth(shape, b)-board->width, -1); xx <= imin(ShapeWidth(shape, b), x); xx++)
-                if ((spix = ShapePix(shape, xx,yy,b)) != ID_UNKNOWN &&
-                    poss[np1*ir1 + np2*ir2 + (y-yy) * (board->width-ShapeWidth(shape, b)+1) + (x-xx)] != 0) {
+  /* Walk over the placements that are still possible (instead of over every
+   * unknown board square), which is much faster once most are ruled out. */
+  int ir1=0, ir2=0;
+  for (int b=1, i=0; i<8; i++, b<<=1)
+    if (smask&b) {
+      int sw = ShapeWidth(shape, b), sh = ShapeHeight(shape, b);
+      int pw = board->width-sw+1, ph = board->height-sh+1;
+      for (int py=0; py<ph; py++)
+        for (int px=0; px<pw; px++)
+          if (poss[np1*ir1 + np2*ir2 + py*pw + px] != 0)
+            for (int yy=-1; yy<=sh; yy++) {
+              int y = py+yy;
+              if (y < 0 || y >= board->height) continue;
+              for (int xx=-1; xx<=sw; xx++) {
+                int x = px+xx;
+                char spix;
+                if (x < 0 || x >= board->width) continue;
+                if (ShapePix(board, x, y, 1) != ID_UNKNOWN) continue;
+                if ((spix = ShapePix(shape, xx, yy, b)) != ID_UNKNOWN) {
                   if (spix == ID_ON)
                     bpos[y*board->width + x]++;
                   else
                     bneg[y*board->width + x]++;
                 }
-            if (ID_REFL_SWAP & b)
-              ir2++;
-            else
-              ir1++;
-          }
-      }
+              }
+            }
+      if (ID_REFL_SWAP & b)
+        ir2++;
+      else
+        ir1++;
+    }
 }
 
 int check_inconsistent(Shape* board, Shape* shape, int bit, int x, int y)
@@ -1281,11 +1301,15 @@ void dict_statistics_prune_superfluous(DictStatistics* stat, random_state *rs)
     int tmp, j = random_upto(rs, sz-i) + i;
     tmp = order[i], order[i] = order[j], order[j] = tmp;
   }
-  for (int i=0; i<sz; i++) {
+  /* Every attempt re-evaluates the whole shape dictionary, which is very slow on
+   * large boards, so only a limited number of squares is tried there. */
+  int budget = sz <= 36 ? sz : 20;
+  for (int i=0; i<sz && budget > 0; i++) {
     int x = order[i] % stat->board->width;
     int y = order[i] / stat->board->width;
     char px = ShapePix(stat->board, x, y, 1);
     if (px != ID_UNKNOWN) {
+      budget--;
       SetShapePix(stat->board, x, y, 1, ID_UNKNOWN);
       for (int k=0, j0=0, n=0; k<stat->conf->numcomp; j0+=n, k++) {
         n = ShapeDictNum(stat->dict, stat->conf->lev[k]);
