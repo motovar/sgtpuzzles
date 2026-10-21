@@ -157,6 +157,7 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
     ConfigBuilder.ActivityCallbacks, GameEngine.ActivityCallbacks {
     private lateinit var _binding: MainBinding
     private lateinit var statusBar: TextView
+    private val helperText: TextView get() = _binding.helperText
     private lateinit var buttons: ButtonsView
     private lateinit var mainLayout: RelativeLayout
     private lateinit var gameView: GameView
@@ -1310,29 +1311,23 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
     @UsedByJNI
     override fun setStatus(status: String) {
         // Kakuro / Factorcross combination helper: the C side prefixes its text with \u0001.
-        // Reserve a fixed-height, scrollable area so the puzzle never moves or resizes.
+        // It is shown as an overlay so the puzzle layout never changes.
         val helper = status.startsWith("\u0001")
         val shown = if (helper) status.substring(1) else status
-        statusBar.apply {
-            if (statusDefaultSizePx == 0f) statusDefaultSizePx = textSize
-            text = shown.ifEmpty { " " } // Ensure consistent height
-            if (helper) {
-                setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, statusDefaultSizePx * 0.8f)
-                setLines(HELPER_LINES)
-                ellipsize = null
-                movementMethod = android.text.method.ScrollingMovementMethod.getInstance()
-                scrollTo(0, 0)
+        helperText.apply {
+            if (helper && shown.isNotBlank()) {
+                text = shown
+                visibility = View.VISIBLE
             } else {
-                setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, statusDefaultSizePx)
-                minLines = 0; maxLines = Int.MAX_VALUE
-                movementMethod = null
+                visibility = View.GONE
             }
+        }
+        statusBar.apply {
+            text = if (helper) " " else status.ifEmpty { " " } // Ensure consistent height
             importantForAccessibility =
-                if (status.isEmpty()) View.IMPORTANT_FOR_ACCESSIBILITY_NO else View.IMPORTANT_FOR_ACCESSIBILITY_YES
+                if (status.isEmpty() || helper) View.IMPORTANT_FOR_ACCESSIBILITY_NO else View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }
     }
-
-    private var statusDefaultSizePx = 0f
 
     @UsedByJNI
     override fun requestTimer(on: Boolean) {
@@ -1508,7 +1503,6 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
     }
 
     companion object {
-        private const val HELPER_LINES = 6
         private const val TAG = "GamePlay"
         const val OUR_SCHEME = "sgtpuzzles"
         const val MIME_TYPE = "text/prs.sgtatham.puzzles"

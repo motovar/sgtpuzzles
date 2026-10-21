@@ -1376,6 +1376,8 @@ struct peg_search {
     size_t cap;
     long budget;
     int mode;
+    int startpegs;
+    int *path;   /* 4 ints per move, indexed by moves made from start */
 };
 
 static unsigned long long peg_hash(const unsigned char *g, int w, int h)
@@ -1404,7 +1406,7 @@ static bool peg_dfs(struct peg_search *ps, unsigned char *g, int pegs,
     int w = ps->w, h = ps->h, x, y, d, n = 0, i, j;
     struct { int x, y, tx, ty, key; } m[4*PEG_MAXCELLS_MOVES];
     if (pegs == 1) return true;
-    if (!mv) {
+    {
         if (ps->budget-- <= 0) return false;
         if (peg_seen(ps, peg_hash(g, w, h))) return false;
     }
@@ -1436,7 +1438,10 @@ static bool peg_dfs(struct peg_search *ps, unsigned char *g, int pegs,
         g[sy*w+sx] = GRID_HOLE; g[my*w+mx] = GRID_HOLE; g[ty*w+tx] = GRID_PEG;
         if (peg_dfs(ps, g, pegs-1, NULL)) {
             g[sy*w+sx] = GRID_PEG; g[my*w+mx] = GRID_PEG; g[ty*w+tx] = GRID_HOLE;
-            if (mv) { mv[0]=sx; mv[1]=sy; mv[2]=tx; mv[3]=ty; }
+            if (ps->path) {
+                int *q = ps->path + 4 * (ps->startpegs - pegs);
+                q[0]=sx; q[1]=sy; q[2]=tx; q[3]=ty;
+            }
             return true;
         }
         g[sy*w+sx] = GRID_PEG; g[my*w+mx] = GRID_PEG; g[ty*w+tx] = GRID_HOLE;
@@ -1445,35 +1450,191 @@ static bool peg_dfs(struct peg_search *ps, unsigned char *g, int pegs,
     return false;
 }
 
+
+/* ----------------------------------------------------------------------
+ * Beam search fallback for large boards where plain DFS gives up.
+ */
+struct peg_cand { long sc; unsigned long long h; int idx; };
+
+static int peg_cand_cmp(const void *a, const void *b)
+{
+    const struct peg_cand *x = a, *y = b;
+    if (x->sc != y->sc) return x->sc < y->sc ? -1 : 1;
+    return x->h < y->h ? -1 : x->h > y->h;
+}
+
+static long peg_eval(const unsigned char *g, int w, int h, int mode)
+{
+    static const int dx[4] = {1,-1,0,0}, dy[4] = {0,0,1,-1};
+    long s = 0;
+    int x, y, d;
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+        int c = 0, c2 = 0;
+        if (g[y*w+x] != GRID_PEG) continue;
+        for (d = 0; d < 4; d++) {
+            int a = x+dx[d], b = y+dy[d];
+            if (a >= 0 && a < w && b >= 0 && b < h && g[b*w+a] == GRID_PEG) c++;
+            a = x+2*dx[d]; b = y+2*dy[d];
+            if (a >= 0 && a < w && b >= 0 && b < h && g[b*w+a] == GRID_PEG) c2++;
+        }
+        if (mode == 0) {
+            s += abs(2*x-(w-1)) + abs(2*y-(h-1));
+        } else {
+            s += (4-c)*3 + (abs(2*x-(w-1)) + abs(2*y-(h-1)))/2;
+            if (!c && !c2) s += 100;
+        }
+    }
+    return s;
+}
+
+/* returns true and fills path (4 ints per move) on success */
+static bool peg_beam(const unsigned char *start, int w, int h, int pegs,
+                     int bw, int mode, int *path)
+{
+    static const int dx[4] = {1,-1,0,0}, dy[4] = {0,0,1,-1};
+    int n = w*h, ncap = bw * 16, lvl, i, nc = 1, nn;
+    unsigned char *cg = snewn((size_t)bw * n, unsigned char);
+    unsigned char *ng = snewn((size_t)ncap * n, unsigned char);
+    int *cpar = snewn(ncap, int);          /* parent index (in previous level) */
+    int *npar = snewn(ncap, int);
+    int *nmv = snewn(ncap, int);           /* packed move of each candidate */
+    int *hist_par = snewn((size_t)(pegs) * bw, int);
+    int *hist_mv = snewn((size_t)(pegs) * bw, int);
+    struct peg_cand *cand = snewn(ncap, struct peg_cand);
+    bool ok = false;
+    memcpy(cg, start, n);
+    (void)cpar;
+    for (lvl = 0; lvl < pegs - 1; lvl++) {
+        nn = 0;
+        for (i = 0; i < nc && nn < ncap; i++) {
+            const unsigned char *g = cg + (size_t)i * n;
+            int x, y, d;
+            for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+                if (g[y*w+x] != GRID_PEG) continue;
+                for (d = 0; d < 4 && nn < ncap; d++) {
+                    int mx = x+dx[d], my = y+dy[d], tx = x+2*dx[d], ty = y+2*dy[d];
+                    unsigned char *q;
+                    if (tx < 0 || tx >= w || ty < 0 || ty >= h) continue;
+                    if (g[my*w+mx] != GRID_PEG || g[ty*w+tx] != GRID_HOLE) continue;
+                    q = ng + (size_t)nn * n;
+                    memcpy(q, g, n);
+                    q[y*w+x] = GRID_HOLE; q[my*w+mx] = GRID_HOLE; q[ty*w+tx] = GRID_PEG;
+                    npar[nn] = i;
+                    nmv[nn] = ((x*32+y)*32+tx)*32+ty;
+                    cand[nn].sc = peg_eval(q, w, h, mode);
+                    cand[nn].h = peg_hash(q, w, h);
+                    cand[nn].idx = nn;
+                    nn++;
+                }
+            }
+        }
+        if (!nn) goto done;
+        qsort(cand, nn, sizeof(*cand), peg_cand_cmp);
+        {
+            int k, kept = 0;
+            for (k = 0; k < nn && kept < bw; k++) {
+                if (kept && cand[k].h == cand[k-1].h) continue; /* duplicate */
+                memcpy(cg + (size_t)kept * n, ng + (size_t)cand[k].idx * n, n);
+                hist_par[(size_t)lvl * bw + kept] = npar[cand[k].idx];
+                hist_mv[(size_t)lvl * bw + kept] = nmv[cand[k].idx];
+                kept++;
+            }
+            nc = kept;
+        }
+    }
+    if (nc > 0) {
+        int idx = 0, l;
+        for (l = pegs - 2; l >= 0; l--) {
+            int f = hist_mv[(size_t)l * bw + idx];
+            int *q = path + 4 * l;
+            q[3] = f % 32; f /= 32; q[2] = f % 32; f /= 32;
+            q[1] = f % 32; f /= 32; q[0] = f;
+            idx = hist_par[(size_t)l * bw + idx];
+        }
+        ok = true;
+    }
+done:
+    sfree(cg); sfree(ng); sfree(cpar); sfree(npar); sfree(nmv);
+    sfree(hist_par); sfree(hist_mv); sfree(cand);
+    return ok;
+}
+
+/* Cached plan: the whole solution is found once and then replayed. */
+static int *peg_plan = NULL;
+static unsigned long long *peg_plan_hash = NULL;
+static int peg_plan_len = 0, peg_plan_w = 0, peg_plan_h = 0;
+
+static void peg_plan_store(const unsigned char *start, int w, int h,
+                           const int *path, int len)
+{
+    unsigned char *g = snewn(w*h, unsigned char);
+    int i;
+    sfree(peg_plan); sfree(peg_plan_hash);
+    peg_plan = snewn(4*len, int);
+    peg_plan_hash = snewn(len, unsigned long long);
+    memcpy(peg_plan, path, 4*len*sizeof(int));
+    memcpy(g, start, w*h);
+    for (i = 0; i < len; i++) {
+        const int *q = path + 4*i;
+        peg_plan_hash[i] = peg_hash(g, w, h);
+        g[q[1]*w+q[0]] = GRID_HOLE;
+        g[((q[1]+q[3])/2)*w + (q[0]+q[2])/2] = GRID_HOLE;
+        g[q[3]*w+q[2]] = GRID_PEG;
+    }
+    peg_plan_len = len; peg_plan_w = w; peg_plan_h = h;
+    sfree(g);
+}
+
 static char *hint_game(const game_state *orig, const game_state *curr,
                        const char **error)
 {
-    int w = curr->w, h = curr->h, i, pegs = 0, mv[4];
+    int w = curr->w, h = curr->h, i, pegs = 0, *path;
     struct peg_search ps;
     unsigned char *g;
     bool found = false;
     char buf[64];
+    unsigned long long hc;
 
     for (i = 0; i < w*h; i++) if (curr->grid[i] == GRID_PEG) pegs++;
     if (pegs <= 1) { *error = "Already solved"; return NULL; }
+
+    hc = peg_hash(curr->grid, w, h);
+    if (peg_plan && peg_plan_w == w && peg_plan_h == h) {
+        for (i = 0; i < peg_plan_len; i++)
+            if (peg_plan_hash[i] == hc) {
+                const int *q = peg_plan + 4*i;
+                sprintf(buf, "%d,%d-%d,%d", q[0], q[1], q[2], q[3]);
+                return dupstr(buf);
+            }
+    }
+
     g = snewn(w*h, unsigned char);
     memcpy(g, curr->grid, w*h);
-    ps.w = w; ps.h = h; ps.cap = 1 << 23; ps.budget = 6000000;
+    path = snewn(4*pegs, int);
+    ps.w = w; ps.h = h; ps.cap = 1 << 22;
     ps.seen = snewn(ps.cap, unsigned long long);
-    memset(ps.seen, 0, ps.cap * sizeof(unsigned long long));
-    for (ps.mode = 0; ps.mode < 3 && !found; ps.mode++) {
+    ps.startpegs = pegs; ps.path = path;
+    for (ps.mode = 0; ps.mode < 2 && !found; ps.mode++) {
         memset(ps.seen, 0, ps.cap * sizeof(unsigned long long));
-        ps.budget = 4500000;
-        found = peg_dfs(&ps, g, pegs, mv);
+        ps.budget = 400000;
+        found = peg_dfs(&ps, g, pegs, NULL);
     }
-    if (!found) ps.budget = 0;
-    sfree(g); sfree(ps.seen);
+    sfree(ps.seen);
     if (!found) {
-        *error = ps.budget <= 0 ? "Search gave up; try undoing some moves"
-                                : "No solution from here; undo some moves";
+        static const int stages[][2] = {{4000,2},{4000,0},{20000,2},{20000,0}};
+        int k;
+        for (k = 0; k < 4 && !found; k++)
+            found = peg_beam(g, w, h, pegs, stages[k][0], stages[k][1], path);
+    }
+    if (found) {
+        peg_plan_store(g, w, h, path, pegs - 1);
+        sprintf(buf, "%d,%d-%d,%d", path[0], path[1], path[2], path[3]);
+    }
+    sfree(g); sfree(path);
+    if (!found) {
+        *error = "No solution found from here; try undoing some moves";
         return NULL;
     }
-    sprintf(buf, "%d,%d-%d,%d", mv[0], mv[1], mv[2], mv[3]);
     return dupstr(buf);
 }
 
