@@ -1552,6 +1552,39 @@ static int game_status(const game_state *state)
 #define thegame blackbox
 #endif
 
+
+/*
+ * Next step: take back a wrong guess, else fire the next unfired laser,
+ * else place a missing ball, else check the answer.
+ */
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int x, y, i;
+    char buf[40];
+    if (curr->reveal) { *error = "Already solved"; return NULL; }
+    for (y = 1; y <= curr->h; y++) for (x = 1; x <= curr->w; x++) {
+        unsigned int g = GRID(curr, x, y);
+        if ((g & BALL_GUESS) && !(g & BALL_CORRECT)) {
+            sprintf(buf, "T%d,%d", x, y);
+            return dupstr(buf);
+        }
+    }
+    for (i = 0; i < curr->nlasers; i++)
+        if (curr->exits[i] == LASER_EMPTY) {
+            sprintf(buf, "F%d", i);
+            return dupstr(buf);
+        }
+    for (y = 1; y <= curr->h; y++) for (x = 1; x <= curr->w; x++) {
+        unsigned int g = GRID(curr, x, y);
+        if ((g & BALL_CORRECT) && !(g & BALL_GUESS)) {
+            sprintf(buf, "T%d,%d", x, y);
+            return dupstr(buf);
+        }
+    }
+    return dupstr("R");
+}
+
 const struct game thegame = {
     "Black Box", "games.blackbox", "blackbox",
     default_params,
@@ -1596,6 +1629,7 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     REQUIRE_RBUTTON,		       /* flags */
+    hint_game,
 };
 
 /* vim: set shiftwidth=4 tabstop=8: */

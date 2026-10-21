@@ -2023,6 +2023,63 @@ static int game_status(const game_state *state)
 #define thegame untangle
 #endif
 
+
+#ifndef EDITOR
+extern const char *midend_hint_aux;
+
+static int untangle_crossings(const game_state *st)
+{
+    int i, c = 0, ne = count234(st->graph->edges);
+    for (i = 0; i < ne; i++) if (st->crosses[i]) c++;
+    return c;
+}
+
+/*
+ * Next step: move one vertex to its position in the stored planar
+ * layout, choosing the vertex whose move removes most crossings.
+ */
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int n = curr->params.n, i, best = -1, bestc = 0;
+    char *sol, *p, *bestmove = NULL;
+    const char *aux = midend_hint_aux;
+    if (!aux) {
+        *error = "Solution not known for this puzzle";
+        return NULL;
+    }
+    sol = solve_game(orig, curr, aux, error);
+    if (!sol) return NULL;
+    p = sol + 1;
+    if (*p == ';') p++;
+    for (i = 0; i < n; i++) {
+        int pi, k, c;
+        long x, y, d;
+        char buf[80];
+        game_state *t;
+        if (sscanf(p, "P%d:%ld,%ld/%ld%n", &pi, &x, &y, &d, &k) != 4) break;
+        p += k;
+        if (*p == ';') p++;
+        /* already there? compare as fractions */
+        if (x * curr->pts[pi].d == curr->pts[pi].x * d &&
+            y * curr->pts[pi].d == curr->pts[pi].y * d) continue;
+        sprintf(buf, "P%d:%ld,%ld/%ld", pi, x, y, d);
+        t = execute_move(curr, buf);
+        if (!t) continue;
+        c = untangle_crossings(t);
+        free_game(t);
+        if (best < 0 || c < bestc) {
+            best = pi; bestc = c;
+            sfree(bestmove);
+            bestmove = dupstr(buf);
+        }
+    }
+    sfree(sol);
+    if (!bestmove) *error = "No next step found";
+    return bestmove;
+}
+#endif
+
 const struct game thegame = {
     "Untangle", "games.untangle", "untangle",
     default_params,
@@ -2072,4 +2129,9 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     SOLVE_ANIMATES,		       /* flags */
+#ifndef EDITOR
+    hint_game,
+#else
+    NULL,
+#endif
 };
