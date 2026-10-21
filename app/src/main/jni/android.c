@@ -900,7 +900,8 @@ __attribute__((unused)) JNIEXPORT jint JNICALL Java_name_boyle_chris_sgtpuzzles_
 			+ (midend_can_redo(fe->me) << 1)
 			+ (fe->thegame->can_configure << 2)
 			+ (fe->thegame->can_solve << 3)
-			+ (midend_wants_statusbar(fe->me) << 4);
+			+ (midend_wants_statusbar(fe->me) << 4)
+			+ ((fe->thegame->hint != NULL) << 5);
 }
 
 JNIEXPORT void JNICALL Java_name_boyle_chris_sgtpuzzles_backend_GameEngineImpl_onDestroy(JNIEnv *env, jobject gameEngine) {

@@ -171,6 +171,7 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
     private var currentType = 0
     private var generationInProgress: Future<*>? = null
     private var solveEnabled = false
+    private var hintEnabled = false
     private var customVisible = false
     private var undoEnabled = false
     private var redoEnabled = false
@@ -196,7 +197,7 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
     private var swapLROn = false
 
     private enum class UIVisibility(val value: Int) {
-        UNDO(1), REDO(2), CUSTOM(4), SOLVE(8), STATUS(16)
+        UNDO(1), REDO(2), CUSTOM(4), SOLVE(8), STATUS(16), HINT(32)
     }
 
     private enum class MsgType {
@@ -565,7 +566,7 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
             isVisible = enableType
         }
         menu.findItem(R.id.solve_step).apply {
-            val show = solveEnabled && currentBackend?.supportsSolveStep == true
+            val show = hintEnabled && currentBackend?.supportsSolveStep == true
             isEnabled = show
             isVisible = show
         }
@@ -958,6 +959,7 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
         )
         customVisible = flags and UIVisibility.CUSTOM.value > 0
         solveEnabled = flags and UIVisibility.SOLVE.value > 0
+        hintEnabled = flags and UIVisibility.HINT.value > 0
         setStatusBarVisibility(flags and UIVisibility.STATUS.value > 0)
         setKeys(gameEngine.requestKeys(currentBackend!!, currentParams, isPalisadeFullCursor()))
         inertiaFollow(false)
