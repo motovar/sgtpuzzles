@@ -2739,6 +2739,44 @@ static bool game_timing_state(const game_state *state, game_ui *ui)
 #define thegame identifier
 #endif
 
+
+/*
+ * Next step (Puzzle and Single modes): correct a wrong mark, otherwise
+ * mark / reveal the next black square, and finally submit the answer.
+ */
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int w = curr->par->bwidth, h = curr->par->bheight, x, y;
+    int mode = curr->par->mode;
+    char buf[40];
+    if (mode == 2) {
+        *error = "Next step is not available in Duel mode";
+        return NULL;
+    }
+    if (curr->completed) { *error = "Already solved"; return NULL; }
+    /* take back wrong marks first */
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+        char t = ShapePix(curr->clues->groundtruth, x, y, 1);
+        char g = ShapePix(curr->guess, x, y, 1);
+        if (g != ID_UNKNOWN && g != t) {
+            sprintf(buf, "Ts%d,%d,0", x, y);
+            return dupstr(buf);
+        }
+    }
+    /* then deal with the next black square we do not know yet */
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+        char t = ShapePix(curr->clues->groundtruth, x, y, 1);
+        if (t == ID_ON && ShapePix(curr->reveal, x, y, 1) != ID_ON &&
+            ShapePix(curr->guess, x, y, 1) != ID_ON) {
+            if (mode == 1) sprintf(buf, "Q%d,%d", x, y);
+            else sprintf(buf, "Ts%d,%d,1", x, y);
+            return dupstr(buf);
+        }
+    }
+    return dupstr("G");
+}
+
 const struct game thegame = {
     "Identifier", "games.identifier", "identifier",
     default_params,
@@ -2784,5 +2822,6 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, game_timing_state,
     0,				       /* flags */
+    hint_game,
 };
 

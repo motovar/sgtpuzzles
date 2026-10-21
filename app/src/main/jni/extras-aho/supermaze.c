@@ -4144,6 +4144,54 @@ static bool game_timing_state(const game_state *state, game_ui *ui)
 #define thegame supermaze
 #endif
 
+
+extern const char *midend_hint_aux;
+
+/*
+ * Next step: the generator stores, for every reachable state, the best
+ * next action ("sol" table); the hint simply looks up the current state.
+ */
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    const char *sol = curr->clues->sol;
+    int sz = curr->par->size;
+    SmStyle style = curr->par->style;
+    char ch, retstr[16];
+    if (!sol && midend_hint_aux && midend_hint_aux[0] == 'S')
+        sol = midend_hint_aux + 1;
+    if (!sol) {
+        *error = "Solution not known for this puzzle";
+        return NULL;
+    }
+    ch = sol[getindex(curr->coord, curr->par)];
+    if (ch == 't') {
+        int tmp;
+        if (style == Floors) {
+            tmp = curr->clues->roomvector[curr->coord[2]*sz*sz + curr->coord[1]*sz + curr->coord[0]];
+            if (tmp != -1) { sprintf(retstr, "F%d", tmp); return dupstr(retstr); }
+        } else if (style == Keys) {
+            tmp = curr->clues->roomvector[curr->coord[1]*sz + curr->coord[0]];
+            if (tmp != -1) { sprintf(retstr, "K%d", tmp); return dupstr(retstr); }
+        } else if (style == Levers) {
+            tmp = curr->clues->roomvector[curr->coord[1]*sz + curr->coord[0]];
+            if (tmp != -1) { sprintf(retstr, "L%d", tmp); return dupstr(retstr); }
+        } else if (style == Combo) {
+            tmp = curr->clues->roomvector[curr->coord[2]*sz*sz + curr->coord[1]*sz + curr->coord[0]];
+            if (tmp >= 4) { sprintf(retstr, "C%d", tmp-4); return dupstr(retstr); }
+        }
+    } else if (style == Tandem) {
+        char bch = (((curr->coord[3]*sz + curr->coord[2] >= curr->coord[1]*sz + curr->coord[0]) ^ ((ch & 0x20) == 0)) ? 'A' : 'B');
+        sprintf(retstr, "%c%c", bch, (ch | 0x20));
+        return dupstr(retstr);
+    } else if (ch >= 'a' && ch <= 'z') {
+        sprintf(retstr, "%c", ch);
+        return dupstr(retstr);
+    }
+    *error = "No next step found";
+    return NULL;
+}
+
 const struct game thegame = {
     "Supermaze", "games.supermaze", "supermaze",
     default_params,
@@ -4191,4 +4239,5 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, game_timing_state,
     0,				       /* flags */
+    hint_game,
 };
