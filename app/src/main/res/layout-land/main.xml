@@ -60,6 +60,25 @@
             <requestFocus/>
         </name.boyle.chris.sgtpuzzles.GameView>
 
+        <TextView
+            android:id="@+id/helper_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_alignBottom="@id/game_view"
+            android:layout_alignStart="@id/game_view"
+            android:layout_alignEnd="@id/game_view"
+            android:paddingLeft="8dp"
+            android:paddingRight="8dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:textSize="13sp"
+            android:background="#E6000000"
+            android:textColor="#FFFFFFFF"
+            android:clickable="false"
+            android:focusable="false"
+            android:importantForAccessibility="yes"
+            android:visibility="gone" />
+
     </RelativeLayout>
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>
