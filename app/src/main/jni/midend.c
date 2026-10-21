@@ -2160,6 +2160,8 @@ const char *midend_solve(midend *me)
  * "Show next step": ask the game for one logically deducible move for the
  * current position (game->hint) and apply it as an ordinary, undoable move.
  */
+const char *midend_hint_aux;
+
 const char *midend_solve_step(midend *me)
 {
     const char *msg = NULL;
@@ -2174,7 +2176,9 @@ const char *midend_solve_step(midend *me)
     if (me->ourgame->status(cur) != 0)
         return _("Game is already solved");
 
+    midend_hint_aux = me->aux_info;
     movestr = me->ourgame->hint(me->states[0].state, cur, &msg);
+    midend_hint_aux = NULL;
     if (!movestr)
         return msg ? msg : _("No logical next step found");
     s = me->ourgame->execute_move(cur, movestr);

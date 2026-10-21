@@ -16,6 +16,7 @@
 #endif
 
 #include "puzzles.h"
+#include "shiftsearch.h"
 #include "tree234.h"
 
 #define MATMUL(xr,yr,m,x,y) do { \
@@ -1857,6 +1858,63 @@ static int game_status(const game_state *state)
 #define thegame netslide
 #endif
 
+
+static char *ss_finish(int r, char **names, int nm, const char **error)
+{
+    if (r == -2) { *error = "Already solved"; return NULL; }
+    if (r < 0 || r >= nm) {
+        *error = "Search gave up; try undoing some moves";
+        return NULL;
+    }
+    return dupstr(names[r]);
+}
+
+extern const char *midend_hint_aux;
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int w = curr->width, h = curr->height, n = w*h, nm = 0, i, m, r;
+    char **names = snewn(2*(w+h), char *);
+    unsigned char **perm = snewn(2*(w+h), unsigned char *);
+    int *inv = snewn(2*(w+h), int);
+    unsigned char *start = snewn(n, unsigned char), *target = snewn(n, unsigned char);
+    char buf[40], *ret;
+    game_state *g;
+    const char *aux = midend_hint_aux;
+    if (!aux || aux[0] != 'S' || (int)strlen(aux) != n + 1) {
+        *error = "Solution not known for this puzzle";
+        return NULL;
+    }
+    for (i = 0; i < n; i++) {
+        int c = aux[i+1];
+        if (c >= '0' && c <= '9') c -= '0';
+        else if (c >= 'A' && c <= 'F') c -= 'A' - 10;
+        else c -= 'a' - 10;
+        target[i] = c;
+        start[i] = curr->tiles[i];
+    }
+    g = dup_game(curr);
+    for (i = 0; i < w+h; i++) for (m = 0; m < 2; m++) {
+        game_state *t;
+        sprintf(buf, "%c%d,%d", i < h ? 'R' : 'C', i < h ? i : i-h, m ? -1 : 1);
+        for (r = 0; r < n; r++) g->tiles[r] = r;
+        t = execute_move(g, buf);
+        names[nm] = dupstr(buf);
+        perm[nm] = snewn(n, unsigned char);
+        for (r = 0; r < n; r++) perm[nm][r] = t->tiles[r];
+        inv[nm] = nm ^ 1;
+        free_game(t);
+        nm++;
+    }
+    r = ss_search(n, start, target, nm, perm, inv, 3000000);
+    ret = ss_finish(r, names, nm, error);
+    for (i = 0; i < nm; i++) { sfree(names[i]); sfree(perm[i]); }
+    sfree(names); sfree(perm); sfree(inv); sfree(start); sfree(target);
+    free_game(g);
+    return ret;
+}
+
 const struct game thegame = {
     "Netslide", "games.netslide", "netslide",
     default_params,
@@ -1901,6 +1959,7 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
 
 /* vim: set shiftwidth=4 tabstop=8: */

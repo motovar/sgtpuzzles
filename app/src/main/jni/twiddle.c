@@ -18,6 +18,7 @@
 #endif
 
 #include "puzzles.h"
+#include "shiftsearch.h"
 
 #define PREFERRED_TILE_SIZE 48
 #define TILE_SIZE (ds->tilesize)
@@ -1281,6 +1282,70 @@ static void game_redraw(drawing *dr, game_drawstate *ds,
 #define thegame twiddle
 #endif
 
+
+static char *ss_finish(int r, char **names, int nm, const char **error)
+{
+    if (r == -2) { *error = "Already solved"; return NULL; }
+    if (r < 0 || r >= nm) {
+        *error = "Search gave up; try undoing some moves";
+        return NULL;
+    }
+    return dupstr(names[r]);
+}
+
+static int tw_cmp(const void *a, const void *b)
+{ return *(const unsigned char *)a - *(const unsigned char *)b; }
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int w = curr->w, h = curr->h, n = curr->n, wh = w*h, nm = 0, i, m, r, x, y;
+    int maxm = 2*(w-n+1)*(h-n+1);
+    char **names = snewn(maxm, char *);
+    unsigned char **perm = snewn(maxm, unsigned char *);
+    int *inv = snewn(maxm, int);
+    unsigned char *start = snewn(wh, unsigned char), *target = snewn(wh, unsigned char);
+    char buf[40], *ret;
+    game_state *g;
+    if (curr->orientable) {
+        *error = "Next step is not available with orientable tiles";
+        return NULL;
+    }
+    g = dup_game(curr);
+    for (y = 0; y + n <= h; y++) for (x = 0; x + n <= w; x++)
+        for (m = 0; m < 2; m++) {
+            game_state *t;
+            sprintf(buf, "M%d,%d,%d", x, y, m ? -1 : 1);
+            for (r = 0; r < wh; r++) g->grid[r] = r*4;
+            t = execute_move(g, buf);
+            names[nm] = dupstr(buf);
+            perm[nm] = snewn(wh, unsigned char);
+            for (r = 0; r < wh; r++) perm[nm][r] = t->grid[r] / 4;
+            inv[nm] = nm ^ 1;
+            free_game(t);
+            nm++;
+        }
+    {
+        /* dense ranks of the tile values */
+        int *vals = snewn(wh, int), j;
+        for (i = 0; i < wh; i++) vals[i] = curr->grid[i] & ~3;
+        for (i = 0; i < wh; i++) {
+            int rk = 0;
+            for (j = 0; j < wh; j++) if (vals[j] < vals[i]) rk++;
+            start[i] = rk;
+        }
+        sfree(vals);
+    }
+    memcpy(target, start, wh);
+    qsort(target, wh, 1, tw_cmp);
+    r = ss_search(wh, start, target, nm, perm, inv, 3000000);
+    ret = ss_finish(r, names, nm, error);
+    for (i = 0; i < nm; i++) { sfree(names[i]); sfree(perm[i]); }
+    sfree(names); sfree(perm); sfree(inv); sfree(start); sfree(target);
+    free_game(g);
+    return ret;
+}
+
 const struct game thegame = {
     "Twiddle", "games.twiddle", "twiddle",
     default_params,
@@ -1325,6 +1390,7 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
 
 /* vim: set shiftwidth=4 tabstop=8: */
