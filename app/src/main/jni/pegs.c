@@ -1366,6 +1366,117 @@ static int game_status(const game_state *state)
 #define thegame pegs
 #endif
 
+/* ----------------------------------------------------------------------
+ * Next-step hint: depth-first search with a dead-state hash.
+ */
+#define PEG_MAXCELLS_MOVES 128
+struct peg_search {
+    int w, h;
+    unsigned long long *seen;
+    size_t cap;
+    long budget;
+    int mode;
+};
+
+static unsigned long long peg_hash(const unsigned char *g, int w, int h)
+{
+    unsigned long long x = 1469598103934665603ULL;
+    int i;
+    for (i = 0; i < w*h; i++) { x ^= g[i]; x *= 1099511628211ULL; }
+    return x ? x : 1;
+}
+
+static bool peg_seen(struct peg_search *ps, unsigned long long hh)
+{
+    size_t i = (size_t)(hh % ps->cap);
+    while (ps->seen[i]) {
+        if (ps->seen[i] == hh) return true;
+        i = (i + 1) % ps->cap;
+    }
+    ps->seen[i] = hh;
+    return false;
+}
+
+static bool peg_dfs(struct peg_search *ps, unsigned char *g, int pegs,
+                    int *mv)
+{
+    static const int dx[4] = {1,-1,0,0}, dy[4] = {0,0,1,-1};
+    int w = ps->w, h = ps->h, x, y, d, n = 0, i, j;
+    struct { int x, y, tx, ty, key; } m[4*PEG_MAXCELLS_MOVES];
+    if (pegs == 1) return true;
+    if (!mv) {
+        if (ps->budget-- <= 0) return false;
+        if (peg_seen(ps, peg_hash(g, w, h))) return false;
+    }
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+        if (g[y*w+x] != GRID_PEG) continue;
+        for (d = 0; d < 4; d++) {
+            int mx = x+dx[d], my = y+dy[d], tx = x+2*dx[d], ty = y+2*dy[d];
+            int cx2, cy2;
+            if (tx < 0 || tx >= w || ty < 0 || ty >= h) continue;
+            if (g[my*w+mx] != GRID_PEG || g[ty*w+tx] != GRID_HOLE) continue;
+            if (n >= (int)(sizeof(m)/sizeof(m[0]))) continue;
+            cx2 = 2*x - (w-1); cy2 = 2*y - (h-1);
+            m[n].x = x; m[n].y = y; m[n].tx = tx; m[n].ty = ty;
+            /* prefer clearing pegs far from the centre, landing inward */
+            cx2 = cx2*cx2 + cy2*cy2;
+            cy2 = (2*tx-(w-1))*(2*tx-(w-1)) + (2*ty-(h-1))*(2*ty-(h-1));
+            m[n].key = ps->mode == 0 ? cx2 - cy2 : ps->mode == 1 ? 0 : cy2 - cx2;
+            n++;
+        }
+    }
+    for (i = 1; i < n; i++) {
+        __typeof__(m[0]) t = m[i];
+        for (j = i-1; j >= 0 && m[j].key < t.key; j--) m[j+1] = m[j];
+        m[j+1] = t;
+    }
+    for (i = 0; i < n; i++) {
+        int sx = m[i].x, sy = m[i].y, tx = m[i].tx, ty = m[i].ty;
+        int mx = (sx+tx)/2, my = (sy+ty)/2;
+        g[sy*w+sx] = GRID_HOLE; g[my*w+mx] = GRID_HOLE; g[ty*w+tx] = GRID_PEG;
+        if (peg_dfs(ps, g, pegs-1, NULL)) {
+            g[sy*w+sx] = GRID_PEG; g[my*w+mx] = GRID_PEG; g[ty*w+tx] = GRID_HOLE;
+            if (mv) { mv[0]=sx; mv[1]=sy; mv[2]=tx; mv[3]=ty; }
+            return true;
+        }
+        g[sy*w+sx] = GRID_PEG; g[my*w+mx] = GRID_PEG; g[ty*w+tx] = GRID_HOLE;
+        if (ps->budget <= 0) return false;
+    }
+    return false;
+}
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int w = curr->w, h = curr->h, i, pegs = 0, mv[4];
+    struct peg_search ps;
+    unsigned char *g;
+    bool found = false;
+    char buf[64];
+
+    for (i = 0; i < w*h; i++) if (curr->grid[i] == GRID_PEG) pegs++;
+    if (pegs <= 1) { *error = "Already solved"; return NULL; }
+    g = snewn(w*h, unsigned char);
+    memcpy(g, curr->grid, w*h);
+    ps.w = w; ps.h = h; ps.cap = 1 << 23; ps.budget = 6000000;
+    ps.seen = snewn(ps.cap, unsigned long long);
+    memset(ps.seen, 0, ps.cap * sizeof(unsigned long long));
+    for (ps.mode = 0; ps.mode < 3 && !found; ps.mode++) {
+        memset(ps.seen, 0, ps.cap * sizeof(unsigned long long));
+        ps.budget = 4500000;
+        found = peg_dfs(&ps, g, pegs, mv);
+    }
+    if (!found) ps.budget = 0;
+    sfree(g); sfree(ps.seen);
+    if (!found) {
+        *error = ps.budget <= 0 ? "Search gave up; try undoing some moves"
+                                : "No solution from here; undo some moves";
+        return NULL;
+    }
+    sprintf(buf, "%d,%d-%d,%d", mv[0], mv[1], mv[2], mv[3]);
+    return dupstr(buf);
+}
+
 const struct game thegame = {
     "Pegs", "games.pegs", "pegs",
     default_params,
@@ -1410,6 +1521,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
 
 /* vim: set shiftwidth=4 tabstop=8: */
