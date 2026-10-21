@@ -1161,6 +1161,21 @@ static int game_status(const game_state *state)
 #define thegame fifteen
 #endif
 
+
+/* Next step: the built-in hint (solve row by row / column by column). */
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int x, y;
+    char buf[40];
+    if (!compute_hint(curr, &x, &y)) {
+        *error = "The puzzle is already solved";
+        return NULL;
+    }
+    sprintf(buf, "M%d,%d", x, y);
+    return dupstr(buf);
+}
+
 const struct game thegame = {
     "Fifteen", "games.fifteen", "fifteen",
     default_params,
@@ -1205,6 +1220,7 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER

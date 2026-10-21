@@ -2218,6 +2218,50 @@ static int game_status(const game_state *state)
 #define thegame inertia
 #endif
 
+
+/* Next step: follow the solver's route to the remaining gems. The route is
+ * remembered between calls (and recomputed if the player strays from it), as
+ * recomputing it from scratch each time can lead the hint round in circles. */
+static unsigned long inertia_fingerprint(const game_state *st)
+{
+    unsigned long h = 1469598103UL;
+    int i, n = st->p.w * st->p.h;
+    for (i = 0; i < n; i++) h = (h ^ (unsigned char)st->grid[i]) * 16777619UL;
+    return (h ^ (st->px * 7919UL + st->py * 104729UL)) * 2654435761UL;
+}
+
+static char *hint_plan = NULL;
+static int hint_planpos = 0;
+static unsigned long hint_expect = 0;
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    char *out, buf[4];
+    game_state *nxt;
+    if (curr->dead) { *error = "The ball is dead; undo first"; return NULL; }
+    if (!hint_plan || hint_expect != inertia_fingerprint(curr) ||
+        !hint_plan[hint_planpos]) {
+        char *sol = solve_game(curr, curr, NULL, error);
+        sfree(hint_plan);
+        hint_plan = NULL;
+        if (!sol) return NULL;
+        hint_plan = dupstr(sol + 1);
+        hint_planpos = 0;
+        sfree(sol);
+    }
+    if (hint_plan[hint_planpos] < '0' || hint_plan[hint_planpos] > '9') {
+        *error = "No next step found";
+        return NULL;
+    }
+    buf[0] = hint_plan[hint_planpos++]; buf[1] = 0;
+    out = dupstr(buf);
+    nxt = execute_move(curr, out);
+    hint_expect = nxt ? inertia_fingerprint(nxt) : 0;
+    if (nxt) free_game(nxt);
+    return out;
+}
+
 const struct game thegame = {
     "Inertia", "games.inertia", "inertia",
     default_params,
@@ -2262,4 +2306,5 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
