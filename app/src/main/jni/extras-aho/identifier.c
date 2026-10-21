@@ -1303,7 +1303,7 @@ void dict_statistics_prune_superfluous(DictStatistics* stat, random_state *rs)
   }
   /* Every attempt re-evaluates the whole shape dictionary, which is very slow on
    * large boards, so only a limited number of squares is tried there. */
-  int budget = sz <= 36 ? sz : 20;
+  int budget = sz;
   for (int i=0; i<sz && budget > 0; i++) {
     int x = order[i] % stat->board->width;
     int y = order[i] / stat->board->width;

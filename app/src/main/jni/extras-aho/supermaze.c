@@ -2380,7 +2380,7 @@ static char *new_game_desc(const game_params *params, random_state *rs,
     int attempts = 0;
     relaxed.difficult = 0;
     do {
-      states = makepowerstates(attempts < 10 ? params : &relaxed, rs);
+      states = makepowerstates(params, rs);
       attempts++;
     } while (!states);
   }

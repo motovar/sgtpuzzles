@@ -67,6 +67,7 @@ enum {
 	COL_NUM_ERROR,
 	COL_NUM_PENCIL,
 	COL_ERRORDIST,
+	COL_GRIDLINE,
 	NCOLOURS
 };
 
@@ -241,10 +242,6 @@ static const char *validate_params(const game_params *params, bool full)
 		return "Width and height must be at least 4";
 	if (params->diff >= DIFFCOUNT)
 		return "Unknown difficulty rating";
-	if (params->mode == MODE_TECTONIC && params->w * params->h > 81)
-		return "Tectonic grids can have at most 81 squares (9x9)";
-	if (params->mode != MODE_TECTONIC && params->w * params->h > 100)
-		return "Seismic grids can have at most 100 squares (10x10)";
 
 	return NULL;
 }
@@ -1025,7 +1022,7 @@ static bool fill_search(struct fill_ctx *c)
 static bool seismic_gen_region_first(game_state *state, random_state *rs)
 {
 	int w = state->w, h = state->h, s = w * h;
-	int cap = state->mode == MODE_TECTONIC ? 5 : 6;
+	int cap = state->mode == MODE_TECTONIC ? 5 : 9;
 	int *region = snewn(s, int), *rsize = snewn(s, int);
 	int *cells = snewn(s, int), *front = snewn(4 * s + 4, int);
 	int nreg = 0, i, j;
@@ -1910,6 +1907,7 @@ static void game_set_size(drawing *dr, game_drawstate *ds,
 static float *game_colours(frontend *fe, int *ncolours)
 {
 	float *ret = snewn(3 * NCOLOURS, float);
+	int i;
 
 	frontend_default_colour(fe, &ret[COL_BACKGROUND * 3]);
 	game_mkhighlight(fe, ret, COL_BACKGROUND, COL_HIGHLIGHT, COL_LOWLIGHT);
@@ -1934,6 +1932,10 @@ static float *game_colours(frontend *fe, int *ncolours)
 	ret[COL_NUM_PENCIL*3 + 1] = 0.5F;
 	ret[COL_NUM_PENCIL*3 + 2] = 0.5F;
 	
+	/* thin lines inside a region: a soft shade of the background */
+	for (i = 0; i < 3; i++)
+		ret[COL_GRIDLINE*3 + i] = ret[COL_BACKGROUND*3 + i] * 0.72F;
+
 	ret[COL_ERRORDIST*3 + 0] = 1.0F;
 	ret[COL_ERRORDIST*3 + 1] = 0.0F;
 	ret[COL_ERRORDIST*3 + 2] = 0.0F;
@@ -2046,6 +2048,18 @@ static void game_redraw(drawing *dr, game_drawstate *ds, const game_state *oldst
 			ch -= GRIDEXTRA*2;
 		
 		draw_rect(dr, cx, cy, cw, ch, color);
+		
+		/* Soften the thin grid lines between cells of the same region, so that
+		 * the heavy region borders stand out. */
+		if(x+1 < w && dsf_canonify(dsf, i1) == dsf_canonify(dsf, y*w+x+1))
+			draw_rect(dr, cx+cw, cy, 1, ch, COL_GRIDLINE);
+		if(y+1 < h && dsf_canonify(dsf, i1) == dsf_canonify(dsf, (y+1)*w+x))
+			draw_rect(dr, cx, cy+ch, cw, 1, COL_GRIDLINE);
+		if(x+1 < w && y+1 < h &&
+		   dsf_canonify(dsf, i1) == dsf_canonify(dsf, y*w+x+1) &&
+		   dsf_canonify(dsf, i1) == dsf_canonify(dsf, (y+1)*w+x) &&
+		   dsf_canonify(dsf, i1) == dsf_canonify(dsf, (y+1)*w+x+1))
+			draw_rect(dr, cx+cw, cy+ch, 1, 1, COL_GRIDLINE);
 		
 		/* Pencil cursor */
 		if(cshow && ui->cpencil && ui->hx == x && ui->hy == y)
