@@ -1652,6 +1652,200 @@ static int game_status(const game_state *state)
     return state->complete ? +1 : 0;
 }
 
+
+/* ----------------------------------------------------------------------
+ * Next-step hint: search for a way to clear the whole board.
+ * Boards are byte arrays of colours (0 = empty), index y*w+x.
+ */
+struct sgs {
+    int w, h, n, ncols;
+    unsigned long long *seen;
+    size_t cap;
+    long budget;
+    int mode;
+    int *path;                         /* click cell per move */
+};
+
+static unsigned long long sgs_hash(const unsigned char *b, int n)
+{
+    unsigned long long x = 1469598103934665603ULL;
+    int i;
+    for (i = 0; i < n; i++) { x ^= b[i]; x *= 1099511628211ULL; }
+    return x ? x : 1;
+}
+
+/* flood fill the group containing cell c; returns size, marks in grp[] */
+static int sgs_group(const unsigned char *b, int w, int h, int c,
+                     unsigned char *grp, int *stack)
+{
+    int sp = 0, cnt = 0, col = b[c];
+    memset(grp, 0, w*h);
+    grp[c] = 1; stack[sp++] = c;
+    while (sp) {
+        int p = stack[--sp], x = p % w, y = p / w;
+        cnt++;
+        if (x > 0   && !grp[p-1] && b[p-1] == col) { grp[p-1] = 1; stack[sp++] = p-1; }
+        if (x+1 < w && !grp[p+1] && b[p+1] == col) { grp[p+1] = 1; stack[sp++] = p+1; }
+        if (y > 0   && !grp[p-w] && b[p-w] == col) { grp[p-w] = 1; stack[sp++] = p-w; }
+        if (y+1 < h && !grp[p+w] && b[p+w] == col) { grp[p+w] = 1; stack[sp++] = p+w; }
+    }
+    return cnt;
+}
+
+/* remove group, apply gravity and left-shift; result in out */
+static void sgs_apply(const unsigned char *b, int w, int h,
+                      const unsigned char *grp, unsigned char *out)
+{
+    int x, y, ox = 0;
+    memset(out, 0, w*h);
+    for (x = 0; x < w; x++) {
+        int wy = h - 1;
+        for (y = h - 1; y >= 0; y--)
+            if (b[y*w+x] && !grp[y*w+x])
+                out[(wy--)*w+ox] = b[y*w+x];
+        if (wy < h - 1) ox++;
+    }
+}
+
+struct sgs_move { int cell, size, key; };
+
+static int sgs_moves(const unsigned char *b, int w, int h,
+                     struct sgs_move *mv, int maxmv, unsigned char *seenc,
+                     unsigned char *grp, int *stack)
+{
+    int n = 0, c;
+    memset(seenc, 0, w*h);
+    for (c = 0; c < w*h; c++) {
+        int sz, i;
+        if (!b[c] || seenc[c]) continue;
+        sz = sgs_group(b, w, h, c, grp, stack);
+        for (i = 0; i < w*h; i++) if (grp[i]) seenc[i] = 1;
+        if (sz >= 2 && n < maxmv) { mv[n].cell = c; mv[n].size = sz; mv[n].key = 0; n++; }
+    }
+    return n;
+}
+
+static bool sgs_dfs(struct sgs *ps, const unsigned char *b, int depth)
+{
+    int w = ps->w, h = ps->h, n = ps->n, i, j, nm, left = 0, c;
+    struct sgs_move mv[64];
+    unsigned char *grp, *seenc, *nb;
+    int *stack;
+    int cnt[10];
+    bool ok = false;
+    for (i = 0; i < n; i++) if (b[i]) left++;
+    if (!left) return true;
+    if (ps->budget-- <= 0) return false;
+    {
+        size_t k = (size_t)(sgs_hash(b, n) % ps->cap);
+        unsigned long long hh = sgs_hash(b, n);
+        while (ps->seen[k]) { if (ps->seen[k] == hh) return false; k = (k+1) % ps->cap; }
+        ps->seen[k] = hh;
+    }
+    grp = snewn(n, unsigned char); seenc = snewn(n, unsigned char);
+    nb = snewn(n, unsigned char); stack = snewn(n, int);
+    memset(cnt, 0, sizeof cnt);
+    for (i = 0; i < n; i++) if (b[i]) cnt[b[i] % 10]++;
+    nm = sgs_moves(b, w, h, mv, 64, seenc, grp, stack);
+    for (i = 0; i < nm; i++) {
+        c = b[mv[i].cell] % 10;
+        if (ps->mode == 0) mv[i].key = cnt[c] * 100 - mv[i].size;
+        else if (ps->mode == 1) mv[i].key = -mv[i].size;
+        else if (ps->mode == 2) mv[i].key = mv[i].size;
+        else mv[i].key = mv[i].cell;
+    }
+    for (i = 1; i < nm; i++) {
+        struct sgs_move t = mv[i];
+        for (j = i-1; j >= 0 && mv[j].key > t.key; j--) mv[j+1] = mv[j];
+        mv[j+1] = t;
+    }
+    for (i = 0; i < nm && !ok; i++) {
+        sgs_group(b, w, h, mv[i].cell, grp, stack);
+        sgs_apply(b, w, h, grp, nb);
+        ps->path[depth] = mv[i].cell;
+        if (sgs_dfs(ps, nb, depth + 1)) ok = true;
+        if (ps->budget <= 0) break;
+    }
+    sfree(grp); sfree(seenc); sfree(nb); sfree(stack);
+    return ok;
+}
+
+/* returns number of moves in path, or 0 */
+static int sgs_solve(const unsigned char *start, int w, int h, int *path)
+{
+    struct sgs ps;
+    int n = w*h, ok = 0, m;
+    ps.w = w; ps.h = h; ps.n = n; ps.cap = 1 << 21;
+    ps.seen = snewn(ps.cap, unsigned long long);
+    ps.path = path;
+    for (m = 0; m < 4 && !ok; m++) {
+        ps.mode = m;
+        memset(ps.seen, 0, ps.cap * sizeof(unsigned long long));
+        ps.budget = 1200000;
+        ok = sgs_dfs(&ps, start, 0);
+    }
+    sfree(ps.seen);
+    return ok;
+}
+
+static int *sg_plan = NULL;
+static unsigned long long *sg_plan_hash = NULL;
+static int sg_plan_len = 0, sg_plan_n = 0;
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int w = curr->params.w, h = curr->params.h, n = w*h, i, len = 0, k;
+    unsigned char *b = snewn(n, unsigned char), *grp = snewn(n, unsigned char);
+    unsigned char *nb = snewn(n, unsigned char);
+    int *stack = snewn(n, int), *path = snewn(n + 1, int);
+    unsigned long long hc;
+    char *out = NULL;
+    int cell = -1;
+
+    for (i = 0; i < n; i++) b[i] = curr->tiles[i] & TILE_COLMASK;
+    hc = sgs_hash(b, n);
+    if (sg_plan && sg_plan_n == n)
+        for (i = 0; i < sg_plan_len; i++)
+            if (sg_plan_hash[i] == hc) { cell = sg_plan[i]; break; }
+    if (cell < 0) {
+        int ok = sgs_solve(b, w, h, path);
+        if (ok) {
+            /* the DFS leaves the successful path in path[]; find its length by replay */
+            memcpy(nb, b, n);
+            sfree(sg_plan); sfree(sg_plan_hash);
+            sg_plan = snewn(n + 1, int);
+            sg_plan_hash = snewn(n + 1, unsigned long long);
+            for (k = 0; ; k++) {
+                int left = 0;
+                for (i = 0; i < n; i++) if (nb[i]) left++;
+                if (!left) break;
+                sg_plan[k] = path[k];
+                sg_plan_hash[k] = sgs_hash(nb, n);
+                sgs_group(nb, w, h, path[k], grp, stack);
+                sgs_apply(nb, w, h, grp, b);
+                memcpy(nb, b, n);
+            }
+            len = k;
+            sg_plan_len = len; sg_plan_n = n;
+            cell = sg_plan[0];
+        }
+    }
+    if (cell < 0) {
+        *error = "No way to clear the board found from here; try undoing some moves";
+    } else {
+        int sz, pos = 0;
+        for (i = 0; i < n; i++) b[i] = curr->tiles[i] & TILE_COLMASK;
+        sz = sgs_group(b, w, h, cell, grp, stack);
+        out = snewn(sz * 8 + 4, char);
+        out[pos++] = 'M';
+        for (i = 0; i < n; i++)
+            if (grp[i]) pos += sprintf(out + pos, pos > 1 ? ",%d" : "%d", i);
+    }
+    sfree(b); sfree(grp); sfree(nb); sfree(stack); sfree(path);
+    return out;
+}
+
 #ifdef COMBINED
 #define thegame samegame
 #endif
@@ -1700,4 +1894,5 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };

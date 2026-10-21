@@ -1752,6 +1752,326 @@ static int game_status(const game_state *state)
     return state->completed ? +1 : 0;
 }
 
+
+/* ----------------------------------------------------------------------
+ * Next-step hint: breadth-first search over (square, face colours, blue
+ * squares).  Rolling in a direction always maps a square to another square
+ * and permutes the face colours in a way that depends only on the square and
+ * direction, so those transitions are probed once with execute_move().
+ */
+struct cb_trans { int dest; int *perm; };
+
+struct cb_search {
+    int nf, nsq, keylen, i0;
+    struct cb_trans *tr;               /* nsq * 4 */
+    unsigned char *keys;
+    int *parent;
+    unsigned char *dir;
+    int count, cap;
+    int *tab;
+    size_t tabcap;
+};
+
+static unsigned long long cb_hash(const unsigned char *k, int n)
+{
+    unsigned long long x = 1469598103934665603ULL;
+    int i;
+    for (i = 0; i < n; i++) { x ^= k[i]; x *= 1099511628211ULL; }
+    return x ? x : 1;
+}
+
+static int cb_find(struct cb_search *cs, const unsigned char *k)
+{
+    size_t i = (size_t)(cb_hash(k, cs->keylen) % cs->tabcap);
+    while (cs->tab[i]) {
+        if (!memcmp(cs->keys + (size_t)(cs->tab[i]-1) * cs->keylen, k, cs->keylen))
+            return cs->tab[i] - 1;
+        i = (i + 1) % cs->tabcap;
+    }
+    return -1 - (int)i;               /* free slot, encoded */
+}
+
+static void cb_decode(const struct cb_search *cs, const unsigned char *k,
+                      int *cur, unsigned long *fc, unsigned char *sq)
+{
+    int i;
+    *cur = k[0] | (k[1] << 8);
+    *fc = k[2] | (k[3] << 8) | ((unsigned long)k[4] << 16);
+    for (i = 0; i < cs->nsq; i++) sq[i] = (k[5 + i/8] >> (i%8)) & 1;
+}
+
+static void cb_encode(const struct cb_search *cs, unsigned char *k, int cur,
+                      unsigned long fc, const unsigned char *sq)
+{
+    int i;
+    memset(k, 0, cs->keylen);
+    k[0] = cur & 255; k[1] = cur >> 8;
+    k[2] = fc & 255; k[3] = (fc >> 8) & 255; k[4] = (fc >> 16) & 255;
+    for (i = 0; i < cs->nsq; i++) if (sq[i]) k[5 + i/8] |= 1 << (i%8);
+}
+
+struct cb_cand { long sc; int idx; };
+static int cb_cand_cmp(const void *a, const void *b)
+{
+    const struct cb_cand *x = a, *y = b;
+    return x->sc < y->sc ? -1 : x->sc > y->sc ? 1 : x->idx - y->idx;
+}
+
+static int *cb_plan = NULL;
+static unsigned long long *cb_plan_hash = NULL;
+static int cb_plan_len = 0;
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    static const char dirch[4] = { 'L', 'R', 'U', 'D' };
+    struct cb_search cs;
+    int nf = curr->solid->nfaces, nsq = curr->grid->nsquares;
+    int i, d, k, goal = -1, head = 0;
+    unsigned char *tk, *sq, *key0;
+    unsigned long fc0 = 0;
+    char buf[2];
+    unsigned long long hc;
+
+    if (curr->completed) { *error = "Already solved"; return NULL; }
+    cs.nf = nf; cs.nsq = nsq; cs.keylen = 5 + (nsq + 7) / 8;
+    cs.i0 = lowest_face(curr->solid);
+    key0 = snewn(cs.keylen, unsigned char);
+    sq = snewn(nsq, unsigned char);
+    tk = snewn(cs.keylen, unsigned char);
+    for (i = 0; i < nsq; i++) sq[i] = GET_SQUARE(curr, i);
+    for (i = 0; i < nf; i++) if (curr->facecolours[i]) fc0 |= 1UL << i;
+    cb_encode(&cs, key0, curr->current, fc0, sq);
+    hc = cb_hash(key0, cs.keylen);
+
+    if (cb_plan)
+        for (i = 0; i < cb_plan_len; i++)
+            if (cb_plan_hash[i] == hc) {
+                buf[0] = dirch[cb_plan[i]]; buf[1] = 0;
+                sfree(key0); sfree(sq); sfree(tk);
+                return dupstr(buf);
+            }
+
+    /* probe transitions */
+    cs.tr = snewn(nsq * 4, struct cb_trans);
+    for (i = 0; i < nsq; i++) for (d = 0; d < 4; d++) {
+        game_state *p = dup_game(curr), *r;
+        struct cb_trans *t = &cs.tr[i*4+d];
+        char mv[2];
+        int *seen = snewn(nf + 1, int);
+        t->dest = -1; t->perm = NULL;
+        p->current = i; p->completed = 0;
+        memset(p->bluemask, 0, (nsq + 31) / 32 * sizeof(unsigned long));
+        for (k = 0; k < nf; k++) p->facecolours[k] = k + 1;
+        mv[0] = dirch[d]; mv[1] = 0;
+        r = execute_move(p, mv);
+        if (r) {
+            t->dest = r->current;
+            t->perm = snewn(nf, int);
+            memset(seen, 0, (nf + 1) * sizeof(int));
+            for (k = 0; k < nf; k++) {
+                t->perm[k] = r->facecolours[k] - 1;
+                if (k != cs.i0 && t->perm[k] >= 0) seen[t->perm[k]] = 1;
+            }
+            for (k = 0; k < nf; k++) if (!seen[k]) t->perm[cs.i0] = k;
+            free_game(r);
+        }
+        sfree(seen);
+        free_game(p);
+    }
+
+    cs.cap = 1 << 16; cs.count = 0;
+    cs.keys = snewn((size_t)cs.cap * cs.keylen, unsigned char);
+    cs.parent = snewn(cs.cap, int);
+    cs.dir = snewn(cs.cap, unsigned char);
+    cs.tabcap = 1 << 18;
+    cs.tab = snewn(cs.tabcap, int);
+    memset(cs.tab, 0, cs.tabcap * sizeof(int));
+    {
+        int slot = cb_find(&cs, key0);
+        memcpy(cs.keys, key0, cs.keylen);
+        cs.parent[0] = -1; cs.dir[0] = 0; cs.count = 1;
+        cs.tab[-1 - slot] = 1;
+    }
+    while (head < cs.count && goal < 0 && cs.count < 2500000) {
+        int cur; unsigned long fc;
+        unsigned char *nsqa = snewn(nsq, unsigned char);
+        cb_decode(&cs, cs.keys + (size_t)head * cs.keylen, &cur, &fc, sq);
+        for (d = 0; d < 4 && goal < 0; d++) {
+            struct cb_trans *t = &cs.tr[cur*4+d];
+            unsigned long nfc = 0;
+            int j, slot;
+            if (t->dest < 0) continue;
+            for (k = 0; k < nf; k++)
+                if ((fc >> t->perm[k]) & 1) nfc |= 1UL << k;
+            memcpy(nsqa, sq, nsq);
+            j = (nfc >> cs.i0) & 1;
+            if (nsqa[t->dest]) nfc |= 1UL << cs.i0; else nfc &= ~(1UL << cs.i0);
+            nsqa[t->dest] = j;
+            cb_encode(&cs, tk, t->dest, nfc, nsqa);
+            slot = cb_find(&cs, tk);
+            if (slot >= 0) continue;
+            if (cs.count >= cs.cap) {
+                cs.cap *= 2;
+                cs.keys = sresize(cs.keys, (size_t)cs.cap * cs.keylen, unsigned char);
+                cs.parent = sresize(cs.parent, cs.cap, int);
+                cs.dir = sresize(cs.dir, cs.cap, unsigned char);
+            }
+            if ((size_t)(cs.count + 1) * 2 > cs.tabcap) {
+                size_t x;
+                sfree(cs.tab);
+                cs.tabcap *= 2;
+                cs.tab = snewn(cs.tabcap, int);
+                memset(cs.tab, 0, cs.tabcap * sizeof(int));
+                for (x = 0; x < (size_t)cs.count; x++) {
+                    size_t pos = (size_t)(cb_hash(cs.keys + x * cs.keylen, cs.keylen) % cs.tabcap);
+                    while (cs.tab[pos]) pos = (pos + 1) % cs.tabcap;
+                    cs.tab[pos] = (int)x + 1;
+                }
+                slot = cb_find(&cs, tk);
+            }
+            memcpy(cs.keys + (size_t)cs.count * cs.keylen, tk, cs.keylen);
+            cs.parent[cs.count] = head; cs.dir[cs.count] = d;
+            cs.tab[-1 - slot] = cs.count + 1;
+            if (nfc == (1UL << nf) - 1) goal = cs.count;
+            cs.count++;
+        }
+        sfree(nsqa);
+        head++;
+    }
+
+    if (goal < 0) {
+        /* BFS was too big (large solids): beam search guided by the number of
+         * faces still lacking blue and the distance to the nearest blue square. */
+        int *dist = snewn(nsq * nsq, int), a, b;
+        int *front = snewn(1, int), nfront = 1, *nxt = NULL, nnxt;
+        int layers = 0, bw = 6000;
+        struct cb_cand *cand = NULL;
+        for (a = 0; a < nsq; a++) {
+            int *q = snewn(nsq, int), qh = 0, qt = 0;
+            for (b = 0; b < nsq; b++) dist[a*nsq+b] = -1;
+            dist[a*nsq+a] = 0; q[qt++] = a;
+            while (qh < qt) {
+                int u = q[qh++];
+                for (d = 0; d < 4; d++) {
+                    int v = cs.tr[u*4+d].dest;
+                    if (v >= 0 && dist[a*nsq+v] < 0) { dist[a*nsq+v] = dist[a*nsq+u] + 1; q[qt++] = v; }
+                }
+            }
+            sfree(q);
+        }
+        memset(cs.tab, 0, cs.tabcap * sizeof(int));
+        {
+            int slot = cb_find(&cs, key0);
+            memcpy(cs.keys, key0, cs.keylen);
+            cs.parent[0] = -1; cs.dir[0] = 0; cs.count = 1;
+            cs.tab[-1 - slot] = 1;
+        }
+        front[0] = 0;
+        nxt = snewn(bw * 4 + 4, int);
+        cand = snewn(bw * 4 + 4, struct cb_cand);
+        while (nfront > 0 && goal < 0 && layers++ < 2000 && cs.count < 2000000) {
+            int fi;
+            nnxt = 0;
+            for (fi = 0; fi < nfront && goal < 0; fi++) {
+                int head2 = front[fi], cur; unsigned long fc;
+                unsigned char *nsqa = snewn(nsq, unsigned char);
+                cb_decode(&cs, cs.keys + (size_t)head2 * cs.keylen, &cur, &fc, sq);
+                for (d = 0; d < 4 && goal < 0; d++) {
+                    struct cb_trans *t = &cs.tr[cur*4+d];
+                    unsigned long nfc = 0;
+                    int j, slot;
+                    if (t->dest < 0) continue;
+                    for (k = 0; k < nf; k++)
+                        if ((fc >> t->perm[k]) & 1) nfc |= 1UL << k;
+                    memcpy(nsqa, sq, nsq);
+                    j = (nfc >> cs.i0) & 1;
+                    if (nsqa[t->dest]) nfc |= 1UL << cs.i0; else nfc &= ~(1UL << cs.i0);
+                    nsqa[t->dest] = j;
+                    cb_encode(&cs, tk, t->dest, nfc, nsqa);
+                    slot = cb_find(&cs, tk);
+                    if (slot >= 0) continue;
+                    if (cs.count >= cs.cap) {
+                        cs.cap *= 2;
+                        cs.keys = sresize(cs.keys, (size_t)cs.cap * cs.keylen, unsigned char);
+                        cs.parent = sresize(cs.parent, cs.cap, int);
+                        cs.dir = sresize(cs.dir, cs.cap, unsigned char);
+                    }
+                    if ((size_t)(cs.count + 1) * 2 > cs.tabcap) {
+                        size_t x;
+                        sfree(cs.tab);
+                        cs.tabcap *= 2;
+                        cs.tab = snewn(cs.tabcap, int);
+                        memset(cs.tab, 0, cs.tabcap * sizeof(int));
+                        for (x = 0; x < (size_t)cs.count; x++) {
+                            size_t pos = (size_t)(cb_hash(cs.keys + x * cs.keylen, cs.keylen) % cs.tabcap);
+                            while (cs.tab[pos]) pos = (pos + 1) % cs.tabcap;
+                            cs.tab[pos] = (int)x + 1;
+                        }
+                        slot = cb_find(&cs, tk);
+                    }
+                    memcpy(cs.keys + (size_t)cs.count * cs.keylen, tk, cs.keylen);
+                    cs.parent[cs.count] = head2; cs.dir[cs.count] = d;
+                    cs.tab[-1 - slot] = cs.count + 1;
+                    if (nfc == (1UL << nf) - 1) goal = cs.count;
+                    if (nnxt < bw * 4) {
+                        int missing = 0, nearest = 1000;
+                        for (k = 0; k < nf; k++) if (!((nfc >> k) & 1)) missing++;
+                        for (k = 0; k < nsq; k++)
+                            if (nsqa[k] && dist[t->dest*nsq+k] >= 0 && dist[t->dest*nsq+k] < nearest)
+                                nearest = dist[t->dest*nsq+k];
+                        cand[nnxt].sc = missing * 1000L + (nearest == 1000 ? 500 : nearest);
+                        cand[nnxt].idx = cs.count;
+                        nxt[nnxt++] = cs.count;
+                    }
+                    cs.count++;
+                }
+                sfree(nsqa);
+            }
+            /* keep the best bw candidates */
+            {
+                int x;
+                qsort(cand, nnxt, sizeof(cand[0]), cb_cand_cmp);
+                nfront = nnxt < bw ? nnxt : bw;
+                front = sresize(front, nfront + 1, int);
+                for (x = 0; x < nfront; x++) front[x] = cand[x].idx;
+            }
+        }
+        sfree(dist); sfree(front); sfree(nxt); sfree(cand);
+    }
+
+    {
+        char *res = NULL;
+        if (goal < 0) {
+            *error = "No solution found from here; try undoing some moves";
+        } else {
+            int len = 0, n = goal;
+            int *rev;
+            while (cs.parent[n] >= 0) { len++; n = cs.parent[n]; }
+            rev = snewn(len, int);
+            n = goal;
+            for (i = len - 1; i >= 0; i--) { rev[i] = n; n = cs.parent[n]; }
+            sfree(cb_plan); sfree(cb_plan_hash);
+            cb_plan = snewn(len, int);
+            cb_plan_hash = snewn(len, unsigned long long);
+            cb_plan_len = len;
+            /* hash of the state before each move = key of the parent */
+            n = 0;
+            for (i = 0; i < len; i++) {
+                cb_plan[i] = cs.dir[rev[i]];
+                cb_plan_hash[i] = cb_hash(cs.keys + (size_t)(i == 0 ? 0 : rev[i-1]) * cs.keylen, cs.keylen);
+            }
+            buf[0] = dirch[cb_plan[0]]; buf[1] = 0;
+            res = dupstr(buf);
+            sfree(rev);
+        }
+        for (i = 0; i < nsq * 4; i++) sfree(cs.tr[i].perm);
+        sfree(cs.tr); sfree(cs.keys); sfree(cs.parent); sfree(cs.dir); sfree(cs.tab);
+        sfree(key0); sfree(sq); sfree(tk);
+        return res;
+    }
+}
+
 #ifdef COMBINED
 #define thegame cube
 #endif
@@ -1800,4 +2120,5 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
     0,				       /* flags */
+    hint_game,
 };
