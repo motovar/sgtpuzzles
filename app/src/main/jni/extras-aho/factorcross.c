@@ -2268,7 +2268,7 @@ static void game_redraw(drawing *dr, game_drawstate *ds, const game_state *oldst
 
     {
         char hbuf[560];
-        if (ui->show_combos) fc_hint_text(state, ui, hbuf, sizeof hbuf);
+        if (ui->show_combos) { hbuf[0] = 1; fc_hint_text(state, ui, hbuf + 1, sizeof hbuf - 1); }
         else hbuf[0] = 0;
         status_bar(dr, hbuf);
     }

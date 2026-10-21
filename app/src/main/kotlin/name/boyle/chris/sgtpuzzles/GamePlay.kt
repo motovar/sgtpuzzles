@@ -83,8 +83,6 @@ import name.boyle.chris.sgtpuzzles.backend.GameEngineImpl.Companion.getDefaultPa
 import name.boyle.chris.sgtpuzzles.backend.GameEngineImpl.Companion.getPrefs
 import name.boyle.chris.sgtpuzzles.backend.GameEngineImpl.Companion.identifyBackend
 import name.boyle.chris.sgtpuzzles.backend.INERTIA
-import name.boyle.chris.sgtpuzzles.backend.KAKURO
-import name.boyle.chris.sgtpuzzles.backend.FACTORCROSS
 import name.boyle.chris.sgtpuzzles.backend.MINES
 import name.boyle.chris.sgtpuzzles.backend.NET
 import name.boyle.chris.sgtpuzzles.backend.PALISADE
@@ -1311,20 +1309,30 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
 
     @UsedByJNI
     override fun setStatus(status: String) {
+        // Kakuro / Factorcross combination helper: the C side prefixes its text with \u0001.
+        // Reserve a fixed-height, scrollable area so the puzzle never moves or resizes.
+        val helper = status.startsWith("\u0001")
+        val shown = if (helper) status.substring(1) else status
         statusBar.apply {
-            text = status.ifEmpty { " " } // Ensure consistent height
-            // Kakuro's combination helper is multi-line: reserve a fixed height
-            // so the puzzle is not resized as the text changes.
-            if ((currentBackend === KAKURO || currentBackend === FACTORCROSS) && status.isNotEmpty()) {
-                setLines(3)
-                ellipsize = android.text.TextUtils.TruncateAt.END
+            if (statusDefaultSizePx == 0f) statusDefaultSizePx = textSize
+            text = shown.ifEmpty { " " } // Ensure consistent height
+            if (helper) {
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, statusDefaultSizePx * 0.8f)
+                setLines(HELPER_LINES)
+                ellipsize = null
+                movementMethod = android.text.method.ScrollingMovementMethod.getInstance()
+                scrollTo(0, 0)
             } else {
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, statusDefaultSizePx)
                 minLines = 0; maxLines = Int.MAX_VALUE
+                movementMethod = null
             }
             importantForAccessibility =
                 if (status.isEmpty()) View.IMPORTANT_FOR_ACCESSIBILITY_NO else View.IMPORTANT_FOR_ACCESSIBILITY_YES
         }
     }
+
+    private var statusDefaultSizePx = 0f
 
     @UsedByJNI
     override fun requestTimer(on: Boolean) {
@@ -1500,6 +1508,7 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
     }
 
     companion object {
+        private const val HELPER_LINES = 6
         private const val TAG = "GamePlay"
         const val OUR_SCHEME = "sgtpuzzles"
         const val MIME_TYPE = "text/prs.sgtatham.puzzles"

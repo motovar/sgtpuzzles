@@ -3209,7 +3209,8 @@ static void game_redraw(drawing *dr, game_drawstate *ds, const game_state *oldst
 #else
     {
         char hint[560];
-        if (ui->show_hints) kakuro_hint_text(state, ui, hint, sizeof hint);
+        /* leading \001 tells the front end that the helper is active */
+        if (ui->show_hints) { hint[0] = 1; kakuro_hint_text(state, ui, hint + 1, sizeof hint - 1); }
         else hint[0] = 0;
         status_bar(dr, hint);
     }
