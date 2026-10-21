@@ -250,6 +250,9 @@ static const char *validate_params(const game_params *params, bool full)
     if (params->nosame_mode) {
       if (params->max < 7 || params->max > MAXNUM)
         return "In no-same mode, max slot value must be between 7 and " STR(MAXNUM);
+    } else if (params->oddeven_mode) {
+      if (params->max < 6 || params->max > MAXNUM)
+        return "In odd/even mode, max slot value must be between 6 and " STR(MAXNUM);
     } else {
       if (params->max < 5 || params->max > MAXNUM)
         return "Maximum slot value must be between 5 and " STR(MAXNUM);

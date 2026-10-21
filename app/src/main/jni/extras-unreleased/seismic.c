@@ -241,6 +241,10 @@ static const char *validate_params(const game_params *params, bool full)
 		return "Width and height must be at least 4";
 	if (params->diff >= DIFFCOUNT)
 		return "Unknown difficulty rating";
+	if (params->mode == MODE_TECTONIC && params->w * params->h > 81)
+		return "Tectonic grids can have at most 81 squares (9x9)";
+	if (params->mode != MODE_TECTONIC && params->w * params->h > 100)
+		return "Seismic grids can have at most 100 squares (10x10)";
 
 	return NULL;
 }

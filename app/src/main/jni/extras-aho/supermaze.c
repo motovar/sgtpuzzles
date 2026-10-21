@@ -1582,7 +1582,7 @@ and Complete when all doors are set and the room has a final domain.
 static SmPowerRoom** makepowerstates(const game_params *params, random_state *rs)
 {
   int ind, dom, rdir, count, dom1, dom2;
-  int bnind, bndir;
+  int bnind, bndir, nbreaks;
   int tmpscore, *maxscore, *maxind, *maxdir;
   int i, j, nn;
   float prob;
@@ -1678,6 +1678,7 @@ static SmPowerRoom** makepowerstates(const game_params *params, random_state *rs
   }
 
   count = 0;
+  nbreaks = 0;
   while (1) {
     while (numpool) { /* As long as there are rooms in the pool */
       /* Draw a room, determine doors, put new rooms in pool */
@@ -1727,9 +1728,14 @@ static SmPowerRoom** makepowerstates(const game_params *params, random_state *rs
           ind--;
       }
     prob = uniform(rs)*domprob[dom];
-    for (j=0; pooldom[j] != dom || prob > poolprob[j]; j++)
+    for (j=0; j < numpool-1 && (pooldom[j] != dom || prob > poolprob[j]); j++)
       if (pooldom[j] == dom)
         prob -= poolprob[j];
+    if (pooldom[j] != dom) { /* rounding left us on the wrong domain: take the last of it */
+      for (j=numpool-1; j>0 && pooldom[j] != dom; j--);
+    }
+    if (++nbreaks > 20*num*ndoors)
+      goto failure;
     /* no equalization of breakup
     for (i=1; i<MAXDOMAIN+1; i++) {
       domprob[0] += domprob[i];
@@ -2367,9 +2373,17 @@ static char *new_game_desc(const game_params *params, random_state *rs,
   int i, sz, hexlen, nfloors, nrooms, nswitches, dprop, solcount;
   SuperMaze* maze;
   SmPowerRoom** states;
-  do {
-    states = makepowerstates(params, rs);
-  } while (!states);
+  {
+    /* The 'difficult' layouts with many keys/levers are very rarely
+     * generated; after a number of failures settle for a normal layout. */
+    game_params relaxed = *params;
+    int attempts = 0;
+    relaxed.difficult = 0;
+    do {
+      states = makepowerstates(attempts < 10 ? params : &relaxed, rs);
+      attempts++;
+    } while (!states);
+  }
   maze = makesupermaze(states, params, rs);
   solcount = countsolutionstates(states, params, aux);
   if (!solcount) return 0; /* dummy statement to satisfy picky compiler... */
