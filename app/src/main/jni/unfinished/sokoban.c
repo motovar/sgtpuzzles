@@ -745,7 +745,37 @@ static char *new_game_desc(const game_params *params, random_state *rs,
      * many moves to try?
      */
     grid = snewn(w*h, unsigned char);
-    sokoban_generate(w, h, grid, w*h, false, rs);
+    {
+        /*
+         * Generate a few candidates and keep the one that uses the
+         * most floor (fewest unused squares), then open up much of
+         * the unused area next to the used floor so the level is not
+         * a maze of thick walls. Extra floor never breaks the
+         * reverse-play solution.
+         */
+        unsigned char *cand = snewn(w*h, unsigned char);
+        int best = -1, c, pass, x, y;
+        for (c = 0; c < 4; c++) {
+            int used = 0;
+            sokoban_generate(w, h, cand, w*h, false, rs);
+            for (i = 0; i < w*h; i++)
+                if (cand[i] != INITIAL && cand[i] != WALL) used++;
+            if (used > best) { best = used; memcpy(grid, cand, w*h); }
+        }
+        sfree(cand);
+        for (pass = 0; pass < 2; pass++)
+            for (y = 1; y < h-1; y++)
+                for (x = 1; x < w-1; x++) {
+                    int k = y*w+x, d, adj = 0;
+                    if (grid[k] != INITIAL) continue;
+                    for (d = 0; d < 4; d++) {
+                        int v = grid[(y+DY(d))*w + x+DX(d)];
+                        if (v != INITIAL && v != WALL) adj = 1;
+                    }
+                    if (adj && random_upto(rs, 100) < 50)
+                        grid[k] = SPACE;
+                }
+    }
 
     desclen = descpos = descsize = 0;
     desc = NULL;
