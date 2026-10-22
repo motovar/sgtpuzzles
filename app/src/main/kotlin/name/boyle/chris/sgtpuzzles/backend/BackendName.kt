@@ -39,7 +39,7 @@ sealed class BackendName(
      * Note that if a hardware D-pad or trackball is present, these are ignored.
      */
     val isArrowsVisibleByDefault by lazy {
-        this in setOf(BLACKBOX, FLOOD, INERTIA, MINES, PATTERN, SLANT, TRACKS)
+        this in setOf(BLACKBOX, FLOOD, INERTIA, MINES, PATTERN, SLANT, SOKOBAN, TRACKS)
     }
 
     /**
@@ -65,6 +65,9 @@ sealed class BackendName(
             // Extra puzzles (extras-*) where dragging draws something (paths, lines, ranges).
             ASCENT, BOATS, BRICKS, CLUSTERS, FLOW, ROME, SPOKES, STICKS, WALLS -> REVERT_OFF_SCREEN
 
+            // Games from upstream's 'unfinished' directory.
+            GROUP, SEPARATE, SLIDE -> REVERT_OFF_SCREEN
+
             // For games where dragging something off the board would be harmful, revert by
             // dragging back to the start of the drag instead.
             BRIDGES, GUESS, PEARL, SIGNPOST -> REVERT_TO_START
@@ -77,7 +80,7 @@ sealed class BackendName(
             UNRULY,
             // Extra puzzles (extras-*) that are driven by taps / the cursor only.
             ABCD, ALPHACRYPT, FACTORCROSS, IDENTIFIER, KAKURO, MATHRAX, SALAD, SEISMIC, STELLAR,
-            SUBSETS, SUPERMAZE, CROSSING, SOLO_PLUS, UNDEAD_PLUS, UNEQUAL_PLUS -> PREVENT
+            SUBSETS, SUPERMAZE, CROSSING, SOLO_PLUS, UNDEAD_PLUS, UNEQUAL_PLUS, SOKOBAN -> PREVENT
         }
     }
 
@@ -96,7 +99,7 @@ sealed class BackendName(
         this in setOf(
             ABCD, ALPHACRYPT, ASCENT, BOATS, BRICKS, CLUSTERS, CROSSING, FACTORCROSS, FLOW,
             IDENTIFIER, KAKURO, MATHRAX, ROME, SALAD, SEISMIC, SOLO_PLUS, SPOKES, STELLAR, STICKS,
-            SUBSETS, SUPERMAZE, UNDEAD_PLUS, UNEQUAL_PLUS, WALLS
+            SUBSETS, SUPERMAZE, UNDEAD_PLUS, UNEQUAL_PLUS, WALLS, GROUP, SLIDE, SOKOBAN, SEPARATE
         )
     }
 

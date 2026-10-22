@@ -7,6 +7,7 @@ All three source collections are MIT-licensed (see `LICENCE`, same text as upstr
 |---|---|---|---|
 | `extras-aho/` | https://github.com/Anders-Holst/sgt-puzzles-aho-extensions | 87efc95 | Alphacrypt, Factorcross, Identifier, Kakuro, Supermaze |
 | `extras-unreleased/` | https://github.com/x-sheep/puzzles-unreleased | 6e2d2b0 | ABCD, Ascent, Boats, Bricks, Clusters, Crossing, Mathrax, Rome, Salad, Seismic, Spokes, Sticks, Subsets |
+| `unfinished/` | Simon Tatham's upstream `unfinished/` directory (enabled via `PUZZLES_ENABLE_UNFINISHED`) | in tree | Group, Slide, Sokoban, Separate (Separate had only a generator upstream; its interface was written for this app) |
 | `extras-extended/` | https://github.com/SteffenBauer/sgtpuzzles-extended | aaba49f | Flow, Solo+, Stellar, Undead+, Unequal+, Walls |
 
 ## Changes made to the imported sources

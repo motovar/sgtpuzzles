@@ -206,6 +206,10 @@ Version %s"</string>
     <string name="desc_crossing">Place each number from the list into the crossword.</string>
     <string name="desc_factorcross">Fill the board so that the numbers\' products match the clues</string>
     <string name="desc_flow">Draw a connected path that matches the clues.</string>
+    <string name="desc_group">Complete the unfinished Cayley table of a group.</string>
+    <string name="desc_separate">Partition the grid into regions containing one of each letter.</string>
+    <string name="desc_slide">Slide the blocks to let the key block out.</string>
+    <string name="desc_sokoban">Push all the barrels into the target squares.</string>
     <string name="desc_identifier">Similar to Battleships, but with arbitrary shapes</string>
     <string name="desc_kakuro">Fill the board so that unique numbers sum up to each clue</string>
     <string name="desc_mathrax">Place each number according to the arithmetic clues.</string>

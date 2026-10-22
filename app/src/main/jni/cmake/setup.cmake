@@ -1,4 +1,4 @@
-set(PUZZLES_ENABLE_UNFINISHED ""
+set(PUZZLES_ENABLE_UNFINISHED "group;slide;sokoban;separate"
   CACHE STRING "List of puzzles in the 'unfinished' subdirectory \
 to build as if official (separated by ';')")
 

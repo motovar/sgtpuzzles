@@ -927,9 +927,10 @@ static void free_ui(game_ui *ui)
 {
 }
 
-static void game_changed_state(game_ui *ui, const game_state *oldstate,
+static bool game_changed_state(game_ui *ui, const game_state *oldstate,
                                const game_state *newstate)
 {
+    return newstate->completed && oldstate && !oldstate->completed;
 }
 
 struct game_drawstate {
@@ -1419,6 +1420,7 @@ static bool game_timing_state(const game_state *state, game_ui *ui)
     return true;
 }
 
+#ifndef NO_PRINTING
 static void game_print_size(const game_params *params, const game_ui *ui,
                             float *x, float *y)
 {
@@ -1428,13 +1430,14 @@ static void game_print(drawing *dr, const game_state *state, const game_ui *ui,
                        int tilesize)
 {
 }
+#endif
 
 #ifdef COMBINED
 #define thegame sokoban
 #endif
 
 const struct game thegame = {
-    "Sokoban", NULL, NULL,
+    "Sokoban", "games.sokoban", "sokoban",
     default_params,
     game_fetch_preset, NULL,
     decode_params,
@@ -1457,6 +1460,7 @@ const struct game thegame = {
     NULL, /* encode_ui */
     NULL, /* decode_ui */
     NULL, /* game_request_keys */
+    NULL, /* android_cursor_visibility */
     game_changed_state,
     NULL, /* current_key_label */
     interpret_move,
@@ -1470,7 +1474,9 @@ const struct game thegame = {
     game_flash_length,
     game_get_cursor_location,
     game_status,
+#ifndef NO_PRINTING
     false, false, game_print_size, game_print,
+#endif
     false,			       /* wants_statusbar */
     false, game_timing_state,
     0,				       /* flags */

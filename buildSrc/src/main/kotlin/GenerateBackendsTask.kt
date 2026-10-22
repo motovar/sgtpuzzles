@@ -43,7 +43,7 @@ abstract class GenerateBackendsTask: DefaultTask()  {
         // (extras-aho, extras-unreleased, extras-extended) have their own CMakeLists.txt next to
         // their sources.
         val jni = jniDir.get().asFile
-        val cmakeDirs = listOf(jni) + (jni.listFiles { f -> f.isDirectory && f.name.startsWith("extras-") }
+        val cmakeDirs = listOf(jni, jni.resolve("unfinished")) + (jni.listFiles { f -> f.isDirectory && f.name.startsWith("extras-") }
             ?.sortedBy { it.name } ?: listOf())
         val objectLines = cmakeDirs.filter { it.resolve("CMakeLists.txt").exists() }.flatMap { dir ->
             val cmakeText = dir.resolve("CMakeLists.txt").readText()

@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Separate</title>
+<link rel="ToC" href="index.html">
+<link rel="up" href="index.html">
+<style type="text/css">body { word-wrap: break-word; } img { max-width: 100%; } body.night { color: #dddddd; background: #000000; } body.night a:link { color: #8888ff; } body.night a:visited { color: #cc88ff; }</style></head>
+<body>
+<p><a href="index.html">Contents</a></p>
+<h1 id="separate">Separate</h1>
+<h3>Partition the grid into regions containing one of each letter</h3>
+<p>The grid is filled with letters. There are k different letters and each occurs the same number of times. Divide the grid into connected regions of k squares so that every region contains exactly one of each letter.</p>
+<p>This puzzle is based on a Nikoli puzzle ("Block Puzzle") and comes from the "unfinished" folder of Simon Tatham's collection, where only the generator existed. The playable interface was written for this app.</p>
+<h3>Separate controls</h3>
+<p>Drag your finger from one square across neighbouring squares to join them into a region: a thick bar is drawn between joined squares. If the first step of a drag starts on two squares that are already joined, the drag removes the joins instead (shown in orange). Dragging back over the squares you just crossed shortens the path. Long-press a square to detach it from all its neighbours.</p>
+<p>A region with the correct size and one of each letter is drawn in green; a region that has a repeated letter or is too large is drawn in red.</p>
+<p>With a keyboard, move the cursor with the arrow keys, press Enter to start a drag, move to extend it and press Enter again to apply it. Space detaches the square under the cursor.</p>
+<h3>Separate parameters</h3>
+<dl>
+<dt>Width, Height</dt><dd>Size of the grid in squares.</dd>
+<dt>Letters (region size)</dt><dd>The number of different letters k (2 to 12), which is also the size of every region. It must divide the number of squares.</dd>
+</dl>
+<h3>Status</h3>
+<p>Fully playable, with Solve and a logical next step. The generator is the slow part: the presets (up to 6x6 with 6 letters) take well under a second, but 7x7 with 7 letters and larger boards can take a long time or may not finish.</p>
+</body>
+</html>
