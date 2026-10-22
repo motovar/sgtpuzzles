@@ -1220,7 +1220,7 @@ static void free_ui(game_ui *ui)
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
                                const game_state *newstate)
 {
-    return newstate->completed && oldstate && !oldstate->completed;
+    return newstate->completed >= 0 && oldstate && oldstate->completed < 0 && !newstate->cheated;
 }
 
 #define PREFERRED_TILESIZE 32
@@ -2290,7 +2290,7 @@ static void game_get_cursor_location(const game_ui *ui,
 
 static int game_status(const game_state *state)
 {
-    return state->completed ? +1 : 0;
+    return state->completed >= 0 ? +1 : 0;
 }
 
 static bool game_timing_state(const game_state *state, game_ui *ui)
@@ -2309,6 +2309,28 @@ static void game_print(drawing *dr, const game_state *state, const game_ui *ui,
 {
 }
 #endif
+
+
+/* Next step: the first move of the shortest solution from here. */
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    char *sol = solve_game(curr, curr, NULL, error), *ret, *p;
+    int a, b, n;
+    if (!sol) return NULL;
+    if (sscanf(sol + 1, "%d-%d%n", &a, &b, &n) != 2) {
+        sfree(sol);
+        *error = "No next step found";
+        return NULL;
+    }
+    p = snewn(n + 2, char);
+    p[0] = 'M';
+    memcpy(p + 1, sol + 1, n);
+    p[n+1] = '\0';
+    ret = p;
+    sfree(sol);
+    return ret;
+}
 
 #ifdef COMBINED
 #define thegame slide
@@ -2358,6 +2380,7 @@ const struct game thegame = {
     true,			       /* wants_statusbar */
     false, game_timing_state,
     0,				       /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
