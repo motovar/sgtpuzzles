@@ -1482,6 +1482,22 @@ static int sk_canon(const game_state *s, int *prev, int *queue)
 }
 
 #define SK_MAXN 120000
+/* Simple deadlock: barrel off-target stuck in a wall corner. */
+static bool sk_dead(const game_state *s)
+{
+    int w = s->p.w, h = s->p.h, x, y;
+    for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
+        int v = s->grid[y*w+x];
+        bool wl, wr, wu, wd;
+        if (!IS_BARREL(v) || IS_ON_TARGET(v)) continue;
+        wl = x == 0 || s->grid[y*w+x-1] == WALL;
+        wr = x == w-1 || s->grid[y*w+x+1] == WALL;
+        wu = y == 0 || s->grid[(y-1)*w+x] == WALL;
+        wd = y == h-1 || s->grid[(y+1)*w+x] == WALL;
+        if ((wl || wr) && (wu || wd)) return true;
+    }
+    return false;
+}
 static int sk_heur(const game_state *s)
 {
     int w = s->p.w, h = s->p.h, n = w*h, i, j, tot = 0;
@@ -1571,6 +1587,7 @@ static char *hint_game(const game_state *orig, const game_state *curr,
                 m[0] = SK_MOVECH(d); m[1] = 0;
                 ns = execute_move(&t, m);
                 if (!ns) continue;
+                if (!ns->completed && sk_dead(ns)) { free_game(ns); continue; }
                 k = sk_hash(ns, sk_canon(ns, prev, queue));
                 p = k & (hcap-1);
                 while (hs[p] && hs[p] != k) p = (p+1) & (hcap-1);
