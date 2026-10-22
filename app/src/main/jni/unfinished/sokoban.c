@@ -1436,6 +1436,214 @@ static void game_print(drawing *dr, const game_state *state, const game_ui *ui,
 #define thegame sokoban
 #endif
 
+
+/* ---- Next-step hint: BFS over pushes (player position normalised). ---- */
+static const int sk_dx[4] = {-1, 0, 1, 0}, sk_dy[4] = {0, -1, 0, 1};
+#define SK_MOVECH(d) ((char)('5' - 3*sk_dy[d] + sk_dx[d]))
+
+/* Flood-fill walkable region; prev[] = direction used to reach cell (-1 root, -2 unseen). */
+static int sk_flood(const game_state *s, int *prev, int *queue)
+{
+    int w = s->p.w, h = s->p.h, n = w*h, i, qh = 0, qt = 0, d;
+    game_state t = *s;
+    for (i = 0; i < n; i++) prev[i] = -2;
+    prev[s->py*w + s->px] = -1;
+    queue[qt++] = s->py*w + s->px;
+    while (qh < qt) {
+        int c = queue[qh++];
+        t.px = c % w; t.py = c / w;
+        for (d = 0; d < 4; d++) {
+            int nc;
+            if (move_type(&t, sk_dx[d], sk_dy[d]) != 0) continue;
+            nc = (t.py + sk_dy[d]) * w + t.px + sk_dx[d];
+            if (prev[nc] != -2) continue;
+            prev[nc] = d;
+            queue[qt++] = nc;
+        }
+    }
+    return qt;
+}
+
+static unsigned long long sk_hash(const game_state *s, int canon)
+{
+    unsigned long long h = 1469598103934665603ULL;
+    int i, n = s->p.w * s->p.h;
+    for (i = 0; i < n; i++) { h ^= s->grid[i]; h *= 1099511628211ULL; }
+    h ^= (unsigned)canon; h *= 1099511628211ULL;
+    h ^= h >> 29;
+    return h ? h : 1;
+}
+
+static int sk_canon(const game_state *s, int *prev, int *queue)
+{
+    int qt = sk_flood(s, prev, queue), i, m = queue[0];
+    for (i = 0; i < qt; i++) if (queue[i] < m) m = queue[i];
+    return m;
+}
+
+#define SK_MAXN 120000
+static int sk_heur(const game_state *s)
+{
+    int w = s->p.w, h = s->p.h, n = w*h, i, j, tot = 0;
+    for (i = 0; i < n; i++) {
+        int v = s->grid[i], best = 1000;
+        if (!IS_BARREL(v) || IS_ON_TARGET(v)) continue;
+        for (j = 0; j < n; j++) {
+            int u = s->grid[j];
+            if ((u == TARGET || u == PIT || u == DEEP_PIT)) {
+                int d = abs(i%w - j%w) + abs(i/w - j/w);
+                if (d < best) best = d;
+            }
+        }
+        if (best == 1000) best = 0;
+        tot += best;
+    }
+    return tot;
+}
+static unsigned long long *sk_planh = NULL;
+static char *sk_planm = NULL;
+static int sk_plann = 0;
+
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int w = curr->p.w, h = curr->p.h, n = w*h;
+    unsigned long long hh = sk_hash(curr, 1 + curr->py*w + curr->px);
+    int i, head, tail, hcap = 1 << 20, found = -1;
+    game_state **nodes;
+    int *parent, *prev, *queue, *gcost, *heap, hn = 0, *key;
+    char **mv;
+    unsigned long long *hs;
+    char buf[2];
+
+    if (curr->completed) {
+        *error = "The puzzle is already solved";
+        return NULL;
+    }
+    for (i = 0; i < sk_plann; i++)
+        if (sk_planh[i] == hh) { buf[0] = sk_planm[i]; buf[1] = 0; return dupstr(buf); }
+
+    nodes = snewn(SK_MAXN, game_state *);
+    parent = snewn(SK_MAXN, int);
+    mv = snewn(SK_MAXN, char *);
+    hs = snewn(hcap, unsigned long long);
+    gcost = snewn(SK_MAXN, int); key = snewn(SK_MAXN, int); heap = snewn(SK_MAXN, int);
+    prev = snewn(n, int);
+    queue = snewn(n, int);
+    memset(hs, 0, hcap * sizeof(*hs));
+    nodes[0] = dup_game(curr); parent[0] = -1; mv[0] = NULL;
+    {
+        unsigned long long k = sk_hash(curr, sk_canon(curr, prev, queue));
+        unsigned p = k & (hcap-1);
+        hs[p] = k;
+    }
+    tail = 1; gcost[0] = 0; key[0] = 0; heap[hn++] = 0;
+    while (hn > 0 && found < 0) {
+        game_state *s;
+        {   /* pop min key */
+            int top = heap[0], x = 0;
+            heap[0] = heap[--hn];
+            for (;;) {
+                int l = 2*x+1, r = l+1, m = x;
+                if (l < hn && key[heap[l]] < key[heap[m]]) m = l;
+                if (r < hn && key[heap[r]] < key[heap[m]]) m = r;
+                if (m == x) break;
+                { int t = heap[x]; heap[x] = heap[m]; heap[m] = t; }
+                x = m;
+            }
+            head = top;
+        }
+        s = nodes[head];
+        int qt = sk_flood(s, prev, queue), qi;
+        int *myprev = snewn(n, int);
+        int *myq = snewn(n, int);
+        memcpy(myprev, prev, n * sizeof(int));
+        memcpy(myq, queue, qt * sizeof(int));
+        for (qi = 0; qi < qt && found < 0; qi++) {
+            int c = myq[qi], d;
+            game_state t = *s;
+            t.px = c % w; t.py = c / w;
+            for (d = 0; d < 4 && found < 0; d++) {
+                game_state *ns; char m[2]; unsigned long long k; unsigned p;
+                int len = 0, cc = c, l2;
+                char *path;
+                if (move_type(&t, sk_dx[d], sk_dy[d]) != 1) continue;
+                m[0] = SK_MOVECH(d); m[1] = 0;
+                ns = execute_move(&t, m);
+                if (!ns) continue;
+                k = sk_hash(ns, sk_canon(ns, prev, queue));
+                p = k & (hcap-1);
+                while (hs[p] && hs[p] != k) p = (p+1) & (hcap-1);
+                if (hs[p] == k || tail >= SK_MAXN) { free_game(ns); continue; }
+                hs[p] = k;
+                /* walking path from s to c, then the push */
+                while (myprev[cc] >= 0) {
+                    int dd = myprev[cc];
+                    len++;
+                    cc = (cc / w - sk_dy[dd]) * w + cc % w - sk_dx[dd];
+                }
+                path = snewn(len + 2, char);
+                path[len+1] = 0; path[len] = m[0];
+                cc = c; l2 = len;
+                while (myprev[cc] >= 0) {
+                    int dd = myprev[cc];
+                    path[--l2] = SK_MOVECH(dd);
+                    cc = (cc / w - sk_dy[dd]) * w + cc % w - sk_dx[dd];
+                }
+                nodes[tail] = ns; parent[tail] = head; mv[tail] = path;
+                gcost[tail] = gcost[head] + 1;
+                key[tail] = gcost[tail] + 4 * sk_heur(ns);
+                if (ns->completed) found = tail;
+                {   int x = hn++;
+                    heap[x] = tail;
+                    while (x > 0 && key[heap[(x-1)/2]] > key[heap[x]]) {
+                        int t = heap[x]; heap[x] = heap[(x-1)/2]; heap[(x-1)/2] = t;
+                        x = (x-1)/2;
+                    }
+                }
+                tail++;
+            }
+        }
+        sfree(myprev); sfree(myq);
+    }
+    sfree(sk_planh); sfree(sk_planm); sk_planh = NULL; sk_planm = NULL; sk_plann = 0;
+    if (found >= 0) {
+        int t, total = 0, pos;
+        char *all;
+        for (t = found; parent[t] >= 0; t = parent[t]) total += strlen(mv[t]);
+        all = snewn(total + 1, char);
+        pos = total; all[pos] = 0;
+        for (t = found; parent[t] >= 0; t = parent[t]) {
+            int l = strlen(mv[t]);
+            pos -= l; memcpy(all + pos, mv[t], l);
+        }
+        sk_planh = snewn(total, unsigned long long);
+        sk_planm = all;
+        sk_plann = total;
+        {
+            game_state *c = dup_game(curr);
+            for (i = 0; i < total; i++) {
+                char m[2] = { all[i], 0 };
+                game_state *nx;
+                sk_planh[i] = sk_hash(c, 1 + c->py*w + c->px);
+                nx = execute_move(c, m);
+                free_game(c);
+                c = nx;
+                if (!c) { sk_plann = i + 1; break; }
+            }
+            if (c) free_game(c);
+        }
+    }
+    for (i = 0; i < tail; i++) { free_game(nodes[i]); sfree(mv[i]); }
+    sfree(nodes); sfree(parent); sfree(mv); sfree(hs); sfree(prev); sfree(queue); sfree(gcost); sfree(key); sfree(heap);
+    if (found < 0) {
+        *error = "Search gave up";
+        return NULL;
+    }
+    buf[0] = sk_planm[0]; buf[1] = 0;
+    return dupstr(buf);
+}
+
 const struct game thegame = {
     "Sokoban", "games.sokoban", "sokoban",
     default_params,
@@ -1480,4 +1688,5 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, game_timing_state,
     0,				       /* flags */
+    hint_game,
 };

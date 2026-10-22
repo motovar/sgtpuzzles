@@ -2383,6 +2383,34 @@ static void game_print(drawing *dr, const game_state *state, const game_ui *ui,
 #define thegame group
 #endif
 
+static char *hint_game(const game_state *orig, const game_state *curr,
+                       const char **error)
+{
+    int w = orig->par.w, a = w*w, i, ret, pick = -1;
+    digit *soln = snewn(a, digit);
+    char buf[40];
+    memcpy(soln, orig->grid, a*sizeof(digit));
+    ret = solver(&orig->par, soln, DIFFCOUNT-1);
+    if (ret == diff_impossible || ret == diff_ambiguous) {
+        sfree(soln);
+        *error = "No unique solution";
+        return NULL;
+    }
+    for (i = 0; i < a; i++)
+        if (curr->grid[i] && curr->grid[i] != soln[i]) { pick = i; break; }
+    if (pick < 0)
+        for (i = 0; i < a; i++)
+            if (!curr->grid[i]) { pick = i; break; }
+    if (pick < 0) {
+        sfree(soln);
+        *error = "The puzzle is already solved";
+        return NULL;
+    }
+    sprintf(buf, "R%d,%d,%d", pick % w, pick / w, soln[pick]);
+    sfree(soln);
+    return dupstr(buf);
+}
+
 const struct game thegame = {
     "Group", "games.group", "group",
     default_params,
@@ -2427,6 +2455,7 @@ const struct game thegame = {
     false,			       /* wants_statusbar */
     false, game_timing_state,
     REQUIRE_RBUTTON | REQUIRE_NUMPAD,  /* flags */
+    hint_game,
 };
 
 #ifdef STANDALONE_SOLVER
