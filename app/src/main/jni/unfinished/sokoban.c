@@ -127,6 +127,12 @@ enum {
 struct game_params {
     int w, h;
     int gen;        /* 0 original, 1 boulders, 2 MCTS, 3 YASGen */
+    /* Boulders generator */
+    int bm_count, bm_attempts, bm_nodes;
+    /* MCTS generator */
+    int mc_time, mc_keep, mc_pick;
+    /* YASGen generator */
+    int yg_goals, yg_walls, yg_limit;
     /*
      * FIXME: a parameter involving degree of filling in?
      */
@@ -139,6 +145,13 @@ struct game_state {
     bool completed;
 };
 
+static void sokoban_gen_defaults(game_params *p)
+{
+    p->bm_count = 0; p->bm_attempts = 150; p->bm_nodes = 500;
+    p->mc_time = 0; p->mc_keep = 1; p->mc_pick = 0;
+    p->yg_goals = 0; p->yg_walls = 14; p->yg_limit = 400;
+}
+
 static game_params *default_params(void)
 {
     game_params *ret = snew(game_params);
@@ -146,6 +159,7 @@ static game_params *default_params(void)
     ret->w = 12;
     ret->h = 10;
     ret->gen = 0;
+    sokoban_gen_defaults(ret);
 
     return ret;
 }
@@ -163,9 +177,9 @@ static game_params *dup_params(const game_params *params)
 }
 
 static const struct game_params sokoban_presets[] = {
-    { 12, 10, 0 },
-    { 16, 12, 0 },
-    { 20, 16, 0 },
+    { 12, 10, 0, 0, 150, 500, 0, 1, 0, 0, 14, 400 },
+    { 16, 12, 0, 0, 150, 500, 0, 1, 0, 0, 14, 400 },
+    { 20, 16, 0, 0, 150, 500, 0, 1, 0, 0, 14, 400 },
 };
 
 static bool game_fetch_preset(int i, char **name, game_params **params)
@@ -197,9 +211,29 @@ static void decode_params(game_params *params, char const *string)
         while (*string && isdigit((unsigned char)*string)) string++;
     }
     params->gen = 0;
+    sokoban_gen_defaults(params);
     if (*string == 'g') {
-        params->gen = atoi(string + 1);
+        string++;
+        params->gen = atoi(string);
         if (params->gen < 0 || params->gen > 3) params->gen = 0;
+        while (*string && isdigit((unsigned char)*string)) string++;
+        while (*string) {
+            char key = *string++;
+            int v = atoi(string);
+            while (*string && isdigit((unsigned char)*string)) string++;
+            switch (key) {
+              case 'c': params->bm_count = v; break;
+              case 'a': params->bm_attempts = v; break;
+              case 'n': params->bm_nodes = v; break;
+              case 't': params->mc_time = v; break;
+              case 'k': params->mc_keep = v; break;
+              case 'p': params->mc_pick = v; break;
+              case 'o': params->yg_goals = v; break;
+              case 'w': params->yg_walls = v; break;
+              case 'l': params->yg_limit = v; break;
+              default: break;
+            }
+        }
     }
 }
 
@@ -208,8 +242,22 @@ static char *encode_params(const game_params *params, bool full)
     char data[256];
 
     sprintf(data, "%dx%d", params->w, params->h);
-    if (params->gen)
+    if (params->gen) {
+        game_params d;
+        char *p;
+        sokoban_gen_defaults(&d);
         sprintf(data + strlen(data), "g%d", params->gen);
+        p = data + strlen(data);
+        if (params->bm_count != d.bm_count) p += sprintf(p, "c%d", params->bm_count);
+        if (params->bm_attempts != d.bm_attempts) p += sprintf(p, "a%d", params->bm_attempts);
+        if (params->bm_nodes != d.bm_nodes) p += sprintf(p, "n%d", params->bm_nodes);
+        if (params->mc_time != d.mc_time) p += sprintf(p, "t%d", params->mc_time);
+        if (params->mc_keep != d.mc_keep) p += sprintf(p, "k%d", params->mc_keep);
+        if (params->mc_pick != d.mc_pick) p += sprintf(p, "p%d", params->mc_pick);
+        if (params->yg_goals != d.yg_goals) p += sprintf(p, "o%d", params->yg_goals);
+        if (params->yg_walls != d.yg_walls) p += sprintf(p, "w%d", params->yg_walls);
+        if (params->yg_limit != d.yg_limit) p += sprintf(p, "l%d", params->yg_limit);
+    }
 
     return dupstr(data);
 }
@@ -219,7 +267,7 @@ static config_item *game_configure(const game_params *params)
     config_item *ret;
     char buf[80];
 
-    ret = snewn(4, config_item);
+    ret = snewn(13, config_item);
 
     ret[0].name = "Width";
     ret[0].type = C_STRING;
@@ -236,8 +284,25 @@ static config_item *game_configure(const game_params *params)
     ret[2].u.choices.choicenames = ":Original:Boulders (NetHack style):MCTS:YASGen";
     ret[2].u.choices.selected = params->gen;
 
-    ret[3].name = NULL;
-    ret[3].type = C_END;
+#define STR_ITEM(N, NAME, VAL) do { \
+        ret[N].name = NAME; ret[N].type = C_STRING; \
+        sprintf(buf, "%d", VAL); ret[N].u.string.sval = dupstr(buf); } while (0)
+    STR_ITEM(3, "Boulders: number of boulders (0 = auto)", params->bm_count);
+    STR_ITEM(4, "Boulders: attempts", params->bm_attempts);
+    STR_ITEM(5, "Boulders: search nodes per attempt", params->bm_nodes);
+    STR_ITEM(6, "MCTS: search time in seconds (0 = auto)", params->mc_time);
+    STR_ITEM(7, "MCTS: levels to keep", params->mc_keep);
+    ret[8].name = "MCTS: level to use";
+    ret[8].type = C_CHOICES;
+    ret[8].u.choices.choicenames = ":Hardest:Random:Easiest";
+    ret[8].u.choices.selected = params->mc_pick;
+    STR_ITEM(9, "YASGen: number of goals (0 = auto)", params->yg_goals);
+    STR_ITEM(10, "YASGen: wall density in percent", params->yg_walls);
+    STR_ITEM(11, "YASGen: search limit (thousand positions)", params->yg_limit);
+#undef STR_ITEM
+
+    ret[12].name = NULL;
+    ret[12].type = C_END;
 
     return ret;
 }
@@ -249,6 +314,15 @@ static game_params *custom_params(const config_item *cfg)
     ret->w = atoi(cfg[0].u.string.sval);
     ret->h = atoi(cfg[1].u.string.sval);
     ret->gen = cfg[2].u.choices.selected;
+    ret->bm_count = atoi(cfg[3].u.string.sval);
+    ret->bm_attempts = atoi(cfg[4].u.string.sval);
+    ret->bm_nodes = atoi(cfg[5].u.string.sval);
+    ret->mc_time = atoi(cfg[6].u.string.sval);
+    ret->mc_keep = atoi(cfg[7].u.string.sval);
+    ret->mc_pick = cfg[8].u.choices.selected;
+    ret->yg_goals = atoi(cfg[9].u.string.sval);
+    ret->yg_walls = atoi(cfg[10].u.string.sval);
+    ret->yg_limit = atoi(cfg[11].u.string.sval);
 
     return ret;
 }
@@ -257,6 +331,26 @@ static const char *validate_params(const game_params *params, bool full)
 {
     if (params->w < 4 || params->h < 4)
 	return "Width and height must both be at least 4";
+    if (params->gen < 0 || params->gen > 3)
+        return "Unknown level generator";
+    if (params->bm_count < 0 || params->bm_count > 6)
+        return "Number of boulders must be between 0 and 6";
+    if (params->bm_attempts < 1 || params->bm_attempts > 2000)
+        return "Boulders attempts must be between 1 and 2000";
+    if (params->bm_nodes < 10 || params->bm_nodes > 5000)
+        return "Boulders search nodes must be between 10 and 5000";
+    if (params->mc_time < 0 || params->mc_time > 120)
+        return "MCTS search time must be between 0 and 120 seconds";
+    if (params->mc_keep < 1 || params->mc_keep > 50)
+        return "MCTS levels to keep must be between 1 and 50";
+    if (params->mc_pick < 0 || params->mc_pick > 2)
+        return "Unknown MCTS level choice";
+    if (params->yg_goals < 0 || params->yg_goals > 8)
+        return "YASGen number of goals must be between 0 and 8";
+    if (params->yg_walls < 0 || params->yg_walls > 30)
+        return "YASGen wall density must be between 0 and 30 percent";
+    if (params->yg_limit < 10 || params->yg_limit > 2000)
+        return "YASGen search limit must be between 10 and 2000 thousand positions";
 
     return NULL;
 }
@@ -754,7 +848,8 @@ static void sokoban_generate(int w, int h, unsigned char *grid, int moves,
 extern "C"
 #endif
 int sokoban_mcts_generate(int width, int height, unsigned long long seed,
-                          double timeout_sec, char *out, int outcap);
+                          double timeout_sec, int keep, int pick, unsigned rnd,
+                          char *out, int outcap);
 
 /* MCTS generator (lkseg/sokoban-level-generator-mcts). */
 static bool sokoban_gen_mcts(const game_params *params, random_state *rs,
@@ -779,7 +874,11 @@ static bool sokoban_gen_mcts(const game_params *params, random_state *rs,
            random_bits(rs, 31);
     buf = snewn(bw * bh * 2 + 16, char);
     if (!sokoban_mcts_generate(bw, bh, seed ? seed : 1,
-                               2.0 + 0.02 * bw * bh, buf, bw * bh * 2 + 16)) {
+                               params->mc_time > 0 ? (double)params->mc_time
+                                                   : 2.0 + 0.02 * bw * bh,
+                               params->mc_keep, params->mc_pick,
+                               random_bits(rs, 20),
+                               buf, bw * bh * 2 + 16)) {
         sfree(buf);
         return false;
     }
@@ -1048,7 +1147,7 @@ static void bm_move_boulder(struct boulder_maker *m, int depth,
                 for (k = 0; k < *nvisited; k++)
                     if (visitedKeys[k] == h) { seen = true; break; }
                 if (!seen) {
-                    if (*nvisited < 4000) visitedKeys[(*nvisited)++] = h;
+                    if (*nvisited < m->numNodes * 3 + 1000) visitedKeys[(*nvisited)++] = h;
                     bm_move_boulder(m, depth + 1, visitedKeys, nvisited);
                 }
             }
@@ -1097,7 +1196,7 @@ static bool bm_make(struct boulder_maker *m)
     bm_fill_rect(m, (struct bm_rect){c.x - 1, c.y - 1, c.x + 2, c.y + 2}, '.');
     if (m->fail) return false;
     m->curPos = start;
-    keys = snewn(4000, int);
+    keys = snewn(m->numNodes * 3 + 1000, int);
     bm_move_boulder(m, 0, keys, &nvis);
     sfree(keys);
     if (m->fail) return false;
@@ -1118,17 +1217,17 @@ static bool sokoban_gen_boulders(const game_params *params, random_state *rs,
 {
     int w = params->w, h = params->h, attempt, bestDepth = -1, i;
     char *bestGrid = NULL;
-    int nb = w / 4;
+    int nb = params->bm_count ? params->bm_count : w / 4;
     if (nb < 2) nb = 2;
     if (nb > 6) nb = 6;
     if (w < 10 || h < 6)
         return false;
 
-    for (attempt = 0; attempt < 150; attempt++) {
+    for (attempt = 0; attempt < params->bm_attempts; attempt++) {
         struct boulder_maker m;
         bool ok;
         memset(&m, 0, sizeof m);
-        m.rs = rs; m.W = w; m.H = h; m.nb = nb; m.numNodes = 500;
+        m.rs = rs; m.W = w; m.H = h; m.nb = nb; m.numNodes = params->bm_nodes;
         m.numRooms = 3; m.numDoors = 1; m.maxDepth = -1;
         m.level = snewn(w * h, char);
         m.best = snewn(w * h, char);
@@ -1191,7 +1290,7 @@ static bool sokoban_gen_yasgen(const game_params *params, random_state *rs,
         shuffle(cells, area, sizeof(int), rs);
         /* a few isolated wall blocks (never touching each other or the
          * outer ring, so the room stays connected) */
-        nwalls = area / 7;
+        nwalls = area * params->yg_walls / 100;
         for (i = 0; i < area && placed < nwalls; i++) {
             int c = cells[i], cx = c % bw, cy = c / bw, ok = 1, dx, dy;
             if (cx == 0 || cy == 0 || cx == bw-1 || cy == bh-1) continue;
@@ -1200,9 +1299,9 @@ static bool sokoban_gen_yasgen(const game_params *params, random_state *rs,
                     if (rows[(cy+dy)*bw + cx+dx] == '#') ok = 0;
             if (ok) { rows[c] = '#'; placed++; }
         }
-        ngoals = area / 14;
+        ngoals = params->yg_goals ? params->yg_goals : area / 14;
         if (ngoals < 2) ngoals = 2;
-        if (ngoals > 6) ngoals = 6;
+        if (ngoals > 8) ngoals = 8;
         k = 0;
         for (i = 0; i < area && k < ngoals; i++)
             if (rows[cells[i]] == ' ') { rows[cells[i]] = '.'; k++; }
@@ -1210,7 +1309,11 @@ static bool sokoban_gen_yasgen(const game_params *params, random_state *rs,
             if (rows[cells[i]] == ' ') { rows[cells[i]] = '@'; break; }
         sfree(cells);
         pushes = sokoban_yasgen_generate(bw, bh, rows,
-                                         random_bits(rs, 20), 24, 400000, out);
+                                         random_bits(rs, 20),
+                                         params->yg_limit * 56 / 1024 < 16 ? 16 :
+                                         params->yg_limit * 56 / 1024 > 160 ? 160 :
+                                         params->yg_limit * 56 / 1024,
+                                         params->yg_limit * 1000, out);
     }
     if (pushes <= 0) {
         sfree(rows); sfree(out);

@@ -3,7 +3,8 @@
 #include "allocator.h"
 
 extern "C" int sokoban_mcts_generate(int width, int height, unsigned long long seed,
-                                     double timeout_sec, char *out, int outcap)
+                                     double timeout_sec, int keep, int pick, unsigned rnd,
+                                     char *out, int outcap)
 {
     if (width < 1 || height < 1 || width * height < 16 || width * height > 254)
         return 0;
@@ -26,9 +27,12 @@ extern "C" int sokoban_mcts_generate(int width, int height, unsigned long long s
 
     int ok = 0;
     if (mcts->finished_nodes.count >= 1) {
-        Array<Level> set = mcts->get_level_set(1);
+        Array<Level> set = mcts->get_level_set(keep < 1 ? 1 : keep);
         if (set.count >= 1) {
-            String s = str(set[0].grid);
+            /* the set is sorted from the lowest to the highest score */
+            int sel = pick == 0 ? (int) set.count - 1
+                    : pick == 2 ? 0 : (int)(rnd % (unsigned) set.count);
+            String s = str(set[sel].grid);
             if (s.count + 1 <= outcap) {
                 for (isize i = 0; i < s.count; i++) out[i] = (char) s.data[i];
                 out[s.count] = 0;
