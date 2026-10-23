@@ -21,3 +21,14 @@ All three source collections are MIT-licensed (see `LICENCE`, same text as upstr
 * Fixes: crossing text-format buffer overflow and 0-shift, rome uninitialised `completed/cheated`,
   small leaks in clusters/mathrax/rome. Crossing's `free_puzzle` is still disabled upstream ("TODO FIX!").
 * Help topics set for every game; help pages generated from the repos' markdown docs.
+
+## Sokoban level generators
+
+Sokoban (`unfinished/sokoban.c`) has four generators, chosen under Custom. The presets use the original one.
+
+| Generator | Source | Licence |
+|---|---|---|
+| Original | upstream `sokoban.c` | MIT |
+| Boulders | port of the level maker in miki151/sokoban (via a Kotlin port) | not stated upstream |
+| MCTS | `unfinished/sokoban-mcts/`, lkseg/sokoban-level-generator-mcts (C++17, silenced output, C entry point `mcts_bridge.cpp`) | no licence file upstream |
+| YASGen | `unfinished/sokoban-yasgen/yasgen.c`, YASGen0 by Brian Damgaard from YASC (symbols prefixed, console output removed) | GPLv3 or later |

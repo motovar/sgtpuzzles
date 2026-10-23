@@ -126,6 +126,7 @@ enum {
 
 struct game_params {
     int w, h;
+    int gen;        /* 0 original, 1 boulders, 2 MCTS, 3 YASGen */
     /*
      * FIXME: a parameter involving degree of filling in?
      */
@@ -144,6 +145,7 @@ static game_params *default_params(void)
 
     ret->w = 12;
     ret->h = 10;
+    ret->gen = 0;
 
     return ret;
 }
@@ -161,9 +163,9 @@ static game_params *dup_params(const game_params *params)
 }
 
 static const struct game_params sokoban_presets[] = {
-    { 12, 10 },
-    { 16, 12 },
-    { 20, 16 },
+    { 12, 10, 0 },
+    { 16, 12, 0 },
+    { 20, 16, 0 },
 };
 
 static bool game_fetch_preset(int i, char **name, game_params **params)
@@ -192,6 +194,12 @@ static void decode_params(game_params *params, char const *string)
     if (*string == 'x') {
         string++;
         params->h = atoi(string);
+        while (*string && isdigit((unsigned char)*string)) string++;
+    }
+    params->gen = 0;
+    if (*string == 'g') {
+        params->gen = atoi(string + 1);
+        if (params->gen < 0 || params->gen > 3) params->gen = 0;
     }
 }
 
@@ -200,6 +208,8 @@ static char *encode_params(const game_params *params, bool full)
     char data[256];
 
     sprintf(data, "%dx%d", params->w, params->h);
+    if (params->gen)
+        sprintf(data + strlen(data), "g%d", params->gen);
 
     return dupstr(data);
 }
@@ -209,7 +219,7 @@ static config_item *game_configure(const game_params *params)
     config_item *ret;
     char buf[80];
 
-    ret = snewn(3, config_item);
+    ret = snewn(4, config_item);
 
     ret[0].name = "Width";
     ret[0].type = C_STRING;
@@ -221,8 +231,13 @@ static config_item *game_configure(const game_params *params)
     sprintf(buf, "%d", params->h);
     ret[1].u.string.sval = dupstr(buf);
 
-    ret[2].name = NULL;
-    ret[2].type = C_END;
+    ret[2].name = "Level generator";
+    ret[2].type = C_CHOICES;
+    ret[2].u.choices.choicenames = ":Original:Boulders (NetHack style):MCTS:YASGen";
+    ret[2].u.choices.selected = params->gen;
+
+    ret[3].name = NULL;
+    ret[3].type = C_END;
 
     return ret;
 }
@@ -233,6 +248,7 @@ static game_params *custom_params(const config_item *cfg)
 
     ret->w = atoi(cfg[0].u.string.sval);
     ret->h = atoi(cfg[1].u.string.sval);
+    ret->gen = cfg[2].u.choices.selected;
 
     return ret;
 }
@@ -731,6 +747,505 @@ static void sokoban_generate(int w, int h, unsigned char *grid, int moves,
 	grid[py*w+px] = PLAYER;
 }
 
+/* ----------------------------------------------------------------------
+ * Alternative level generators (selectable under Custom).
+ */
+#ifdef __cplusplus
+extern "C"
+#endif
+int sokoban_mcts_generate(int width, int height, unsigned long long seed,
+                          double timeout_sec, char *out, int outcap);
+
+/* MCTS generator (lkseg/sokoban-level-generator-mcts). */
+static bool sokoban_gen_mcts(const game_params *params, random_state *rs,
+                             unsigned char *grid)
+{
+    int w = params->w, h = params->h, bw = w, bh = h, x, y, ox, oy;
+    unsigned long long seed;
+    char *buf;
+    bool ok = false;
+    const char *p;
+
+    while (bw * bh > 254) {
+        if (bw >= bh) bw--; else bh--;
+    }
+    while (bw * bh < 16) {
+        if (bw <= bh) bw++; else bh++;
+    }
+    if (bw > w || bh > h)
+        return false;
+
+    seed = ((unsigned long long)random_bits(rs, 31) << 32) |
+           random_bits(rs, 31);
+    buf = snewn(bw * bh * 2 + 16, char);
+    if (!sokoban_mcts_generate(bw, bh, seed ? seed : 1,
+                               2.0 + 0.02 * bw * bh, buf, bw * bh * 2 + 16)) {
+        sfree(buf);
+        return false;
+    }
+    for (y = 0; y < h; y++)
+        for (x = 0; x < w; x++)
+            grid[y*w+x] = WALL;
+    ox = (w - bw) / 2;
+    oy = (h - bh) / 2;
+    p = buf;
+    ok = true;
+    for (y = 0; y < bh && ok; y++) {
+        for (x = 0; x < bw; x++) {
+            int c;
+            while (*p == '\n' || *p == '\r') p++;
+            switch (*p) {
+              case 'x': c = WALL; break;
+              case '-': c = SPACE; break;
+              case 'g': c = TARGET; break;
+              case 'c': c = BARREL; break;
+              case 'C': c = BARRELTARGET; break;
+              case 'p': c = PLAYER; break;
+              case 'P': c = PLAYERTARGET; break;
+              default: ok = false; c = WALL; break;
+            }
+            if (!ok) break;
+            p++;
+            grid[(y+oy)*w + x+ox] = c;
+        }
+    }
+    sfree(buf);
+    return ok;
+}
+
+
+/* ----------------------------------------------------------------------
+ * "Boulders" generator: a port of the level maker from miki151/sokoban
+ * (NetHack-style levels in which a row of pits has to be filled with
+ * boulders). Levels are produced by playing backwards from the solved
+ * position and keeping the deepest one found.
+ */
+struct bm_rect { int l, t, r, b; };          /* half-open */
+struct bm_v { int x, y; };
+#define BM_V(X,Y) ((struct bm_v){(X),(Y)})
+
+struct boulder_maker {
+    random_state *rs;
+    int W, H, nb, numNodes, numRooms, numDoors;
+    bool fail;
+    char *level, *best;
+    int maxDepth;
+    struct bm_v finalPos, curPos;
+    int middleLine;
+    struct bm_rect work;
+    struct bm_v boulders[16];
+    int nbl;
+    unsigned *visited;                /* open-addressing hash set */
+    int visitedN, visitedCap;
+};
+
+static int bm_rnd(struct boulder_maker *m, int lo, int hi)
+{
+    if (hi <= lo) { m->fail = true; return lo; }
+    return lo + random_upto(m->rs, hi - lo);
+}
+
+static bool bm_inside(const struct boulder_maker *m, struct bm_v v)
+{
+    return v.x >= 0 && v.x < m->W && v.y >= 0 && v.y < m->H;
+}
+
+static char bm_get(struct boulder_maker *m, char *g, struct bm_v v)
+{
+    if (!bm_inside(m, v)) { m->fail = true; return '#'; }
+    return g[v.y * m->W + v.x];
+}
+
+static void bm_set(struct boulder_maker *m, char *g, struct bm_v v, char c)
+{
+    if (!bm_inside(m, v)) { m->fail = true; return; }
+    g[v.y * m->W + v.x] = c;
+}
+
+static bool bm_in_rect(struct bm_rect r, struct bm_v v)
+{
+    return v.x >= r.l && v.x < r.r && v.y >= r.t && v.y < r.b;
+}
+
+static void bm_fill_rect(struct boulder_maker *m, struct bm_rect r, char c)
+{
+    int x, y;
+    if (r.r <= r.l || r.b <= r.t) { m->fail = true; return; }
+    for (x = r.l; x < r.r; x++)
+        for (y = r.t; y < r.b; y++)
+            bm_set(m, m->level, BM_V(x, y), c);
+}
+
+static int bm_max(int a, int b) { return a > b ? a : b; }
+static int bm_min(int a, int b) { return a < b ? a : b; }
+
+static void bm_perm(struct boulder_maker *m, int *a, int n)
+{
+    int i;
+    for (i = n - 1; i > 0; i--) {
+        int j = random_upto(m->rs, i + 1), t = a[i];
+        a[i] = a[j]; a[j] = t;
+    }
+}
+
+static void bm_prepare_rooms(struct boulder_maker *m, struct bm_rect area)
+{
+    int aw = area.r - area.l, ah = area.b - area.t;
+    struct bm_v mainSize, mainPos;
+    struct bm_rect mr;
+    int sides[4] = {0, 1, 2, 3}, i;
+
+    if (aw <= 0 || ah <= 0) { m->fail = true; return; }
+    mainSize = BM_V(bm_rnd(m, 3, 5), bm_rnd(m, 3, 5));
+    mainPos = BM_V((aw - mainSize.x) / 2, (ah - mainSize.y) / 2);
+    mr = (struct bm_rect){mainPos.x, mainPos.y,
+                          mainPos.x + mainSize.x, mainPos.y + mainSize.y};
+    bm_fill_rect(m, mr, '.');
+    bm_perm(m, sides, 4);
+    for (i = 0; i < m->numRooms - 1 && !m->fail; i++) {
+        struct bm_v size, pos = BM_V(0, 0);
+        bool door = i < m->numDoors;
+        do {
+            size = BM_V(bm_rnd(m, 2, 4), bm_rnd(m, 2, 4));
+        } while (size.x <= 2 && size.y <= 2 && !m->fail);
+        switch (sides[i % 4]) {
+          case 0:
+            pos = BM_V(mr.r, bm_rnd(m, bm_max(area.t, mr.t - size.y + 1),
+                                    bm_min(area.b, mr.b)));
+            if (door) {
+                pos.x += 1;
+                bm_set(m, m->level, BM_V(mr.r, bm_rnd(m, bm_max(mr.t, pos.y),
+                       bm_min(mr.b, pos.y + size.y))), '.');
+            }
+            break;
+          case 1:
+            pos = BM_V(bm_rnd(m, bm_max(area.l, mr.l - size.x + 1),
+                              bm_min(area.r, mr.r)), mr.b);
+            if (door) {
+                pos.y += 1;
+                bm_set(m, m->level, BM_V(bm_rnd(m, bm_max(mr.l, pos.x),
+                       bm_min(mr.r, pos.x + size.x)), mr.b), '.');
+            }
+            break;
+          case 2:
+            pos = BM_V(mr.l - size.x, bm_rnd(m, bm_max(area.t, mr.t - size.y + 1),
+                                             bm_min(area.b, mr.b)));
+            if (door) {
+                pos.x -= 1;
+                bm_set(m, m->level, BM_V(mr.l - 1, bm_rnd(m, bm_max(mr.t, pos.y),
+                       bm_min(mr.b, pos.y + size.y))), '.');
+            }
+            break;
+          default:
+            pos = BM_V(bm_rnd(m, bm_max(area.l, mr.l - size.x + 1),
+                              bm_min(area.r, mr.r)), mr.t - size.y);
+            if (door) {
+                pos.y -= 1;
+                bm_set(m, m->level, BM_V(bm_rnd(m, bm_max(mr.l, pos.x),
+                       bm_min(mr.r, pos.x + size.x)), mr.t - 1), '.');
+            }
+            break;
+        }
+        if (!m->fail)
+            bm_fill_rect(m, (struct bm_rect){pos.x, pos.y, pos.x + size.x,
+                                             pos.y + size.y}, '.');
+    }
+}
+
+static bool bm_is_free(struct boulder_maker *m, struct bm_v p)
+{
+    return bm_in_rect(m->work, p) && bm_inside(m, p) &&
+           m->level[p.y * m->W + p.x] == '.';
+}
+
+static const struct bm_v bm_dirs[4] = {{0, 1}, {1, 0}, {0, -1}, {-1, 0}};
+
+static void bm_reachable(struct boulder_maker *m, struct bm_v from, bool *r)
+{
+    int *q = snewn(m->W * m->H, int), qh = 0, qt = 0, d;
+    memset(r, 0, m->W * m->H * sizeof(bool));
+    r[from.y * m->W + from.x] = true;
+    q[qt++] = from.y * m->W + from.x;
+    while (qh < qt) {
+        int c = q[qh++];
+        for (d = 0; d < 4; d++) {
+            struct bm_v n = BM_V(c % m->W + bm_dirs[d].x, c / m->W + bm_dirs[d].y);
+            if (bm_in_rect(m->work, n) && bm_inside(m, n) &&
+                !r[n.y * m->W + n.x] && bm_is_free(m, n)) {
+                r[n.y * m->W + n.x] = true;
+                q[qt++] = n.y * m->W + n.x;
+            }
+        }
+    }
+    sfree(q);
+}
+
+static int bm_hash(struct boulder_maker *m)
+{
+    int seed = 0, i;
+    for (i = 0; i < m->nbl; i++) {
+        seed ^= (int)((unsigned)m->boulders[i].x + 0x9e3779b9u +
+                      ((unsigned)seed << 6) + (unsigned)(seed >> 2));
+        seed ^= (int)((unsigned)m->boulders[i].y + 0x9e3779c9u +
+                      ((unsigned)seed << 6) + (unsigned)(seed >> 2));
+    }
+    return seed;
+}
+
+static void bm_move_boulder(struct boulder_maker *m, int depth,
+                            int *visitedKeys, int *nvisited)
+{
+    int W = m->W, H = m->H;
+    bool *reach;
+    int order[16], dorder[4], bi, di, i;
+
+    if (m->fail) return;
+    if (depth > m->maxDepth) {
+        memcpy(m->best, m->level, W * H);
+        m->maxDepth = depth;
+        m->finalPos = m->curPos;
+    }
+    if (*nvisited > m->numNodes) return;
+    reach = snewn(W * H, bool);
+    bm_reachable(m, m->curPos, reach);
+    for (i = 0; i < m->nbl; i++) order[i] = i;
+    bm_perm(m, order, m->nbl);
+    for (bi = 0; bi < m->nbl && !m->fail; bi++) {
+        struct bm_v boulderPos = m->boulders[order[bi]];
+        for (i = 0; i < 4; i++) dorder[i] = i;
+        bm_perm(m, dorder, 4);
+        for (di = 0; di < 4 && !m->fail; di++) {
+            struct bm_v v = bm_dirs[dorder[di]], pos, dest = BM_V(0, 0), t;
+            bool have = false;
+            int i2 = 1, idx, h, k;
+            struct bm_v prev;
+            t = BM_V(boulderPos.x + v.x, boulderPos.y + v.y);
+            if (!(bm_inside(m, t) && reach[t.y * W + t.x]) ||
+                (boulderPos.x >= m->middleLine - 1 && v.x > 0))
+                continue;
+            pos = t;
+            while (bm_is_free(m, BM_V(pos.x + v.x * i2, pos.y + v.y * i2)) &&
+                   (v.x <= 0 || pos.x + v.x * i2 <= m->middleLine)) {
+                int step = bm_rnd(m, 1, i2 + 1);
+                dest = BM_V(pos.x + v.x * step, pos.y + v.y * step);
+                have = true;
+                i2++;
+            }
+            if (!have) continue;
+            idx = -1;
+            for (k = 0; k < m->nbl; k++)
+                if (m->boulders[k].x == boulderPos.x && m->boulders[k].y == boulderPos.y)
+                    idx = k;
+            if (idx < 0) continue;
+            m->boulders[idx] = BM_V(dest.x - v.x, dest.y - v.y);
+            bm_set(m, m->level, m->boulders[idx], '0');
+            bm_set(m, m->level, boulderPos, '.');
+            prev = m->curPos;
+            m->curPos = dest;
+            h = bm_hash(m);
+            {
+                bool seen = false;
+                for (k = 0; k < *nvisited; k++)
+                    if (visitedKeys[k] == h) { seen = true; break; }
+                if (!seen) {
+                    if (*nvisited < 4000) visitedKeys[(*nvisited)++] = h;
+                    bm_move_boulder(m, depth + 1, visitedKeys, nvisited);
+                }
+            }
+            bm_set(m, m->level, BM_V(dest.x - v.x, dest.y - v.y), '.');
+            bm_set(m, m->level, boulderPos, '0');
+            m->boulders[idx] = boulderPos;
+            m->curPos = prev;
+        }
+    }
+    sfree(reach);
+}
+
+static bool bm_make(struct boulder_maker *m)
+{
+    int W = m->W, H = m->H, x, i, k;
+    struct bm_v start = BM_V(-1, -1), c;
+    int *keys;
+    int nvis = 0;
+    int ys[64];
+    int nys;
+
+    bm_prepare_rooms(m, (struct bm_rect){0, 0, W - 1 - 2 - 1 - m->nb, H});
+    if (m->fail) return false;
+    nys = H - 2;
+    if (nys < 1 || nys > 64) return false;
+    for (x = W - 2; x >= 1 && start.x < 0; x--) {
+        for (i = 0; i < nys; i++) ys[i] = 1 + i;
+        bm_perm(m, ys, nys);
+        for (i = 0; i < nys; i++)
+            if (bm_get(m, m->level, BM_V(x, ys[i])) == '.') {
+                start = BM_V(x, ys[i]);
+                break;
+            }
+    }
+    if (m->fail || start.x < 0) return false;
+    m->middleLine = start.x;
+    m->work = (struct bm_rect){0, 0, start.x + m->nb, H};
+    m->nbl = 0;
+    for (i = 1; i <= m->nb; i++) {
+        struct bm_v p = BM_V(start.x + i, start.y);
+        bm_set(m, m->level, p, '0');
+        m->boulders[m->nbl++] = p;
+    }
+    bm_set(m, m->level, BM_V(start.x + m->nb + 1, start.y), '+');
+    c = BM_V(start.x + m->nb + 3, start.y);
+    bm_fill_rect(m, (struct bm_rect){c.x - 1, c.y - 1, c.x + 2, c.y + 2}, '.');
+    if (m->fail) return false;
+    m->curPos = start;
+    keys = snewn(4000, int);
+    bm_move_boulder(m, 0, keys, &nvis);
+    sfree(keys);
+    if (m->fail) return false;
+    for (i = 1; i <= m->nb; i++) {
+        struct bm_v hole = BM_V(start.x + i, start.y);
+        if ((hole.x == m->finalPos.x && hole.y == m->finalPos.y) ||
+            bm_get(m, m->best, hole) != '.')
+            return false;
+        bm_set(m, m->best, hole, '^');
+    }
+    bm_set(m, m->best, m->finalPos, '@');
+    (void)k;
+    return !m->fail;
+}
+
+static bool sokoban_gen_boulders(const game_params *params, random_state *rs,
+                                 unsigned char *grid)
+{
+    int w = params->w, h = params->h, attempt, bestDepth = -1, i;
+    char *bestGrid = NULL;
+    int nb = w / 4;
+    if (nb < 2) nb = 2;
+    if (nb > 6) nb = 6;
+    if (w < 10 || h < 6)
+        return false;
+
+    for (attempt = 0; attempt < 150; attempt++) {
+        struct boulder_maker m;
+        bool ok;
+        memset(&m, 0, sizeof m);
+        m.rs = rs; m.W = w; m.H = h; m.nb = nb; m.numNodes = 500;
+        m.numRooms = 3; m.numDoors = 1; m.maxDepth = -1;
+        m.level = snewn(w * h, char);
+        m.best = snewn(w * h, char);
+        memset(m.level, '#', w * h);
+        memset(m.best, '?', w * h);
+        ok = bm_make(&m);
+        if (ok && m.maxDepth > bestDepth) {
+            bestDepth = m.maxDepth;
+            sfree(bestGrid);
+            bestGrid = snewn(w * h, char);
+            memcpy(bestGrid, m.best, w * h);
+        }
+        sfree(m.level);
+        sfree(m.best);
+    }
+    if (!bestGrid)
+        return false;
+    for (i = 0; i < w * h; i++) {
+        switch (bestGrid[i]) {
+          case '.': case '+': grid[i] = SPACE; break;
+          case '0': grid[i] = BARREL; break;
+          case '^': grid[i] = PIT; break;
+          case '@': grid[i] = PLAYER; break;
+          default: grid[i] = WALL; break;
+        }
+    }
+    sfree(bestGrid);
+    return true;
+}
+
+
+/* ----------------------------------------------------------------------
+ * YASGen generator (Brian Damgaard's YASGen0, from YASC): we build a
+ * random small room with goals, and YASGen searches for the starting
+ * position of boxes that needs the most pushes.
+ */
+int sokoban_yasgen_generate(int w, int h, const char *rows, unsigned seed,
+                            int megabytes, int max_open, char *out);
+
+static bool sokoban_gen_yasgen(const game_params *params, random_state *rs,
+                               unsigned char *grid)
+{
+    int gw = params->w, gh = params->h;
+    int bw = gw - 2, bh = gh - 2, x, y, i, k, tries;
+    int area, ngoals, nwalls;
+    char *rows, *out;
+    int pushes = 0;
+
+    if (bw > 12) bw = 12;
+    if (bh > 10) bh = 10;
+    if (bw < 4 || bh < 4)
+        return false;
+    area = bw * bh;
+    rows = snewn(area, char);
+    out = snewn(area, char);
+
+    for (tries = 0; tries < 20 && pushes <= 0; tries++) {
+        int *cells = snewn(area, int), placed = 0;
+        for (i = 0; i < area; i++) { rows[i] = ' '; cells[i] = i; }
+        shuffle(cells, area, sizeof(int), rs);
+        /* a few isolated wall blocks (never touching each other or the
+         * outer ring, so the room stays connected) */
+        nwalls = area / 7;
+        for (i = 0; i < area && placed < nwalls; i++) {
+            int c = cells[i], cx = c % bw, cy = c / bw, ok = 1, dx, dy;
+            if (cx == 0 || cy == 0 || cx == bw-1 || cy == bh-1) continue;
+            for (dy = -1; dy <= 1; dy++)
+                for (dx = -1; dx <= 1; dx++)
+                    if (rows[(cy+dy)*bw + cx+dx] == '#') ok = 0;
+            if (ok) { rows[c] = '#'; placed++; }
+        }
+        ngoals = area / 14;
+        if (ngoals < 2) ngoals = 2;
+        if (ngoals > 6) ngoals = 6;
+        k = 0;
+        for (i = 0; i < area && k < ngoals; i++)
+            if (rows[cells[i]] == ' ') { rows[cells[i]] = '.'; k++; }
+        for (i = 0; i < area; i++)
+            if (rows[cells[i]] == ' ') { rows[cells[i]] = '@'; break; }
+        sfree(cells);
+        pushes = sokoban_yasgen_generate(bw, bh, rows,
+                                         random_bits(rs, 20), 24, 400000, out);
+    }
+    if (pushes <= 0) {
+        sfree(rows); sfree(out);
+        return false;
+    }
+    for (i = 0; i < gw * gh; i++) grid[i] = WALL;
+    for (y = 0; y < bh; y++)
+        for (x = 0; x < bw; x++) {
+            int c;
+            switch (out[y*bw + x]) {
+              case ' ': c = SPACE; break;
+              case '.': c = TARGET; break;
+              case '$': c = BARREL; break;
+              case '*': c = BARRELTARGET; break;
+              case '@': c = PLAYER; break;
+              case '+': c = PLAYERTARGET; break;
+              default: c = WALL; break;
+            }
+            grid[(y + 1 + (gh - 2 - bh) / 2) * gw + x + 1 + (gw - 2 - bw) / 2] = c;
+        }
+    sfree(rows); sfree(out);
+    return true;
+}
+
+static bool sokoban_external(const game_params *params, random_state *rs,
+                             unsigned char *grid)
+{
+    switch (params->gen) {
+      case 1: return sokoban_gen_boulders(params, rs, grid);
+      case 2: return sokoban_gen_mcts(params, rs, grid);
+      case 3: return sokoban_gen_yasgen(params, rs, grid);
+      default: return false;
+    }
+}
+
 static char *new_game_desc(const game_params *params, random_state *rs,
 			   char **aux, bool interactive)
 {
@@ -745,7 +1260,7 @@ static char *new_game_desc(const game_params *params, random_state *rs,
      * many moves to try?
      */
     grid = snewn(w*h, unsigned char);
-    {
+    if (!(params->gen && sokoban_external(params, rs, grid))) {
         /*
          * Generate a few candidates and keep the one that uses the
          * most floor (fewest unused squares), then open up much of
@@ -809,6 +1324,9 @@ static char *new_game_desc(const game_params *params, random_state *rs,
           case DEEP_PIT:
             j = 'd';
             break;
+          case PIT:
+            j = 'p';
+            break;
           case PLAYER:
             j = 'u';
             break;
@@ -831,6 +1349,7 @@ static char *new_game_desc(const game_params *params, random_state *rs,
         }
     }
 
+    desc[desclen] = '\0';
     sfree(grid);
 
     return desc;
