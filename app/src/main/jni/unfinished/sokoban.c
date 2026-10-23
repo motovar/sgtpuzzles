@@ -121,6 +121,16 @@ enum {
     COL_HIGHLIGHT,
     COL_LOWLIGHT,
     COL_WALL,
+    /* "Classic" graphics theme */
+    COL_C_FLOOR,
+    COL_C_BRICK,
+    COL_C_MORTAR,
+    COL_C_CRATE,
+    COL_C_CRATE_EDGE,
+    COL_C_CRATE_OK,
+    COL_C_GOAL,
+    COL_C_SUIT,
+    COL_C_SKIN,
     NCOLOURS
 };
 
@@ -132,7 +142,7 @@ struct game_params {
     /* MCTS generator */
     int mc_time, mc_keep, mc_pick;
     /* YASGen generator */
-    int yg_goals, yg_walls, yg_limit;
+    int yg_goals, yg_walls, yg_limit, yg_mode, yg_rand;
     /*
      * FIXME: a parameter involving degree of filling in?
      */
@@ -148,8 +158,9 @@ struct game_state {
 static void sokoban_gen_defaults(game_params *p)
 {
     p->bm_count = 0; p->bm_attempts = 150; p->bm_nodes = 500;
-    p->mc_time = 0; p->mc_keep = 1; p->mc_pick = 0;
+    p->mc_time = 0; p->mc_keep = 1; p->mc_pick = 1;
     p->yg_goals = 0; p->yg_walls = 14; p->yg_limit = 400;
+    p->yg_mode = 0; p->yg_rand = 1;
 }
 
 static game_params *default_params(void)
@@ -177,9 +188,9 @@ static game_params *dup_params(const game_params *params)
 }
 
 static const struct game_params sokoban_presets[] = {
-    { 12, 10, 0, 0, 150, 500, 0, 1, 0, 0, 14, 400 },
-    { 16, 12, 0, 0, 150, 500, 0, 1, 0, 0, 14, 400 },
-    { 20, 16, 0, 0, 150, 500, 0, 1, 0, 0, 14, 400 },
+    { 12, 10, 0, 0, 150, 500, 0, 1, 1, 0, 14, 400, 0, 1 },
+    { 16, 12, 0, 0, 150, 500, 0, 1, 1, 0, 14, 400, 0, 1 },
+    { 20, 16, 0, 0, 150, 500, 0, 1, 1, 0, 14, 400, 0, 1 },
 };
 
 static bool game_fetch_preset(int i, char **name, game_params **params)
@@ -231,6 +242,8 @@ static void decode_params(game_params *params, char const *string)
               case 'o': params->yg_goals = v; break;
               case 'w': params->yg_walls = v; break;
               case 'l': params->yg_limit = v; break;
+              case 'm': params->yg_mode = v; break;
+              case 'r': params->yg_rand = v; break;
               default: break;
             }
         }
@@ -257,6 +270,8 @@ static char *encode_params(const game_params *params, bool full)
         if (params->yg_goals != d.yg_goals) p += sprintf(p, "o%d", params->yg_goals);
         if (params->yg_walls != d.yg_walls) p += sprintf(p, "w%d", params->yg_walls);
         if (params->yg_limit != d.yg_limit) p += sprintf(p, "l%d", params->yg_limit);
+        if (params->yg_mode != d.yg_mode) p += sprintf(p, "m%d", params->yg_mode);
+        if (params->yg_rand != d.yg_rand) p += sprintf(p, "r%d", params->yg_rand);
     }
 
     return dupstr(data);
@@ -266,43 +281,59 @@ static config_item *game_configure(const game_params *params)
 {
     config_item *ret;
     char buf[80];
+    int n = 0;
 
-    ret = snewn(13, config_item);
+    ret = snewn(12, config_item);
 
-    ret[0].name = "Width";
-    ret[0].type = C_STRING;
+    ret[n].name = "Width";
+    ret[n].type = C_STRING;
     sprintf(buf, "%d", params->w);
-    ret[0].u.string.sval = dupstr(buf);
+    ret[n].u.string.sval = dupstr(buf);
+    n++;
 
-    ret[1].name = "Height";
-    ret[1].type = C_STRING;
+    ret[n].name = "Height";
+    ret[n].type = C_STRING;
     sprintf(buf, "%d", params->h);
-    ret[1].u.string.sval = dupstr(buf);
+    ret[n].u.string.sval = dupstr(buf);
+    n++;
 
-    ret[2].name = "Level generator";
-    ret[2].type = C_CHOICES;
-    ret[2].u.choices.choicenames = ":Original:Boulders (NetHack style):MCTS:YASGen";
-    ret[2].u.choices.selected = params->gen;
+    ret[n].name = "Level generator";
+    ret[n].type = C_CHOICES;
+    ret[n].u.choices.choicenames = ":Original:Boulders (NetHack style):MCTS:YASGen";
+    ret[n].u.choices.selected = params->gen;
+    n++;
 
-#define STR_ITEM(N, NAME, VAL) do { \
-        ret[N].name = NAME; ret[N].type = C_STRING; \
-        sprintf(buf, "%d", VAL); ret[N].u.string.sval = dupstr(buf); } while (0)
-    STR_ITEM(3, "Boulders: number of boulders (0 = auto)", params->bm_count);
-    STR_ITEM(4, "Boulders: attempts", params->bm_attempts);
-    STR_ITEM(5, "Boulders: search nodes per attempt", params->bm_nodes);
-    STR_ITEM(6, "MCTS: search time in seconds (0 = auto)", params->mc_time);
-    STR_ITEM(7, "MCTS: levels to keep", params->mc_keep);
-    ret[8].name = "MCTS: level to use";
-    ret[8].type = C_CHOICES;
-    ret[8].u.choices.choicenames = ":Hardest:Random:Easiest";
-    ret[8].u.choices.selected = params->mc_pick;
-    STR_ITEM(9, "YASGen: number of goals (0 = auto)", params->yg_goals);
-    STR_ITEM(10, "YASGen: wall density in percent", params->yg_walls);
-    STR_ITEM(11, "YASGen: search limit (thousand positions)", params->yg_limit);
+    /* Only the settings of the generator in use are shown; reopen this
+     * dialog after changing the generator to see the new settings. */
+#define STR_ITEM(NAME, VAL) do { \
+        ret[n].name = NAME; ret[n].type = C_STRING; \
+        sprintf(buf, "%d", VAL); ret[n].u.string.sval = dupstr(buf); n++; } while (0)
+    if (params->gen == 1) {
+        STR_ITEM("Boulders: number of boulders (0 = auto)", params->bm_count);
+        STR_ITEM("Boulders: attempts", params->bm_attempts);
+        STR_ITEM("Boulders: search nodes per attempt", params->bm_nodes);
+    } else if (params->gen == 2) {
+        STR_ITEM("MCTS: search time in seconds (0 = auto)", params->mc_time);
+        STR_ITEM("MCTS: levels to keep", params->mc_keep);
+        STR_ITEM("MCTS: level to use (1 = hardest ... levels to keep = easiest)", params->mc_pick);
+    } else if (params->gen == 3) {
+        ret[n].name = "YASGen: mode";
+        ret[n].type = C_CHOICES;
+        ret[n].u.choices.choicenames = ":Reverse (pull boxes from goals):Forward (push given boxes)";
+        ret[n].u.choices.selected = params->yg_mode;
+        n++;
+        STR_ITEM("YASGen: number of goals/boxes (0 = auto)", params->yg_goals);
+        STR_ITEM("YASGen: wall density in percent", params->yg_walls);
+        STR_ITEM("YASGen: search limit (thousand positions)", params->yg_limit);
+        ret[n].name = "YASGen: random player start";
+        ret[n].type = C_BOOLEAN;
+        ret[n].u.boolean.bval = params->yg_rand != 0;
+        n++;
+    }
 #undef STR_ITEM
 
-    ret[12].name = NULL;
-    ret[12].type = C_END;
+    ret[n].name = NULL;
+    ret[n].type = C_END;
 
     return ret;
 }
@@ -310,19 +341,36 @@ static config_item *game_configure(const game_params *params)
 static game_params *custom_params(const config_item *cfg)
 {
     game_params *ret = snew(game_params);
+    int shown = 0;
 
     ret->w = atoi(cfg[0].u.string.sval);
     ret->h = atoi(cfg[1].u.string.sval);
     ret->gen = cfg[2].u.choices.selected;
-    ret->bm_count = atoi(cfg[3].u.string.sval);
-    ret->bm_attempts = atoi(cfg[4].u.string.sval);
-    ret->bm_nodes = atoi(cfg[5].u.string.sval);
-    ret->mc_time = atoi(cfg[6].u.string.sval);
-    ret->mc_keep = atoi(cfg[7].u.string.sval);
-    ret->mc_pick = cfg[8].u.choices.selected;
-    ret->yg_goals = atoi(cfg[9].u.string.sval);
-    ret->yg_walls = atoi(cfg[10].u.string.sval);
-    ret->yg_limit = atoi(cfg[11].u.string.sval);
+    sokoban_gen_defaults(ret);
+
+    /* which generator's settings were displayed? */
+    if (cfg[3].type != C_END && cfg[3].name) {
+        if (!strncmp(cfg[3].name, "Boulders", 8)) shown = 1;
+        else if (!strncmp(cfg[3].name, "MCTS", 4)) shown = 2;
+        else if (!strncmp(cfg[3].name, "YASGen", 6)) shown = 3;
+    }
+    if (shown && shown == ret->gen) {
+        if (shown == 1) {
+            ret->bm_count = atoi(cfg[3].u.string.sval);
+            ret->bm_attempts = atoi(cfg[4].u.string.sval);
+            ret->bm_nodes = atoi(cfg[5].u.string.sval);
+        } else if (shown == 2) {
+            ret->mc_time = atoi(cfg[3].u.string.sval);
+            ret->mc_keep = atoi(cfg[4].u.string.sval);
+            ret->mc_pick = atoi(cfg[5].u.string.sval);
+        } else {
+            ret->yg_mode = cfg[3].u.choices.selected;
+            ret->yg_goals = atoi(cfg[4].u.string.sval);
+            ret->yg_walls = atoi(cfg[5].u.string.sval);
+            ret->yg_limit = atoi(cfg[6].u.string.sval);
+            ret->yg_rand = cfg[7].u.boolean.bval ? 1 : 0;
+        }
+    }
 
     return ret;
 }
@@ -341,12 +389,14 @@ static const char *validate_params(const game_params *params, bool full)
         return "Boulders search nodes must be between 10 and 5000";
     if (params->mc_time < 0 || params->mc_time > 120)
         return "MCTS search time must be between 0 and 120 seconds";
-    if (params->mc_keep < 1 || params->mc_keep > 50)
-        return "MCTS levels to keep must be between 1 and 50";
-    if (params->mc_pick < 0 || params->mc_pick > 2)
-        return "Unknown MCTS level choice";
-    if (params->yg_goals < 0 || params->yg_goals > 8)
-        return "YASGen number of goals must be between 0 and 8";
+    if (params->mc_keep < 1)
+        return "MCTS levels to keep must be at least 1";
+    if (params->mc_pick < 1 || params->mc_pick > params->mc_keep)
+        return "MCTS level to use must be between 1 and the number of levels to keep";
+    if (params->yg_goals < 0 || params->yg_goals > 40)
+        return "YASGen number of goals must be between 0 and 40";
+    if (params->yg_mode < 0 || params->yg_mode > 1)
+        return "Unknown YASGen mode";
     if (params->yg_walls < 0 || params->yg_walls > 30)
         return "YASGen wall density must be between 0 and 30 percent";
     if (params->yg_limit < 10 || params->yg_limit > 2000)
@@ -877,7 +927,7 @@ static bool sokoban_gen_mcts(const game_params *params, random_state *rs,
                                params->mc_time > 0 ? (double)params->mc_time
                                                    : 2.0 + 0.02 * bw * bh,
                                params->mc_keep, params->mc_pick,
-                               random_bits(rs, 20),
+                               0,
                                buf, bw * bh * 2 + 16)) {
         sfree(buf);
         return false;
@@ -1265,7 +1315,8 @@ static bool sokoban_gen_boulders(const game_params *params, random_state *rs,
  * position of boxes that needs the most pushes.
  */
 int sokoban_yasgen_generate(int w, int h, const char *rows, unsigned seed,
-                            int megabytes, int max_open, char *out);
+                            int megabytes, int max_open, int reverse,
+                            int randplayer, char *out);
 
 static bool sokoban_gen_yasgen(const game_params *params, random_state *rs,
                                unsigned char *grid)
@@ -1276,8 +1327,8 @@ static bool sokoban_gen_yasgen(const game_params *params, random_state *rs,
     char *rows, *out;
     int pushes = 0;
 
-    if (bw > 12) bw = 12;
-    if (bh > 10) bh = 10;
+    if (bw > 50) bw = 50;
+    if (bh > 50) bh = 50;
     if (bw < 4 || bh < 4)
         return false;
     area = bw * bh;
@@ -1301,10 +1352,13 @@ static bool sokoban_gen_yasgen(const game_params *params, random_state *rs,
         }
         ngoals = params->yg_goals ? params->yg_goals : area / 14;
         if (ngoals < 2) ngoals = 2;
-        if (ngoals > 8) ngoals = 8;
+        if (ngoals > 40) ngoals = 40;
         k = 0;
         for (i = 0; i < area && k < ngoals; i++)
-            if (rows[cells[i]] == ' ') { rows[cells[i]] = '.'; k++; }
+            if (rows[cells[i]] == ' ') {
+                rows[cells[i]] = params->yg_mode ? '$' : '.';
+                k++;
+            }
         for (i = 0; i < area; i++)
             if (rows[cells[i]] == ' ') { rows[cells[i]] = '@'; break; }
         sfree(cells);
@@ -1313,7 +1367,8 @@ static bool sokoban_gen_yasgen(const game_params *params, random_state *rs,
                                          params->yg_limit * 56 / 1024 < 16 ? 16 :
                                          params->yg_limit * 56 / 1024 > 160 ? 160 :
                                          params->yg_limit * 56 / 1024,
-                                         params->yg_limit * 1000, out);
+                                         params->yg_limit * 1000,
+                                         params->yg_mode ? 0 : 1, params->yg_rand, out);
     }
     if (pushes <= 0) {
         sfree(rows); sfree(out);
@@ -1570,13 +1625,41 @@ static char *game_text_format(const game_state *state)
     return NULL;
 }
 
+struct game_ui {
+    int theme;                         /* 0 = original, 1 = classic */
+};
+
 static game_ui *new_ui(const game_state *state)
 {
-    return NULL;
+    game_ui *ui = snew(game_ui);
+    ui->theme = 0;
+    return ui;
 }
 
 static void free_ui(game_ui *ui)
 {
+    sfree(ui);
+}
+
+static config_item *get_prefs(game_ui *ui)
+{
+    config_item *ret = snewn(2, config_item);
+
+    ret[0].name = "Graphics";
+    ret[0].kw = "graphics";
+    ret[0].type = C_CHOICES;
+    ret[0].u.choices.choicenames = ":Original:Classic (bricks and crates)";
+    ret[0].u.choices.choicekws = ":original:classic";
+    ret[0].u.choices.selected = ui->theme;
+
+    ret[1].name = NULL;
+    ret[1].type = C_END;
+    return ret;
+}
+
+static void set_prefs(game_ui *ui, const config_item *cfg)
+{
+    ui->theme = cfg[0].u.choices.selected;
 }
 
 static bool game_changed_state(game_ui *ui, const game_state *oldstate,
@@ -1589,6 +1672,7 @@ struct game_drawstate {
     game_params p;
     int tilesize;
     bool started;
+    int theme;
     unsigned short *grid;
 };
 
@@ -1895,6 +1979,18 @@ static float *game_colours(frontend *fe, int *ncolours)
 				 1 * ret[COL_HIGHLIGHT * 3 + i]) / 4;
     }
 
+#define SETCOL(C, R, G, B) do { ret[(C)*3+0] = (R); ret[(C)*3+1] = (G); ret[(C)*3+2] = (B); } while (0)
+    SETCOL(COL_C_FLOOR, 0.86F, 0.80F, 0.62F);
+    SETCOL(COL_C_BRICK, 0.72F, 0.27F, 0.17F);
+    SETCOL(COL_C_MORTAR, 0.35F, 0.14F, 0.10F);
+    SETCOL(COL_C_CRATE, 0.80F, 0.55F, 0.20F);
+    SETCOL(COL_C_CRATE_EDGE, 0.40F, 0.24F, 0.07F);
+    SETCOL(COL_C_CRATE_OK, 0.45F, 0.70F, 0.25F);
+    SETCOL(COL_C_GOAL, 0.80F, 0.10F, 0.10F);
+    SETCOL(COL_C_SUIT, 0.15F, 0.25F, 0.75F);
+    SETCOL(COL_C_SKIN, 0.98F, 0.80F, 0.62F);
+#undef SETCOL
+
     *ncolours = NCOLOURS;
     return ret;
 }
@@ -1911,6 +2007,7 @@ static game_drawstate *game_new_drawstate(drawing *dr, const game_state *state)
     for (i = 0; i < w*h; i++)
         ds->grid[i] = INVALID;
     ds->started = false;
+    ds->theme = 0;
 
     return ds;
 }
@@ -1921,8 +2018,70 @@ static void game_free_drawstate(drawing *dr, game_drawstate *ds)
     sfree(ds);
 }
 
+static void draw_tile_classic(drawing *dr, game_drawstate *ds, int tx, int ty,
+                              int v, int flash)
+{
+    int T = TILESIZE, cx = tx + T/2, cy = ty + T/2;
+    int bg = flash ? COL_HIGHLIGHT : COL_C_FLOOR;
+
+    clip(dr, tx+1, ty+1, T-1, T-1);
+    draw_rect(dr, tx+1, ty+1, T-1, T-1, bg);
+
+    if (v == WALL) {
+        int r, rowh = T / 3;
+        draw_rect(dr, tx+1, ty+1, T-1, T-1, COL_C_BRICK);
+        for (r = 0; r < 3; r++) {
+            int y0 = ty + 1 + r * rowh;
+            if (r > 0)
+                draw_line(dr, tx+1, y0, tx+T, y0, COL_C_MORTAR);
+            if (r == 1) {
+                draw_line(dr, tx + T/4, y0, tx + T/4, y0 + rowh, COL_C_MORTAR);
+                draw_line(dr, tx + 3*T/4, y0, tx + 3*T/4, y0 + rowh, COL_C_MORTAR);
+            } else {
+                draw_line(dr, tx + T/2, y0, tx + T/2, y0 + rowh, COL_C_MORTAR);
+            }
+        }
+    } else if (v == PIT || v == DEEP_PIT) {
+        draw_circle(dr, cx, cy, T*3/7,
+                    v == PIT ? COL_PIT : COL_DEEP_PIT, COL_OUTLINE);
+    } else {
+        if (IS_ON_TARGET(v) && !IS_BARREL(v)) {
+            int d = T / 6, c[8];
+            c[0] = cx; c[1] = cy - d;
+            c[2] = cx + d; c[3] = cy;
+            c[4] = cx; c[5] = cy + d;
+            c[6] = cx - d; c[7] = cy;
+            draw_polygon(dr, c, 4, COL_C_GOAL, COL_OUTLINE);
+        }
+        if (IS_BARREL(v)) {
+            int m = T / 8, x0 = tx + 1 + m, y0 = ty + 1 + m, x1 = tx + T - m,
+                y1 = ty + T - m, col = IS_ON_TARGET(v) ? COL_C_CRATE_OK : COL_C_CRATE;
+            char str[2];
+            draw_rect(dr, x0, y0, x1 - x0, y1 - y0, COL_C_CRATE_EDGE);
+            draw_rect(dr, x0 + 2, y0 + 2, x1 - x0 - 4, y1 - y0 - 4, col);
+            draw_line(dr, x0 + 2, y0 + 2, x1 - 2, y1 - 2, COL_C_CRATE_EDGE);
+            draw_line(dr, x0 + 2, y1 - 2, x1 - 2, y0 + 2, COL_C_CRATE_EDGE);
+            str[1] = '\0';
+            str[0] = BARREL_LABEL(v);
+            if (str[0])
+                draw_text(dr, cx, cy, FONT_VARIABLE, T/2,
+                          ALIGN_VCENTRE | ALIGN_HCENTRE, COL_TEXT, str);
+        } else if (IS_PLAYER(v)) {
+            draw_circle(dr, cx, cy + T/8, T/4, COL_C_SUIT, COL_OUTLINE);
+            draw_circle(dr, cx, cy - T/5, T/6, COL_C_SKIN, COL_OUTLINE);
+        }
+    }
+
+    unclip(dr);
+    draw_update(dr, tx, ty, T, T);
+}
+
 static void draw_tile(drawing *dr, game_drawstate *ds, int x, int y, int v)
 {
+    if (ds->theme == 1) {
+        draw_tile_classic(dr, ds, COORD(x), COORD(y), v & 0xFF, (v & 0x100) != 0);
+        return;
+    }
     int tx = COORD(x), ty = COORD(y);
     int bg = (v & 0x100 ? COL_HIGHLIGHT : COL_BACKGROUND);
 
@@ -1997,19 +2156,32 @@ static void game_redraw(drawing *dr, game_drawstate *ds,
     else
 	flashtype = 0;
 
+    if (ui && ui->theme != ds->theme) {
+        int i;
+        ds->theme = ui->theme;
+        ds->started = false;
+        for (i = 0; i < w*h; i++)
+            ds->grid[i] = INVALID;
+    }
+
     /*
      * Initialise a fresh drawstate.
      */
     if (!ds->started) {
+        if (ds->theme == 1)
+            draw_rect(dr, 0, 0, COORD(w) + BORDER, COORD(h) + BORDER,
+                      COL_BACKGROUND);
 	/*
-	 * Draw the grid lines.
+	 * Draw the grid lines (not in the classic theme).
 	 */
-	for (y = 0; y <= h; y++)
-	    draw_line(dr, COORD(0), COORD(y), COORD(w), COORD(y),
-		      COL_LOWLIGHT);
-	for (x = 0; x <= w; x++)
-	    draw_line(dr, COORD(x), COORD(0), COORD(x), COORD(h),
-		      COL_LOWLIGHT);
+	if (ds->theme == 0) {
+	    for (y = 0; y <= h; y++)
+	        draw_line(dr, COORD(0), COORD(y), COORD(w), COORD(y),
+		          COL_LOWLIGHT);
+	    for (x = 0; x <= w; x++)
+	        draw_line(dr, COORD(x), COORD(0), COORD(x), COORD(h),
+		          COL_LOWLIGHT);
+	}
 
 	ds->started = true;
     }
@@ -2331,7 +2503,7 @@ const struct game thegame = {
     free_game,
     false, solve_game,
     false, game_can_format_as_text_now, game_text_format,
-    NULL, NULL, /* get_prefs, set_prefs */
+    get_prefs, set_prefs,
     new_ui,
     free_ui,
     NULL, /* encode_ui */

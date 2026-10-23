@@ -1387,12 +1387,13 @@ void RunGenerator(int BoardWidth__,                         /* input */
 /*
  * 'rows' holds 'h' lines of 'w' characters in XSB notation (# wall,
  * space floor, . goal, @ player); boxes are placed on goals by the
- * generator. On success the generated level (boxes '$' / '*') is
+ * generator (reverse mode) or are given as '$' (forward mode). On success the generated level (boxes '$' / '*') is
  * written to 'out' in the same layout (h*w chars, no separators) and
  * the number of pushes is returned (0 on failure).
  */
 int sokoban_yasgen_generate(int w, int h, const char *rows, unsigned seed,
-                            int megabytes, int max_open, char *out)
+                            int megabytes, int max_open, int reverse,
+                            int randplayer, char *out)
 {
     static TBoardAsChars Board;
     int PushCount = 0, x, y;
@@ -1406,6 +1407,8 @@ int sokoban_yasgen_generate(int w, int h, const char *rows, unsigned seed,
         return 0;
     }
     Positions.MaxOpenPositions = max_open;
+    Game.ReverseMode = reverse ? TRUE : FALSE;
+    Game.RandomizePlayerStartPosition = randplayer ? TRUE : FALSE;
     RandomState.RandomNumber = (int)(seed % 714025u);
     memset(Board, 0, sizeof(Board));
     for (y = 0; y < h; y++)

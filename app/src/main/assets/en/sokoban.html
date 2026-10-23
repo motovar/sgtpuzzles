@@ -29,6 +29,7 @@
 <li><b>MCTS</b>: Monte Carlo tree search generator by lkseg (based on the paper "Data Driven Sokoban Puzzle Generation with Monte Carlo Tree Search"). It works for boards of up to 254 squares and takes a few seconds.</li>
 <li><b>YASGen</b>: Brian Damgaard's YASGen0 (from YASC, GPL): builds a small room with goals and searches for the box layout needing the most pushes.</li>
 </ul>
-<p>Each generator has its own settings in the Custom dialog (the setting names start with the generator name; settings of other generators are ignored). Boulders: number of boulders, attempts (more attempts give a deeper level) and search nodes per attempt. MCTS: search time, how many of the best levels to keep, and whether to play the hardest, a random or the easiest of them. YASGen: number of goals, wall density and search limit.</p>
+<p>The Custom dialog shows only the settings of the selected generator; after changing the generator, confirm and open the dialog again to see its settings. Boulders: number of boulders, attempts (more attempts give a deeper level) and search nodes per attempt. MCTS: search time, how many of the best levels to keep, and which of them to play (1 = hardest, the number of levels to keep = easiest). YASGen: reverse or forward mode, number of goals, wall density, search limit and random player start; it uses the whole grid.</p>
+<p>In the game preferences, Graphics selects the original look or a Classic look with bricks and crates.</p>
 </body>
 </html>

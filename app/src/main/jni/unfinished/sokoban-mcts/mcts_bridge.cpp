@@ -30,8 +30,10 @@ extern "C" int sokoban_mcts_generate(int width, int height, unsigned long long s
         Array<Level> set = mcts->get_level_set(keep < 1 ? 1 : keep);
         if (set.count >= 1) {
             /* the set is sorted from the lowest to the highest score */
-            int sel = pick == 0 ? (int) set.count - 1
-                    : pick == 2 ? 0 : (int)(rnd % (unsigned) set.count);
+            /* pick = rank from the hardest (1) to the easiest */
+            int sel = (int) set.count - (pick < 1 ? 1 : pick);
+            if (sel < 0) sel = 0;
+            (void) rnd;
             String s = str(set[sel].grid);
             if (s.count + 1 <= outcap) {
                 for (isize i = 0; i < s.count; i++) out[i] = (char) s.data[i];
