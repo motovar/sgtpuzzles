@@ -1595,8 +1595,8 @@ static void game_redraw(drawing *dr, game_drawstate *ds,
 
                 tx = (((x * (cw + 1)) + (cw * 0.5f)) + 0.5f) * tilesize;
                 ty = (((y * (ch + 1)) + (ch * 0.5f)) + 0.5f) * tilesize;
-                tx += adjthan[d].dx * (cw - 0.5f) * tilesize;
-                ty += adjthan[d].dy * (ch - 0.5f) * tilesize;
+                tx += adjthan[d].dx * (cw + 1) * 0.5f * tilesize;
+                ty += adjthan[d].dy * (ch + 1) * 0.5f * tilesize;
 
                 clip(dr, tx - radius - 1, ty - radius - 1, diameter + 2, diameter + 2);
 
