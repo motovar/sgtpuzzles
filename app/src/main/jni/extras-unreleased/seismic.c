@@ -1035,13 +1035,18 @@ static bool seismic_gen_region_first(game_state *state, random_state *rs)
 	{
 		int start = cells[j], target, size = 1, nf = 0, k;
 		if (region[start] >= 0) continue;
-		/* sizes 2..cap preferred; a few singletons are fine */
-		if (state->mode == MODE_TECTONIC)
-			target = 3 + random_upto(rs, cap - 2);
-		else
+		/* size distribution in the style of hand-made puzzles: plenty of
+		 * small regions (1 and 2) as well as medium ones, few at the cap */
 		{
-			target = 1 + random_upto(rs, cap);
-			if (target == 1 && random_upto(rs, 3)) target = 2 + random_upto(rs, cap - 1);
+			int wt[10], tot = 0, r, k2;
+			for (k2 = 1; k2 <= cap; k2++)
+			{
+				int wv = k2 == 1 ? 2 : k2 == 2 ? 4 : k2 <= (cap + 1) / 2 + 1 ? 4 : 2;
+				wt[k2] = wv; tot += wv;
+			}
+			r = random_upto(rs, tot);
+			for (target = 1; target < cap && r >= wt[target]; target++)
+				r -= wt[target];
 		}
 		region[start] = nreg;
 		for (;;)
@@ -1071,7 +1076,7 @@ static bool seismic_gen_region_first(game_state *state, random_state *rs)
 
 	/* absorb undersized regions into a neighbour while the size cap allows */
 	{
-		int minsize = state->mode == MODE_TECTONIC ? 3 : 2, r, changed = 1, guard = 0;
+		int minsize = 1, r, changed = 1, guard = 0;
 		while (changed && guard++ < 50)
 		{
 			changed = 0;

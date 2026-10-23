@@ -206,8 +206,9 @@ static const char *validate_params(const game_params *params, bool full)
     if (params->n < 3 || params->n > 6)
         return "Number of letters must be between 3 and 6";
     set_size_for_n(&canon);
-    if (params->w != canon.w || params->h != canon.h)
-        return "Grid size must be 4x2, 4x4, 8x4 or 8x8 for 3, 4, 5 or 6 letters";
+    if (!((params->w == canon.w && params->h == canon.h) ||
+          (params->w == canon.h && params->h == canon.w)))
+        return "Grid size must be 4x2, 4x4, 8x4 or 8x8 (or rotated) for 3, 4, 5 or 6 letters";
     if (params->diff < 0 || params->diff > 1)
         return "Unknown difficulty";
 
