@@ -1022,7 +1022,7 @@ static bool fill_search(struct fill_ctx *c)
 static bool seismic_gen_region_first(game_state *state, random_state *rs)
 {
 	int w = state->w, h = state->h, s = w * h;
-	int cap = state->mode == MODE_TECTONIC ? 5 : 9;
+	int cap = state->mode == MODE_TECTONIC ? 5 : (3 + (w + h) / 4 > 7 ? 7 : 3 + (w + h) / 4);
 	int *region = snewn(s, int), *rsize = snewn(s, int);
 	int *cells = snewn(s, int), *front = snewn(4 * s + 4, int);
 	int nreg = 0, i, j;
