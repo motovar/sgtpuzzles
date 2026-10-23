@@ -169,6 +169,11 @@ static void decode_params(game_params *params, char const *string)
     while (*string && isdigit((unsigned char)*string))
         ++string;
 
+    {
+        int area = params->w * params->h, k = 0;
+        while ((1 << k) < area) k++;
+        params->n = (area == (1 << k) && k >= 3 && k <= 6) ? k : 4;
+    }
     if (*string == 'n')
     {
         ++string;
@@ -1540,11 +1545,17 @@ static void game_redraw(drawing *dr, game_drawstate *ds,
                 for (cx = 0; cx < cw; cx++)
                 {
                     cn = cy * cw + cx;
-                    if (cn >= n)
-                        continue;
 
                     tx = (((x * (cw + 1)) + cx) + 0.5f) * tilesize;
                     ty = (((y * (ch + 1)) + cy) + 0.5f) * tilesize;
+
+                    if (cn >= n)
+                    {
+                        /* unused slot of the cell: blend into the background */
+                        draw_rect(dr, tx, ty,
+                                  tilesize - 1, tilesize - 1, COL_OUTERBG);
+                        continue;
+                    }
 
                     unknown = (state->known[y * w + x] ^ state->mask[y * w + x]) & (1 << cn);
                     draw_rect(dr, tx, ty,
