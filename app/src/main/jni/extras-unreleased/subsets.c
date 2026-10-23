@@ -77,12 +77,12 @@ static const struct
     {F_ADJ_LEFT, F_ADJ_RIGHT, -1, 0, '<', 'L'}};
 
 /* TODO: When other sizes are supported, read n instead of returning a constant */
-#define CELL_WIDTH(n) ((void)(n), 2)
+#define CELL_WIDTH(n) ((n) >= 5 ? 3 : 2)
 #define CELL_HEIGHT(n) ((void)(n), 2)
 
 struct game_params
 {
-    int w, h, n;
+    int w, h, n, diff;
 };
 
 struct game_state
@@ -103,17 +103,43 @@ static game_params *default_params(void)
     game_params *ret = snew(game_params);
 
     ret->w = ret->h = ret->n = 4;
+    ret->diff = 0;
 
     return ret;
 }
 
+static void set_size_for_n(game_params *p)
+{
+    switch (p->n) {
+      case 3: p->w = 4; p->h = 2; break;
+      case 5: p->w = 8; p->h = 4; break;
+      case 6: p->w = 8; p->h = 8; break;
+      default: p->n = 4; p->w = 4; p->h = 4; break;
+    }
+}
+
+static const struct { int n, diff; const char *name; } subsets_presets[] = {
+    {3, 0, "3 letters (4x2)"},
+    {4, 0, "4 letters, Easy (4x4)"},
+    {4, 1, "4 letters, Hard (4x4)"},
+    {5, 0, "5 letters, Easy (8x4)"},
+    {5, 1, "5 letters, Hard (8x4)"},
+    {6, 0, "6 letters, Easy (8x8)"},
+    {6, 1, "6 letters, Hard (8x8)"},
+};
+
 static bool game_fetch_preset(int i, char **name, game_params **params)
 {
-    if (i != 0)
+    game_params *p;
+    if (i < 0 || i >= (int)lenof(subsets_presets))
         return false;
 
-    *name = dupstr("4x4 Size 4");
-    *params = default_params();
+    p = snew(game_params);
+    p->n = subsets_presets[i].n;
+    p->diff = subsets_presets[i].diff;
+    set_size_for_n(p);
+    *name = dupstr(subsets_presets[i].name);
+    *params = p;
     return true;
 }
 
@@ -150,22 +176,68 @@ static void decode_params(game_params *params, char const *string)
     }
     while (*string && isdigit((unsigned char)*string))
         ++string;
+
+    params->diff = 0;
+    if (*string == 'd')
+    {
+        ++string;
+        params->diff = atoi(string);
+    }
 }
 
 static char *encode_params(const game_params *params, bool full)
 {
     char data[80];
     sprintf(data, "%dx%dn%d", params->w, params->h, params->n);
+    if (full)
+        sprintf(data + strlen(data), "d%d", params->diff);
 
     return dupstr(data);
 }
 
 static const char *validate_params(const game_params *params, bool full)
 {
-    if (params->w != 4 || params->h != 4 || params->n != 4)
-        return "Currently only 4x4 puzzles are supported";
+    game_params canon = *params;
+    if (params->n < 3 || params->n > 6)
+        return "Number of letters must be between 3 and 6";
+    set_size_for_n(&canon);
+    if (params->w != canon.w || params->h != canon.h)
+        return "Grid size must be 4x2, 4x4, 8x4 or 8x8 for 3, 4, 5 or 6 letters";
+    if (params->diff < 0 || params->diff > 1)
+        return "Unknown difficulty";
 
     return NULL;
+}
+
+static config_item *game_configure(const game_params *params)
+{
+    config_item *ret = snewn(3, config_item);
+    char buf[32];
+
+    ret[0].name = "Number of letters (3-6)";
+    ret[0].type = C_STRING;
+    sprintf(buf, "%d", params->n);
+    ret[0].u.string.sval = dupstr(buf);
+
+    ret[1].name = "Difficulty";
+    ret[1].type = C_CHOICES;
+    ret[1].u.choices.choicenames = ":Easy:Hard";
+    ret[1].u.choices.selected = params->diff;
+
+    ret[2].name = NULL;
+    ret[2].type = C_END;
+    return ret;
+}
+
+static game_params *custom_params(const config_item *cfg)
+{
+    game_params *ret = snew(game_params);
+    ret->n = atoi(cfg[0].u.string.sval);
+    ret->diff = cfg[1].u.choices.selected;
+    if (ret->n < 3 || ret->n > 6)
+        ret->n = 4;
+    set_size_for_n(ret);
+    return ret;
 }
 
 static void free_game(game_state *state)
@@ -180,7 +252,7 @@ static void free_game(game_state *state)
 static const char *attempt_load_game(game_state *state, const char *desc)
 {
     const char *p = desc;
-    int w = state->w, h = state->w, n = state->n;
+    int w = state->w, h = state->h, n = state->n;
     int i = 0, x, y;
     unsigned int num;
 
@@ -854,6 +926,8 @@ static void hint_snap(const game_state *state)
     }
 }
 
+static int sub_diff = 1;
+
 static char subsets_solve_game(game_state *state)
 {
     const int s = state->w * state->h, n = state->n, n2 = 1 << n;
@@ -891,7 +965,7 @@ static char subsets_solve_game(game_state *state)
         if (subsets_solve_apply_arrows(state))
             continue;
 
-        if (subsets_disjoint(state, cube))
+        if (sub_diff >= 1 && subsets_disjoint(state, cube))
             continue;
 
         if (subsets_bits_from_cube(state, cube))
@@ -900,7 +974,7 @@ static char subsets_solve_game(game_state *state)
         if (subsets_solve_single_position(state, counts, cube))
             continue;
 
-        if (subsets_solve_apply_arrows_advanced(state, cube))
+        if (sub_diff >= 1 && subsets_solve_apply_arrows_advanced(state, cube))
             continue;
 
         break;
@@ -953,6 +1027,7 @@ static char *new_game_desc(const game_params *params, random_state *rs,
         }
     }
 
+    sub_diff = params->diff;
     shuffle(spaces, w * h, sizeof(int), rs);
     for (i2 = 0; i2 < w * h; i2++)
     {
@@ -968,6 +1043,7 @@ static char *new_game_desc(const game_params *params, random_state *rs,
         free_game(solved);
     }
 
+    sub_diff = 1;
     ret = snewn(w * h * 6, char);
     p = ret;
     for (i = 0; i < w * h; i++)
@@ -1299,7 +1375,7 @@ static void game_compute_size(const game_params *params, int tilesize,
     *x = w * (CELL_WIDTH(n) + 1) * tilesize;
     *y = h * (CELL_HEIGHT(n) + 1) * tilesize;
 
-    *y += tilesize * (CELL_HEIGHT(n) + 1);
+    *y += tilesize * h * 3 / 4;
 }
 
 static void game_set_size(drawing *dr, game_drawstate *ds,
@@ -1587,7 +1663,7 @@ static void game_redraw(drawing *dr, game_drawstate *ds,
             tx = x * (cw + 1) * tilesize;
             ty = y * 0.75 * tilesize;
             tx += cw * tilesize * 0.75;
-            ty += (h + 2) * ch * tilesize;
+            ty += h * (ch + 1) * tilesize;
 
             for (cx = 0; cx < n; cx++)
                 buf[cx] = cn & (1 << cx) ? 'A' + cx : '_';
@@ -1671,7 +1747,7 @@ const struct game thegame = {
     encode_params,
     free_params,
     dup_params,
-    false, NULL, NULL, /* configure, custom_params */
+    true, game_configure, custom_params,
     validate_params,
     new_game_desc,
     validate_desc,
