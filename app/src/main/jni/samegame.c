@@ -1713,14 +1713,22 @@ static int sgs_moves(const unsigned char *b, int w, int h,
                      struct sgs_move *mv, int maxmv, unsigned char *seenc,
                      unsigned char *grp, int *stack)
 {
-    int n = 0, c;
-    memset(seenc, 0, w*h);
-    for (c = 0; c < w*h; c++) {
-        int sz, i;
+    int n = 0, c, nn = w*h;
+    memset(seenc, 0, nn);
+    for (c = 0; c < nn; c++) {
+        int sp = 0, cnt = 0, col;
         if (!b[c] || seenc[c]) continue;
-        sz = sgs_group(b, w, h, c, grp, stack);
-        for (i = 0; i < w*h; i++) if (grp[i]) seenc[i] = 1;
-        if (sz >= 2 && n < maxmv) { mv[n].cell = c; mv[n].size = sz; mv[n].key = 0; n++; }
+        col = b[c];
+        seenc[c] = 1; stack[sp++] = c;
+        while (sp) {
+            int p = stack[--sp], x = p % w, y = p / w;
+            cnt++;
+            if (x > 0   && !seenc[p-1] && b[p-1] == col) { seenc[p-1] = 1; stack[sp++] = p-1; }
+            if (x+1 < w && !seenc[p+1] && b[p+1] == col) { seenc[p+1] = 1; stack[sp++] = p+1; }
+            if (y > 0   && !seenc[p-w] && b[p-w] == col) { seenc[p-w] = 1; stack[sp++] = p-w; }
+            if (y+1 < h && !seenc[p+w] && b[p+w] == col) { seenc[p+w] = 1; stack[sp++] = p+w; }
+        }
+        if (cnt >= 2 && n < maxmv) { mv[n].cell = c; mv[n].size = cnt; mv[n].key = 0; n++; }
     }
     return n;
 }
@@ -1728,7 +1736,7 @@ static int sgs_moves(const unsigned char *b, int w, int h,
 static bool sgs_dfs(struct sgs *ps, const unsigned char *b, int depth)
 {
     int w = ps->w, h = ps->h, n = ps->n, i, j, nm, left = 0, c;
-    struct sgs_move mv[64];
+    struct sgs_move *mv;
     unsigned char *grp, *seenc, *nb;
     int *stack;
     int cnt[10];
@@ -1744,6 +1752,7 @@ static bool sgs_dfs(struct sgs *ps, const unsigned char *b, int depth)
     }
     grp = snewn(n, unsigned char); seenc = snewn(n, unsigned char);
     nb = snewn(n, unsigned char); stack = snewn(n, int);
+    mv = snewn(64, struct sgs_move);
     memset(cnt, 0, sizeof cnt);
     for (i = 0; i < n; i++) if (b[i]) cnt[b[i] % 10]++;
     nm = sgs_moves(b, w, h, mv, 64, seenc, grp, stack);
@@ -1766,7 +1775,7 @@ static bool sgs_dfs(struct sgs *ps, const unsigned char *b, int depth)
         if (sgs_dfs(ps, nb, depth + 1)) ok = true;
         if (ps->budget <= 0) break;
     }
-    sfree(grp); sfree(seenc); sfree(nb); sfree(stack);
+    sfree(grp); sfree(seenc); sfree(nb); sfree(stack); sfree(mv);
     return ok;
 }
 
@@ -1781,7 +1790,7 @@ static int sgs_solve(const unsigned char *start, int w, int h, int *path)
     for (m = 0; m < 4 && !ok; m++) {
         ps.mode = m;
         memset(ps.seen, 0, ps.cap * sizeof(unsigned long long));
-        ps.budget = 1200000;
+        ps.budget = n > 150 ? 2500000L / n * 2 : 1200000;
         ok = sgs_dfs(&ps, start, 0);
     }
     sfree(ps.seen);
@@ -1830,6 +1839,22 @@ static char *hint_game(const game_state *orig, const game_state *curr,
             sg_plan_len = len; sg_plan_n = n;
             cell = sg_plan[0];
         }
+    }
+    if (cell < 0) {
+        /* No full solution found (large board): fall back to a sensible
+         * greedy move - largest group of the most plentiful colour. */
+        struct sgs_move *mv = snewn(n, struct sgs_move);
+        unsigned char *seenc = snewn(n, unsigned char);
+        int cnt[10], nm, bestk = 0, bi = -1;
+        memset(cnt, 0, sizeof cnt);
+        for (i = 0; i < n; i++) if (b[i]) cnt[b[i] % 10]++;
+        nm = sgs_moves(b, w, h, mv, n, seenc, grp, stack);
+        for (i = 0; i < nm; i++) {
+            int key = cnt[b[mv[i].cell] % 10] * 10000 + mv[i].size;
+            if (bi < 0 || key > bestk) { bestk = key; bi = i; }
+        }
+        if (bi >= 0) cell = mv[bi].cell;
+        sfree(mv); sfree(seenc);
     }
     if (cell < 0) {
         *error = "No way to clear the board found from here; try undoing some moves";
