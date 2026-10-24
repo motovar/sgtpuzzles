@@ -52,7 +52,7 @@ inline void alternative_action_delete_obstacle(Mcts_Node &node, Mcts *tree) {
                 Vector2i v = tile + DIRECTION_TO_VEC[direction];
                 i32 idx = node.grid.as_index(v.x, v.y);
                 if(node.grid.in_grid(v.x, v.y) && !is_used[idx] && pawn_is_block(node.grid.get(idx))) {
-                    assert(idx<=255);
+                    assert(idx<=65535);
                     node.first.add(idx);
                     is_used[idx] = true;
                 }
@@ -86,7 +86,7 @@ inline void action_place_box(Mcts_Node &node, Mcts *tree) {
     for_range(i, 0, node.grid.get_count()) {
         Pawn it = node.grid.data[i];
         if(pawn_is_empty(it) && i != tree->start_position) {
-            assert(i<=255);
+            assert(i<=65535);
             node.second.add(i);
         }
     }
@@ -199,7 +199,7 @@ inline Array<Move_Info> simple_move_agent(Mcts_Node &node, Mcts *tree) {
         return {};
     }
     auto pos = node.grid.as_tile(node.pusher);
-    u8 pos_i = node.pusher;
+    u16 pos_i = node.pusher;
     auto moves = make_array<Move_Info>(0, 5);
     for_range(direction, 0, 4) {
         Vector2i v = DIRECTION_TO_VEC[direction];        

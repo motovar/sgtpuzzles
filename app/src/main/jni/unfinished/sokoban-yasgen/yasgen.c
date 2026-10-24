@@ -201,7 +201,7 @@ typedef char                        TString[MAX_STRING_LENGTH + 1];
 
 #define DEFAULT_TRANSPOSITION_TABLE_SIZE_MEBI_BYTES 128 /* 128 MiB */
 
-#define MAX_BOARD_WIDTH             50
+#define MAX_BOARD_WIDTH             100
 #define MAX_BOARD_HEIGHT            MAX_BOARD_WIDTH
 #define MAX_BOARD_SIZE              ((MAX_BOARD_WIDTH + 2) * (MAX_BOARD_HEIGHT + 2))
         /* board size: '0' left/top border; '+1': right/bottom border */

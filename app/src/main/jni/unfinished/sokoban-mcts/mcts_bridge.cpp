@@ -6,7 +6,7 @@ extern "C" int sokoban_mcts_generate(int width, int height, unsigned long long s
                                      double timeout_sec, int keep, int pick, unsigned rnd,
                                      char *out, int outcap)
 {
-    if (width < 1 || height < 1 || width * height < 16 || width * height > 254)
+    if (width < 1 || height < 1 || width * height < 16 || width * height > 4000)
         return 0;
 
     Default_Allocator default_allocator;

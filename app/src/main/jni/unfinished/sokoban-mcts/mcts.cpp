@@ -918,7 +918,7 @@ Mcts *new_mcts(u64 seed, Vector2i size, Vector2i start_position) {
     assert(mid == root->grid.as_tile(mcts.start_position));
     auto ptr = mem_alloc<Mcts>();
     *ptr = mcts;
-    root->pusher = (u8)mcts.start_position;
+    root->pusher = (u16)mcts.start_position;
     return ptr;
 }
 
@@ -1011,7 +1011,7 @@ void _get_all_possible_moves(Vector2i tile, Grid &grid, Array<bool> &visited, Ar
         } else {
             bool is_box = pawn_is_box(grid.get(to_idx));
             if(is_box && grid._could_move(tile.x, tile.y, v)) {
-                moves.add(Move_Info{(u8)grid.as_index(tile), (u8)direction});
+                moves.add(Move_Info{(u16)grid.as_index(tile), (u8)direction});
             }
         }
     }
@@ -1038,7 +1038,7 @@ void _get_all_possible_moves_iterative(Vector2i tile, Grid &grid, Array<bool> &v
             } else {
                 bool is_box = pawn_is_box(grid.get(to_idx));
                 if(is_box && grid._could_move(tile.x, tile.y, v)) {
-                    moves.add(Move_Info{(u8)grid.as_index(tile), (u8)direction});
+                    moves.add(Move_Info{(u16)grid.as_index(tile), (u8)direction});
                 }
             }
         }

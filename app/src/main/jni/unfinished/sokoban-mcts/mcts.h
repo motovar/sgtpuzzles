@@ -30,7 +30,7 @@ enum Mcts_Node_Flag : u8 {
 #define is_terminal(NODE) bool(NODE->flags & MCTS_TERMINAL)
 
 
-#define INVALID_INDEX u8(255)
+#define INVALID_INDEX u16(0xFFFF)
 
 struct Mcts_Node;
 struct Mcts;
@@ -60,7 +60,7 @@ Mcts_Node clone_mcts_node(Mcts_Node &, Mcts_Node *);
 isize get_box_count(Grid &);
 
 struct Move_Info {
-    u8 index;
+    u16 index;
     u8 direction;
 };
 
@@ -108,8 +108,8 @@ struct Mcts_Node {
 
     // See actions for the usage
     // This has been discussed in the paper    
-    Array<u8> first; 
-    Array<u8> second; 
+    Array<u16> first; 
+    Array<u16> second; 
     Array<Move_Info> moves;
     // Every node has their own grid
     Grid grid;
@@ -118,7 +118,7 @@ struct Mcts_Node {
     i16 box_count = 0;
     u16 depth = 0;
     u8 flags = 0;
-    u8 pusher;    
+    u16 pusher;    
     
     
     
