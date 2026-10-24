@@ -27,7 +27,8 @@
 <li><b>Original</b>: the generator that ships with the puzzle (random reverse play).</li>
 <li><b>Boulders (NetHack style)</b>: a row of pits has to be filled with boulders to open the way to the exit; a port of the generator from miki151/sokoban.</li>
 <li><b>MCTS</b>: Monte Carlo tree search generator by lkseg (based on the paper "Data Driven Sokoban Puzzle Generation with Monte Carlo Tree Search"). It works for boards of up to 254 squares and takes a few seconds.</li>
-<li><b>YASGen</b>: Brian Damgaard's YASGen0 (from YASC, GPL): builds a small room with goals and searches for the box layout needing the most pushes.</li>
+<li><b>YASGen</b>: Brian Damgaard's YASGen0 (from YASC, GPL): a genetic algorithm evolves small rooms (walls, goals, player) and uses YASGen's exhaustive reverse search as fitness (longest solutions, boxes starting on goals are penalised). Settings: boxes, wall density, search limit, generations.</li>
+<li><b>Rooms</b>: port of smartive/rust-sokoban-level-generator (Apache-2.0, after Taylor &amp; Parberry): the level is assembled from 3x3 rooms (17 rotated templates, up to 5x5 rooms), goals are placed at random and the position farthest from the solved state is found by a reverse-move search.</li>
 </ul>
 <p>The Custom dialog shows only the settings of the selected generator; after changing the generator, confirm and open the dialog again to see its settings. Boulders: number of boulders, attempts (more attempts give a deeper level) and search nodes per attempt. MCTS: search time, how many of the best levels to keep, and which of them to play (1 = hardest, the number of levels to keep = easiest). YASGen: reverse or forward mode, number of goals, wall density, search limit and random player start; it uses the whole grid.</p>
 <p>In the game preferences, Graphics selects the original look or a Classic look with bricks and crates.</p>

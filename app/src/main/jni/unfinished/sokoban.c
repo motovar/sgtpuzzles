@@ -144,6 +144,8 @@ struct game_params {
     int mc_time, mc_keep, mc_pick;
     /* YASGen generator */
     int yg_goals, yg_walls, yg_limit, yg_mode, yg_rand, yg_gens;
+    /* Rooms generator */
+    int rm_boxes, rm_limit, rm_attempts;
     /*
      * FIXME: a parameter involving degree of filling in?
      */
@@ -162,6 +164,7 @@ static void sokoban_gen_defaults(game_params *p)
     p->mc_time = 0; p->mc_keep = 1; p->mc_pick = 1;
     p->yg_goals = 0; p->yg_walls = 25; p->yg_limit = 400;
     p->yg_mode = 0; p->yg_rand = 1; p->yg_gens = 8;
+    p->rm_boxes = 0; p->rm_limit = 200; p->rm_attempts = 2;
 }
 
 static game_params *default_params(void)
@@ -227,7 +230,7 @@ static void decode_params(game_params *params, char const *string)
     if (*string == 'g') {
         string++;
         params->gen = atoi(string);
-        if (params->gen < 0 || params->gen > 3) params->gen = 0;
+        if (params->gen < 0 || params->gen > 4) params->gen = 0;
         while (*string && isdigit((unsigned char)*string)) string++;
         while (*string) {
             char key = *string++;
@@ -246,6 +249,9 @@ static void decode_params(game_params *params, char const *string)
               case 'm': params->yg_mode = v; break;
               case 'r': params->yg_rand = v; break;
               case 'e': params->yg_gens = v; break;
+              case 'b': params->rm_boxes = v; break;
+              case 's': params->rm_limit = v; break;
+              case 'x': params->rm_attempts = v; break;
               default: break;
             }
         }
@@ -275,6 +281,9 @@ static char *encode_params(const game_params *params, bool full)
         if (params->yg_mode != d.yg_mode) p += sprintf(p, "m%d", params->yg_mode);
         if (params->yg_rand != d.yg_rand) p += sprintf(p, "r%d", params->yg_rand);
         if (params->yg_gens != d.yg_gens) p += sprintf(p, "e%d", params->yg_gens);
+        if (params->rm_boxes != d.rm_boxes) p += sprintf(p, "b%d", params->rm_boxes);
+        if (params->rm_limit != d.rm_limit) p += sprintf(p, "s%d", params->rm_limit);
+        if (params->rm_attempts != d.rm_attempts) p += sprintf(p, "x%d", params->rm_attempts);
     }
 
     return dupstr(data);
@@ -302,7 +311,7 @@ static config_item *game_configure(const game_params *params)
 
     ret[n].name = "Level generator";
     ret[n].type = C_CHOICES;
-    ret[n].u.choices.choicenames = ":Original:Boulders (NetHack style):MCTS:YASGen";
+    ret[n].u.choices.choicenames = ":Original:Boulders (NetHack style):MCTS:YASGen:Rooms (Taylor-Parberry)";
     ret[n].u.choices.selected = params->gen;
     n++;
 
@@ -333,6 +342,10 @@ static config_item *game_configure(const game_params *params)
         ret[n].type = C_BOOLEAN;
         ret[n].u.boolean.bval = params->yg_rand != 0;
         n++;
+    } else if (params->gen == 4) {
+        STR_ITEM("Rooms: number of boxes (0 = auto)", params->rm_boxes);
+        STR_ITEM("Rooms: search limit (thousand positions)", params->rm_limit);
+        STR_ITEM("Rooms: goal placements to try", params->rm_attempts);
     }
 #undef STR_ITEM
 
@@ -357,6 +370,7 @@ static game_params *custom_params(const config_item *cfg)
         if (!strncmp(cfg[3].name, "Boulders", 8)) shown = 1;
         else if (!strncmp(cfg[3].name, "MCTS", 4)) shown = 2;
         else if (!strncmp(cfg[3].name, "YASGen", 6)) shown = 3;
+        else if (!strncmp(cfg[3].name, "Rooms", 5)) shown = 4;
     }
     if (shown && shown == ret->gen) {
         if (shown == 1) {
@@ -367,6 +381,10 @@ static game_params *custom_params(const config_item *cfg)
             ret->mc_time = atoi(cfg[3].u.string.sval);
             ret->mc_keep = atoi(cfg[4].u.string.sval);
             ret->mc_pick = atoi(cfg[5].u.string.sval);
+        } else if (shown == 4) {
+            ret->rm_boxes = atoi(cfg[3].u.string.sval);
+            ret->rm_limit = atoi(cfg[4].u.string.sval);
+            ret->rm_attempts = atoi(cfg[5].u.string.sval);
         } else {
             ret->yg_mode = cfg[3].u.choices.selected;
             ret->yg_goals = atoi(cfg[4].u.string.sval);
@@ -384,8 +402,14 @@ static const char *validate_params(const game_params *params, bool full)
 {
     if (params->w < 4 || params->h < 4)
 	return "Width and height must both be at least 4";
-    if (params->gen < 0 || params->gen > 3)
+    if (params->gen < 0 || params->gen > 4)
         return "Unknown level generator";
+    if (params->rm_boxes < 0 || params->rm_boxes > 8)
+        return "Rooms number of boxes must be between 0 and 8";
+    if (params->rm_limit < 10 || params->rm_limit > 3000)
+        return "Rooms search limit must be between 10 and 3000 thousand positions";
+    if (params->rm_attempts < 1 || params->rm_attempts > 50)
+        return "Rooms goal placements must be between 1 and 50";
     if (params->bm_count < 0 || params->bm_count > 6)
         return "Number of boulders must be between 0 and 6";
     if (params->bm_attempts < 1 || params->bm_attempts > 2000)
@@ -1570,6 +1594,360 @@ static bool sokoban_gen_yasgen(const game_params *params, random_state *rs,
     return true;
 }
 
+/* ----------------------------------------------------------------------
+ * "Rooms" generator: a port of smartive/rust-sokoban-level-generator
+ * (Apache-2.0), itself based on Joshua Taylor and Ian Parberry,
+ * "Procedural Generation of Sokoban Levels".  The level is assembled
+ * from randomly rotated 5x5 room templates (3x3 interior each), checked
+ * against the paper's requirements, goals are placed at random and a
+ * search over reverse moves ("pulls") finds the position of boxes and
+ * player that is farthest from the solved state.
+ */
+
+static const char *const rm_templates[17] = {
+    "EEEEE" "EFFFE" "EFFFE" "EFFFE" "EEEEE",
+    "EEEEE" "EWFFE" "EFFFE" "EFFFE" "EEEEE",
+    "EEEFF" "EWWFF" "EFFFE" "EFFFE" "EEEEE",
+    "EEEEE" "EWWWE" "EFFFE" "EFFFE" "EEEEE",
+    "EEEEE" "EWWWE" "EWFFE" "EWFFE" "EEEEE",
+    "EEFEE" "EWFFE" "FFFFE" "EFFWE" "EEEEE",
+    "EEEEE" "EWFFE" "FFFFE" "EWFFE" "EEEEE",
+    "EEFEE" "EWFFE" "FFFFE" "EWFWE" "EEFEE",
+    "EEFEE" "EWFWE" "FFFFF" "EWFWE" "EEFEE",
+    "EEFEE" "EWFWE" "EWSFF" "EWWWE" "EEEEE",
+    "EEEEE" "EWWWE" "FFFFF" "EWWWE" "EEEEE",
+    "EEEEE" "EFFFF" "EFWFF" "EFFFE" "EEEEE",
+    "EEEEE" "EWWWE" "EWWWE" "EWWWE" "EEEEE",
+    "EEEEE" "EWWWE" "EWFFE" "FFFFE" "FFEEE",
+    "EFEFE" "EFFFE" "EWFWE" "EFFFE" "EFEFE",
+    "EEEEE" "EWWWE" "EWWWE" "EFFFE" "EFFFE",
+    "EEEEE" "EWWWE" "FFWFF" "EFFFE" "EFFEE",
+};
+
+#define RM_FLOOR(c) ((c) == 'F' || (c) == 'S')
+
+static bool rm_no_large(const char *g, int W, int H);
+
+static bool rm_rooms(int RW, int RH, char *g, random_state *rs)
+{
+    int GW = RW * 3, GH = RH * 3, fh, fw, i, j, k, tries;
+    memset(g, 'E', GW * GH);
+    for (fh = 0; fh < RH; fh++)
+        for (fw = 0; fw < RW; fw++) {
+            for (tries = 0; tries < 300; tries++) {
+                char t[25], u[25];
+                bool ok = true;
+                memcpy(t, rm_templates[random_upto(rs, 17)], 25);
+                for (k = random_upto(rs, 4); k > 0; k--) {
+                    for (i = 0; i < 5; i++)
+                        for (j = 0; j < 5; j++)
+                            u[i*5+j] = t[(4-j)*5+i];
+                    memcpy(t, u, 25);
+                }
+                if (fw > 0)
+                    for (i = 0; i < 3; i++) {
+                        char a = g[(3*fh+i)*GW + 3*fw-1], b = t[(1+i)*5];
+                        if (a != 'E' && b != 'E' && a != b) ok = false;
+                    }
+                if (fh > 0)
+                    for (j = 0; j < 3; j++) {
+                        char a = g[(3*fh-1)*GW + 3*fw+j], b = t[1+j];
+                        if (a != 'E' && b != 'E' && a != b) ok = false;
+                    }
+                if (!ok) continue;
+                for (i = 0; i < 3; i++)
+                    for (j = 0; j < 3; j++)
+                        g[(3*fh+i)*GW + 3*fw+j] = t[(1+i)*5 + 1+j];
+                if (!rm_no_large(g, GW, GH)) {
+                    for (i = 0; i < 3; i++)
+                        for (j = 0; j < 3; j++)
+                            g[(3*fh+i)*GW + 3*fw+j] = 'E';
+                    continue;
+                }
+                break;
+            }
+            if (tries == 300) return false;
+        }
+    return true;
+}
+
+static bool rm_no_large(const char *g, int W, int H)
+{
+    int x, y, dy, dx;
+    bool all;
+    for (y = 0; y < H; y++)
+        for (x = 0; x < W; x++) {
+            if (y + 3 <= H && x + 4 <= W) {
+                all = true;
+                for (dy = 0; dy < 3 && all; dy++) for (dx = 0; dx < 4; dx++)
+                    if (!RM_FLOOR(g[(y+dy)*W+x+dx])) { all = false; break; }
+                if (all) return false;
+            }
+            if (y + 4 <= H && x + 3 <= W) {
+                all = true;
+                for (dy = 0; dy < 4 && all; dy++) for (dx = 0; dx < 3; dx++)
+                    if (!RM_FLOOR(g[(y+dy)*W+x+dx])) { all = false; break; }
+                if (all) return false;
+            }
+        }
+    return true;
+}
+
+/* goal candidates: floor cells with two floors in line next to them */
+static int rm_goal_cells(const char *g, int W, int H, int *out)
+{
+    int x, y, n = 0;
+    for (y = 0; y < H; y++)
+        for (x = 0; x < W; x++) {
+            bool ok = false;
+            if (!RM_FLOOR(g[y*W+x])) continue;
+            if (y >= 2 && RM_FLOOR(g[(y-1)*W+x]) && RM_FLOOR(g[(y-2)*W+x])) ok = true;
+            if (y <= H-3 && RM_FLOOR(g[(y+1)*W+x]) && RM_FLOOR(g[(y+2)*W+x])) ok = true;
+            if (x >= 2 && RM_FLOOR(g[y*W+x-1]) && RM_FLOOR(g[y*W+x-2])) ok = true;
+            if (x <= W-3 && RM_FLOOR(g[y*W+x+1]) && RM_FLOOR(g[y*W+x+2])) ok = true;
+            if (ok) out[n++] = y*W+x;
+        }
+    return n;
+}
+
+static bool rm_requirements(const char *g, int W, int H, int nb)
+{
+    int x, y, i, nfloor = 0, first = -1, *stack, sp = 0, *goals;
+    char *seen;
+    bool ok = true;
+    for (i = 0; i < W*H; i++)
+        if (RM_FLOOR(g[i])) { nfloor++; if (first < 0) first = i; }
+    if (nfloor < nb + 2) return false;
+    /* connectivity over plain floor squares */
+    seen = snewn(W*H, char); memset(seen, 0, W*H);
+    stack = snewn(W*H, int);
+    if (g[first] == 'F') {
+        stack[sp++] = first; seen[first] = 1;
+        while (sp) {
+            int p = stack[--sp], px = p % W, py = p / W;
+            if (px > 0 && g[p-1] == 'F' && !seen[p-1]) { seen[p-1] = 1; stack[sp++] = p-1; }
+            if (px < W-1 && g[p+1] == 'F' && !seen[p+1]) { seen[p+1] = 1; stack[sp++] = p+1; }
+            if (py > 0 && g[p-W] == 'F' && !seen[p-W]) { seen[p-W] = 1; stack[sp++] = p-W; }
+            if (py < H-1 && g[p+W] == 'F' && !seen[p+W]) { seen[p+W] = 1; stack[sp++] = p+W; }
+        }
+    }
+    for (i = 0; i < W*H; i++) if (g[i] == 'F' && !seen[i]) ok = false;
+    if (ok && g[first] != 'F') ok = false;
+    sfree(seen); sfree(stack);
+    if (!ok) return false;
+    for (y = 0; y < H && ok; y++)
+        for (x = 0; x < W && ok; x++) {
+            int walls = 0;
+            if (!RM_FLOOR(g[y*W+x])) continue;
+            if (y == 0 || g[(y-1)*W+x] == 'W') walls++;
+            if (y == H-1 || g[(y+1)*W+x] == 'W') walls++;
+            if (x == 0 || g[y*W+x-1] == 'W') walls++;
+            if (x == W-1 || g[y*W+x+1] == 'W') walls++;
+            if (walls >= 3) ok = false;
+        }
+    if (!ok) return false;
+    ok = rm_no_large(g, W, H);
+    if (!ok) return false;
+    goals = snewn(W*H, int);
+    ok = rm_goal_cells(g, W, H, goals) >= nb;
+    sfree(goals);
+    return ok;
+}
+
+/* Breadth-first search over reverse (pull) moves.  A state is the sorted
+ * list of box squares plus the lowest square of the player's region.
+ * Returns the greatest number of pulls found; the state is left in
+ * bestbox / *bestplayer. */
+static int rm_search(const char *g, int W, int H, const int *goals, int nb,
+                     long maxstates, unsigned char *bestbox, int *bestplayer)
+{
+    int N = W * H, stride = nb + 1, i, j, d, best = -1;
+    long nstates = 0, cap = maxstates, head = 0, tsize = 1;
+    unsigned char *st = snewn(cap * stride, unsigned char);
+    unsigned short *depth = snewn(cap, unsigned short);
+    int *table, *mark = snewn(N, int), *stack = snewn(N, int), stamp = 0;
+    int dir[4] = {-1, 1, -W, W};
+    unsigned char *boxat = snewn(N, unsigned char);
+    unsigned char key[64];
+
+    while (tsize < cap * 2) tsize <<= 1;
+    table = snewn(tsize, int);
+    for (i = 0; i < tsize; i++) table[i] = -1;
+    memset(mark, 0, N * sizeof(int));
+
+    /* flood fill the player's region from p, boxes in boxat block */
+#define RM_FLOOD(P, REG) do { \
+        int sp_ = 0; stamp++; stack[sp_++] = (P); mark[P] = stamp; (REG) = (P); \
+        while (sp_) { int q_ = stack[--sp_], qx_ = q_ % W, e_; \
+            if (q_ < (REG)) (REG) = q_; \
+            for (e_ = 0; e_ < 4; e_++) { int r_ = q_ + dir[e_]; \
+                if (e_ == 0 && qx_ == 0) continue; \
+                if (e_ == 1 && qx_ == W-1) continue; \
+                if (r_ < 0 || r_ >= N) continue; \
+                if (!RM_FLOOR(g[r_]) || boxat[r_] || mark[r_] == stamp) continue; \
+                mark[r_] = stamp; stack[sp_++] = r_; } } } while (0)
+
+#define RM_ADD(BOXES, PLAYER, DEPTH) do { \
+        unsigned h_ = 2166136261u; int a_; \
+        for (a_ = 0; a_ < nb; a_++) { key[a_] = (BOXES)[a_]; h_ = (h_ ^ key[a_]) * 16777619u; } \
+        key[nb] = (PLAYER); h_ = (h_ ^ key[nb]) * 16777619u; \
+        { long s_ = h_ & (tsize - 1); \
+          while (table[s_] >= 0 && memcmp(st + (long)table[s_] * stride, key, stride)) \
+              s_ = (s_ + 1) & (tsize - 1); \
+          if (table[s_] < 0 && nstates < cap) { \
+              memcpy(st + nstates * stride, key, stride); \
+              depth[nstates] = (DEPTH); table[s_] = nstates; \
+              if ((int)(DEPTH) > best) { best = (DEPTH); memcpy(bestbox, key, nb); *bestplayer = key[nb]; } \
+              nstates++; } } } while (0)
+
+    {   /* initial states: boxes on goals, player anywhere (every region) */
+        unsigned char sorted[16]; int reg;
+        for (i = 0; i < nb; i++) sorted[i] = goals[i];
+        for (i = 0; i < nb; i++) for (j = i+1; j < nb; j++)
+            if (sorted[j] < sorted[i]) { unsigned char t = sorted[i]; sorted[i] = sorted[j]; sorted[j] = t; }
+        memset(boxat, 0, N);
+        for (i = 0; i < nb; i++) boxat[sorted[i]] = 1;
+        {   int *done = snewn(N, int); memset(done, 0, N * sizeof(int));
+            for (i = 0; i < N; i++)
+                if (RM_FLOOR(g[i]) && !boxat[i] && !done[i]) {
+                    RM_FLOOD(i, reg);
+                    for (j = 0; j < N; j++) if (mark[j] == stamp) done[j] = 1;
+                    RM_ADD(sorted, reg, 0);
+                }
+            sfree(done);
+        }
+    }
+
+    while (head < nstates) {
+        unsigned char cur[16], nxt[16];
+        int reg, dep = depth[head], pl;
+        memcpy(cur, st + head * stride, nb);
+        pl = st[head * stride + nb];
+        head++;
+        memset(boxat, 0, N);
+        for (i = 0; i < nb; i++) boxat[cur[i]] = 1;
+        RM_FLOOD(pl, reg);
+        {   int cstamp = stamp;
+            for (i = 0; i < nb; i++)
+                for (d = 0; d < 4; d++) {
+                    int bx = cur[i], bxx = bx % W, b2, p2, p2x;
+                    if (d == 0 && bxx == 0) continue;
+                    if (d == 1 && bxx == W-1) continue;
+                    b2 = bx + dir[d];
+                    if (b2 < 0 || b2 >= N || !RM_FLOOR(g[b2]) || boxat[b2]) continue;
+                    if (mark[b2] != cstamp) continue;
+                    p2x = b2 % W;
+                    if (d == 0 && p2x == 0) continue;
+                    if (d == 1 && p2x == W-1) continue;
+                    p2 = b2 + dir[d];
+                    if (p2 < 0 || p2 >= N || !RM_FLOOR(g[p2]) || boxat[p2]) continue;
+                    /* the region test above used marks of this state; keep
+                     * them intact by flooding with a fresh stamp afterwards */
+                    memcpy(nxt, cur, nb);
+                    nxt[i] = b2;
+                    boxat[bx] = 0; boxat[b2] = 1;
+                    {   int j2, k2;
+                        for (j2 = 0; j2 < nb; j2++)
+                            for (k2 = j2+1; k2 < nb; k2++)
+                                if (nxt[k2] < nxt[j2]) { unsigned char t = nxt[j2]; nxt[j2] = nxt[k2]; nxt[k2] = t; }
+                    }
+                    {   int reg2;
+                        RM_FLOOD(p2, reg2);
+                        RM_ADD(nxt, reg2, dep + 1);
+                    }
+                    boxat[bx] = 1; boxat[b2] = 0;
+                    /* re-mark current region for the remaining moves */
+                    { int dummy; RM_FLOOD(pl, dummy); cstamp = stamp; (void)dummy; }
+                    if (nstates >= cap) goto done;
+                }
+        }
+    }
+  done:
+    sfree(st); sfree(depth); sfree(table); sfree(mark); sfree(stack); sfree(boxat);
+    return best;
+#undef RM_FLOOD
+#undef RM_ADD
+}
+
+static bool sokoban_gen_rooms(const game_params *params, random_state *rs,
+                              unsigned char *grid)
+{
+    int gw = params->w, gh = params->h;
+    int RW = (gw - 2) / 3, RH = (gh - 2) / 3, W, H, i, a, tries, nb;
+    char *g;
+    int *cand, ncand;
+    unsigned char bestbox[16], bbox[16];
+    int bestplayer = -1, bestdepth = -1, bplayer;
+    char *bestlevel;
+    clock_t t0 = clock();
+
+    if (RW > 5) RW = 5;
+    if (RH > 5) RH = 5;
+    if (RW < 1 || RH < 1) return false;
+    W = RW * 3; H = RH * 3;
+    nb = params->rm_boxes ? params->rm_boxes : 2 + (RW * RH) / 3;
+    if (!params->rm_boxes && nb > 5) nb = 5;
+    if (nb > 8) nb = 8;
+    g = snewn(W * H, char);
+    cand = snewn(W * H, int);
+    bestlevel = snewn(W * H, char);
+
+    for (tries = 0; tries < 3000; tries++) {
+        if (rm_rooms(RW, RH, g, rs) && rm_requirements(g, W, H, nb)) break;
+    }
+    if (tries == 3000) {
+        sfree(g); sfree(cand); sfree(bestlevel);
+        return false;
+    }
+    ncand = rm_goal_cells(g, W, H, cand);
+    memcpy(bestlevel, g, W * H);
+    memset(bestbox, 0, sizeof(bestbox));
+    {
+        int goalset[16];
+        for (a = 0; a < params->rm_attempts; a++) {
+            int d;
+            shuffle(cand, ncand, sizeof(int), rs);
+            for (i = 0; i < nb; i++) goalset[i] = cand[i];
+            d = rm_search(g, W, H, goalset, nb, (long)params->rm_limit * 1000,
+                          bbox, &bplayer);
+            if (d > bestdepth) {
+                bestdepth = d; bestplayer = bplayer;
+                memcpy(bestbox, bbox, nb);
+                /* remember goals: store them in the level copy */
+                memcpy(bestlevel, g, W * H);
+                for (i = 0; i < nb; i++) bestlevel[goalset[i]] = 'G';
+            }
+            if ((double)(clock() - t0) / CLOCKS_PER_SEC > 8.0) break;
+        }
+    }
+    if (bestdepth <= 0) {
+        sfree(g); sfree(cand); sfree(bestlevel);
+        return false;
+    }
+    for (i = 0; i < gw * gh; i++) grid[i] = WALL;
+    {
+        int ox = 1 + (gw - 2 - W) / 2, oy = 1 + (gh - 2 - H) / 2, x, y;
+        /* the player ends at the last square of its region (as in the
+         * original); the stored one is the first - use any square of
+         * the region, the lowest index is good enough */
+        for (y = 0; y < H; y++)
+            for (x = 0; x < W; x++) {
+                char c = bestlevel[y*W+x];
+                int idx = y*W + x, isbox = 0, k;
+                unsigned char v;
+                for (k = 0; k < nb; k++) if (bestbox[k] == idx) isbox = 1;
+                if (c == 'W' || c == 'E') v = WALL;
+                else if (c == 'G') v = isbox ? BARRELTARGET : TARGET;
+                else v = isbox ? BARREL : SPACE;
+                if (idx == bestplayer)
+                    v = (v == TARGET) ? PLAYERTARGET : PLAYER;
+                grid[(oy + y) * gw + ox + x] = v;
+            }
+    }
+    sfree(g); sfree(cand); sfree(bestlevel);
+    return true;
+}
+
 static bool sokoban_external(const game_params *params, random_state *rs,
                              unsigned char *grid)
 {
@@ -1577,6 +1955,7 @@ static bool sokoban_external(const game_params *params, random_state *rs,
       case 1: return sokoban_gen_boulders(params, rs, grid);
       case 2: return sokoban_gen_mcts(params, rs, grid);
       case 3: return sokoban_gen_yasgen(params, rs, grid);
+      case 4: return sokoban_gen_rooms(params, rs, grid);
       default: return false;
     }
 }

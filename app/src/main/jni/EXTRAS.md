@@ -32,3 +32,4 @@ Sokoban (`unfinished/sokoban.c`) has four generators, chosen under Custom. The p
 | Boulders | port of the level maker in miki151/sokoban (via a Kotlin port) | not stated upstream |
 | MCTS | `unfinished/sokoban-mcts/`, lkseg/sokoban-level-generator-mcts (C++17, silenced output, C entry point `mcts_bridge.cpp`) | no licence file upstream |
 | YASGen | `unfinished/sokoban-yasgen/yasgen.c`, YASGen0 by Brian Damgaard from YASC (symbols prefixed, console output removed) | GPLv3 or later |
+| Rooms | Port (in `unfinished/sokoban.c`) of smartive/rust-sokoban-level-generator, after Taylor & Parberry | Apache-2.0 |
