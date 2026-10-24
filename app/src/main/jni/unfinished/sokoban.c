@@ -3063,6 +3063,7 @@ static char *hint_game(const game_state *orig, const game_state *curr,
     char **mv;
     unsigned long long *hs;
     char buf[2];
+    clock_t hint_t0;
 
     if (curr->completed) {
         *error = "The puzzle is already solved";
@@ -3086,7 +3087,9 @@ static char *hint_game(const game_state *orig, const game_state *curr,
         hs[p] = k;
     }
     tail = 1; gcost[0] = 0; key[0] = 0; heap[hn++] = 0;
-    while (hn > 0 && found < 0) {
+    hint_t0 = clock();
+    while (hn > 0 && found < 0 &&
+           (double)(clock() - hint_t0) / CLOCKS_PER_SEC < 6.0) {
         game_state *s;
         {   /* pop min key */
             int top = heap[0], x = 0;
