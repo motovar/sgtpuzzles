@@ -215,6 +215,9 @@ private fun Buttons(
             minOf(1f, maxDp.value * 0.995f / (10 * rawKeySize.value)).coerceAtLeast(0.6f)
         else 1f
         val keySize = rawKeySize * keyScale
+        // Sokoban is played with the arrows only: make them bigger
+        val arrowScale = if (backend.value == BackendName.SOKOBAN) 1.5f else 1f
+        val arrowKeySize = keySize * arrowScale
         val hasArrows = arrowMode.value.hasArrows()
         val isDiagonal = arrowMode.value == ARROWS_DIAGONALS
 
@@ -228,7 +231,7 @@ private fun Buttons(
 
         // How many keys can we fit on a row?
         val maxDpMinusArrows: Dp =
-            if (hasArrows) maxDp - arrowMinors * keySize - if (isLandscape) bottomInset else 0.dp else maxDp
+            if (hasArrows) maxDp - arrowMinors * arrowKeySize - if (isLandscape) bottomInset else 0.dp else maxDp
         val minorsPerMajor =
             fudgeAvoidLonelyDigit(maxDpMinusArrows, keySize, keyList)
         val minorsPerMajorWithoutArrows = fudgeAvoidLonelyDigit(maxDp, keySize, keyList)
@@ -256,8 +259,8 @@ private fun Buttons(
         val charsHeight = if (majors == 0) 0.dp else if (isLandscape) widthOrHeight else heightOrWidth
 
         val spaceAfterKeys = keySize / 12f + if (isLandscape) 0.dp else bottomInset
-        val largerWidth = max(charsWidth, arrowCols * keySize)
-        val largerHeight = max(charsHeight, arrowRows * keySize)
+        val largerWidth = max(charsWidth, arrowCols * arrowKeySize)
+        val largerHeight = max(charsHeight, arrowRows * arrowKeySize)
         val totalWidth = if (isLandscape) largerWidth + spaceAfterKeys else maxWidth
         val totalHeight = if (isLandscape) maxHeight else largerHeight + spaceAfterKeys
 
@@ -271,7 +274,7 @@ private fun Buttons(
                 val minorStartDp: Dp =
                     ((maxDpMinusArrows - (minorsPerMajor * keySize)) / 2)
                 val majorStartDp: Dp =
-                    if (majors < 3 && hasArrows) (arrowMajors - majors) * keySize else 0.dp
+                    if (majors < 3 && hasArrows) (arrowMajors - majors) * arrowKeySize else 0.dp
                 Characters(
                     backend,
                     keyList,
@@ -296,9 +299,10 @@ private fun Buttons(
             if (hasArrows) {
                 val arrowsRightEdge: Dp = if (isLandscape) largerWidth else maxDp
                 val arrowsBottomEdge: Dp = if (isLandscape) maxDp - bottomInset else largerHeight
+                CompositionLocalProvider(LocalKeyScale provides keyScale * arrowScale) {
                 Arrows(
                     backend,
-                    keySize,
+                    arrowKeySize,
                     arrowMode,
                     swapLR,
                     hidePrimary,
@@ -308,6 +312,7 @@ private fun Buttons(
                     borders,
                     onKey
                 )
+                }
             }
 
             if (majors > 0 || hasArrows) {

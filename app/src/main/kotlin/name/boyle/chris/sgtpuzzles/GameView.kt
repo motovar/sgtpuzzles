@@ -74,6 +74,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.pow
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), ViewCallbacks {
     private lateinit var parent: GamePlay
@@ -122,6 +123,8 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
     private var waitingSpace = false
     private var rightMouseHeld = false
     private var touchStart: PointF? = null
+    private var swipeAnchor: PointF? = null
+    private var swiping = false
     private var mousePos: PointF? = null
     private val maxDistSq = ViewConfiguration.get(context).scaledTouchSlop.toDouble().pow(2.0)
     var keysHandled = 0 // debug
@@ -411,6 +414,8 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
         return when (event.action) {
             MotionEvent.ACTION_UP -> {
                 parent.handler.removeCallbacks(sendLongPress)
+                swipeAnchor = null
+                swiping = false
                 if (touchState == TouchState.PINCH && mScroller.isFinished) {
                     redrawForInitOrZoomChange()
                     for (edge in edges) edge.onRelease()
@@ -431,6 +436,28 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
                 }
                 val x = event.x
                 val y = event.y
+                if (parent.currentBackend === BackendName.SOKOBAN && touchState != TouchState.PINCH) {
+                    // Swipe to move (Sokoban): a swipe sends cursor keys, repeatedly while dragging on
+                    val anchor = swipeAnchor ?: touchStart
+                    if (anchor != null) {
+                        val dx = x - anchor.x
+                        val dy = y - anchor.y
+                        val threshold = (sqrt(maxDistSq) * 2.5).toFloat()
+                        if (maxOf(abs(dx), abs(dy)) > threshold) {
+                            parent.handler.removeCallbacks(sendLongPress)
+                            touchState = TouchState.IDLE
+                            swiping = true
+                            val key = if (abs(dx) > abs(dy)) {
+                                if (dx > 0) CURSOR_RIGHT else CURSOR_LEFT
+                            } else {
+                                if (dy > 0) CURSOR_DOWN else CURSOR_UP
+                            }
+                            parent.sendKey(0, 0, key)
+                            swipeAnchor = PointF(x, y)
+                        }
+                        if (swiping) return true
+                    }
+                }
                 if (touchState == TouchState.WAITING_LONG_PRESS && movedPastTouchSlop(x, y)) {
                     parent.handler.removeCallbacks(sendLongPress)
                     touchState = if (dragMode == DragMode.PREVENT) {
@@ -484,6 +511,8 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
                         button = LEFT_BUTTON
                     }
                     touchStart = event.point
+                    swipeAnchor = null
+                    swiping = false
                     if (touchStart == null) return false
                     parent.handler.removeCallbacks(sendLongPress)
                     if ((MotionEventCompat.isFromSource(event, SOURCE_MOUSE)

@@ -66,6 +66,7 @@
 #endif
 
 #include "puzzles.h"
+#include "sokoban-yoshi.h"
 
 /*
  * Various subsets of these constants are used during game
@@ -132,7 +133,8 @@ enum {
     COL_C_GOAL,
     COL_C_SUIT,
     COL_C_SKIN,
-    NCOLOURS
+    COL_Y0,                            /* Yoshi skins palette */
+    NCOLOURS = COL_Y0 + YO_NCOL
 };
 
 struct game_params {
@@ -2283,7 +2285,7 @@ static char *game_text_format(const game_state *state)
 }
 
 struct game_ui {
-    int theme;                         /* 0 = original, 1 = classic */
+    int theme;     /* 0 = original, 1 = classic, 2..5 = Yoshi skins */
 };
 
 static game_ui *new_ui(const game_state *state)
@@ -2305,8 +2307,8 @@ static config_item *get_prefs(game_ui *ui)
     ret[0].name = "Graphics";
     ret[0].kw = "graphics";
     ret[0].type = C_CHOICES;
-    ret[0].u.choices.choicenames = ":Original:Classic (bricks and crates)";
-    ret[0].u.choices.choicekws = ":original:classic";
+    ret[0].u.choices.choicenames = ":Original:Classic (bricks and crates):Yoshi New:Yoshi Classic+:Yoshi Classic:Yoshi Red";
+    ret[0].u.choices.choicekws = ":original:classic:yoshi-new:yoshi-classic-plus:yoshi-classic:yoshi-red";
     ret[0].u.choices.selected = ui->theme;
 
     ret[1].name = NULL;
@@ -2646,8 +2648,14 @@ static float *game_colours(frontend *fe, int *ncolours)
     SETCOL(COL_C_GOAL, 0.80F, 0.10F, 0.10F);
     SETCOL(COL_C_SUIT, 0.15F, 0.25F, 0.75F);
     SETCOL(COL_C_SKIN, 0.98F, 0.80F, 0.62F);
-#undef SETCOL
 
+    {
+        int yi;
+        for (yi = 0; yi < YO_NCOL; yi++)
+            SETCOL(COL_Y0 + yi, yo_palette[yi][0] / 255.0F,
+                   yo_palette[yi][1] / 255.0F, yo_palette[yi][2] / 255.0F);
+    }
+#undef SETCOL
     *ncolours = NCOLOURS;
     return ret;
 }
@@ -2733,8 +2741,51 @@ static void draw_tile_classic(drawing *dr, game_drawstate *ds, int tx, int ty,
     draw_update(dr, tx, ty, T, T);
 }
 
+static void draw_tile_yoshi(drawing *dr, game_drawstate *ds, int x, int y,
+                            int v, int flash)
+{
+    int T = TILESIZE, tx = COORD(x), ty = COORD(y), ti, r, c;
+    const unsigned char *px;
+
+    if (v == WALL) ti = 2 + (x & 1) + (ds->theme == 2 ? ((y & 1) << 1) : 0);
+    else if (IS_BARREL(v)) ti = IS_ON_TARGET(v) ? 9 : 8;
+    else if (IS_PLAYER(v)) ti = IS_ON_TARGET(v) ? 7 : 6;
+    else if (IS_ON_TARGET(v)) ti = 1;
+    else ti = 0;
+    px = yo_tiles[(ds->theme - 2) * YO_NTILE + ti];
+
+    clip(dr, tx, ty, T, T);
+    for (r = 0; r < YO_N; r++) {
+        int y0 = ty + r * T / YO_N, y1 = ty + (r + 1) * T / YO_N;
+        for (c = 0; c < YO_N; ) {
+            int c2 = c + 1, x0, x1;
+            while (c2 < YO_N && px[r*YO_N + c2] == px[r*YO_N + c]) c2++;
+            x0 = tx + c * T / YO_N; x1 = tx + c2 * T / YO_N;
+            draw_rect(dr, x0, y0, x1 - x0, y1 - y0, COL_Y0 + px[r*YO_N + c]);
+            c = c2;
+        }
+    }
+    if (v == PIT || v == DEEP_PIT)
+        draw_circle(dr, tx + T/2, ty + T/2, T*3/7,
+                    v == PIT ? COL_PIT : COL_DEEP_PIT, COL_OUTLINE);
+    if (IS_BARREL(v) && BARREL_LABEL(v)) {
+        char str[2];
+        str[0] = BARREL_LABEL(v); str[1] = '\0';
+        draw_text(dr, tx + T/2, ty + T/2, FONT_VARIABLE, T/2,
+                  ALIGN_VCENTRE | ALIGN_HCENTRE, COL_TEXT, str);
+    }
+    if (flash)
+        draw_rect_outline(dr, tx + 1, ty + 1, T - 2, T - 2, COL_HIGHLIGHT);
+    unclip(dr);
+    draw_update(dr, tx, ty, T, T);
+}
+
 static void draw_tile(drawing *dr, game_drawstate *ds, int x, int y, int v)
 {
+    if (ds->theme >= 2) {
+        draw_tile_yoshi(dr, ds, x, y, v & 0xFF, (v & 0x100) != 0);
+        return;
+    }
     if (ds->theme == 1) {
         draw_tile_classic(dr, ds, COORD(x), COORD(y), v & 0xFF, (v & 0x100) != 0);
         return;
@@ -2825,7 +2876,7 @@ static void game_redraw(drawing *dr, game_drawstate *ds,
      * Initialise a fresh drawstate.
      */
     if (!ds->started) {
-        if (ds->theme == 1)
+        if (ds->theme >= 1)
             draw_rect(dr, 0, 0, COORD(w) + BORDER, COORD(h) + BORDER,
                       COL_BACKGROUND);
 	/*
