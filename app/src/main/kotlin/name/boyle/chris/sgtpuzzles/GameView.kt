@@ -65,6 +65,7 @@ import androidx.core.view.MotionEventCompat
 import name.boyle.chris.sgtpuzzles.GameView.LimitDPIMode.LIMIT_AUTO
 import name.boyle.chris.sgtpuzzles.GameView.LimitDPIMode.LIMIT_OFF
 import name.boyle.chris.sgtpuzzles.GameView.LimitDPIMode.LIMIT_ON
+import name.boyle.chris.sgtpuzzles.backend.SOKOBAN
 import name.boyle.chris.sgtpuzzles.backend.BackendName
 import name.boyle.chris.sgtpuzzles.backend.GameEngine.ViewCallbacks
 import name.boyle.chris.sgtpuzzles.backend.UsedByJNI
@@ -436,7 +437,7 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
                 }
                 val x = event.x
                 val y = event.y
-                if (parent.currentBackend === BackendName.SOKOBAN && touchState != TouchState.PINCH) {
+                if (parent.currentBackend === SOKOBAN && touchState != TouchState.PINCH) {
                     // Swipe to move (Sokoban): a swipe sends cursor keys, repeatedly while dragging on
                     val anchor = swipeAnchor ?: touchStart
                     if (anchor != null) {

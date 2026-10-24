@@ -88,6 +88,7 @@ import name.boyle.chris.sgtpuzzles.GameView.Companion.MOD_NUM_KEYPAD
 import name.boyle.chris.sgtpuzzles.R
 import name.boyle.chris.sgtpuzzles.backend.BLACKBOX
 import name.boyle.chris.sgtpuzzles.backend.BRIDGES
+import name.boyle.chris.sgtpuzzles.backend.SOKOBAN
 import name.boyle.chris.sgtpuzzles.backend.BackendName
 import name.boyle.chris.sgtpuzzles.backend.FILLING
 import name.boyle.chris.sgtpuzzles.backend.GALAXIES
@@ -216,7 +217,7 @@ private fun Buttons(
         else 1f
         val keySize = rawKeySize * keyScale
         // Sokoban is played with the arrows only: make them bigger
-        val arrowScale = if (backend.value == BackendName.SOKOBAN) 1.5f else 1f
+        val arrowScale = if (backend.value == SOKOBAN) 1.5f else 1f
         val arrowKeySize = keySize * arrowScale
         val hasArrows = arrowMode.value.hasArrows()
         val isDiagonal = arrowMode.value == ARROWS_DIAGONALS
