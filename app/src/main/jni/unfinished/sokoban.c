@@ -58,6 +58,7 @@
 #include <string.h>
 #include <assert.h>
 #include <ctype.h>
+#include <time.h>
 #ifdef NO_TGMATH_H
 #  include <math.h>
 #else
@@ -142,7 +143,7 @@ struct game_params {
     /* MCTS generator */
     int mc_time, mc_keep, mc_pick;
     /* YASGen generator */
-    int yg_goals, yg_walls, yg_limit, yg_mode, yg_rand;
+    int yg_goals, yg_walls, yg_limit, yg_mode, yg_rand, yg_gens;
     /*
      * FIXME: a parameter involving degree of filling in?
      */
@@ -159,8 +160,8 @@ static void sokoban_gen_defaults(game_params *p)
 {
     p->bm_count = 0; p->bm_attempts = 150; p->bm_nodes = 500;
     p->mc_time = 0; p->mc_keep = 1; p->mc_pick = 1;
-    p->yg_goals = 0; p->yg_walls = 14; p->yg_limit = 400;
-    p->yg_mode = 0; p->yg_rand = 1;
+    p->yg_goals = 0; p->yg_walls = 25; p->yg_limit = 400;
+    p->yg_mode = 0; p->yg_rand = 1; p->yg_gens = 8;
 }
 
 static game_params *default_params(void)
@@ -244,6 +245,7 @@ static void decode_params(game_params *params, char const *string)
               case 'l': params->yg_limit = v; break;
               case 'm': params->yg_mode = v; break;
               case 'r': params->yg_rand = v; break;
+              case 'e': params->yg_gens = v; break;
               default: break;
             }
         }
@@ -272,6 +274,7 @@ static char *encode_params(const game_params *params, bool full)
         if (params->yg_limit != d.yg_limit) p += sprintf(p, "l%d", params->yg_limit);
         if (params->yg_mode != d.yg_mode) p += sprintf(p, "m%d", params->yg_mode);
         if (params->yg_rand != d.yg_rand) p += sprintf(p, "r%d", params->yg_rand);
+        if (params->yg_gens != d.yg_gens) p += sprintf(p, "e%d", params->yg_gens);
     }
 
     return dupstr(data);
@@ -325,6 +328,7 @@ static config_item *game_configure(const game_params *params)
         STR_ITEM("YASGen: number of goals/boxes (0 = auto)", params->yg_goals);
         STR_ITEM("YASGen: wall density in percent", params->yg_walls);
         STR_ITEM("YASGen: search limit (thousand positions)", params->yg_limit);
+        STR_ITEM("YASGen: genetic generations", params->yg_gens);
         ret[n].name = "YASGen: random player start";
         ret[n].type = C_BOOLEAN;
         ret[n].u.boolean.bval = params->yg_rand != 0;
@@ -368,7 +372,8 @@ static game_params *custom_params(const config_item *cfg)
             ret->yg_goals = atoi(cfg[4].u.string.sval);
             ret->yg_walls = atoi(cfg[5].u.string.sval);
             ret->yg_limit = atoi(cfg[6].u.string.sval);
-            ret->yg_rand = cfg[7].u.boolean.bval ? 1 : 0;
+            ret->yg_gens = atoi(cfg[7].u.string.sval);
+            ret->yg_rand = cfg[8].u.boolean.bval ? 1 : 0;
         }
     }
 
@@ -397,8 +402,10 @@ static const char *validate_params(const game_params *params, bool full)
         return "YASGen number of goals must be between 0 and 40";
     if (params->yg_mode < 0 || params->yg_mode > 1)
         return "Unknown YASGen mode";
-    if (params->yg_walls < 0 || params->yg_walls > 30)
-        return "YASGen wall density must be between 0 and 30 percent";
+    if (params->yg_walls < 0 || params->yg_walls > 50)
+        return "YASGen wall density must be between 0 and 50 percent";
+    if (params->yg_gens < 1 || params->yg_gens > 100)
+        return "YASGen generations must be between 1 and 100";
     if (params->yg_limit < 10 || params->yg_limit > 2000)
         return "YASGen search limit must be between 10 and 2000 thousand positions";
 
@@ -1318,67 +1325,237 @@ int sokoban_yasgen_generate(int w, int h, const char *rows, unsigned seed,
                             int megabytes, int max_open, int reverse,
                             int randplayer, char *out);
 
+/* ---- genetic algorithm around the YASGen search (as in YASGen 1.50) ---- */
+
+#define YG_POP 8
+
+static bool yg_fix(char *c, int bw, int bh, int nb, int fwd, random_state *rs)
+{
+    int area = bw * bh, i, n, head, tail;
+    int *q = snewn(area, int), *seen = snewn(area, int);
+    int start = -1, np = 0;
+    char gch = fwd ? '$' : '.';
+    bool ok = true;
+
+    for (i = 0; i < area; i++) {
+        if (c[i] == '@') { if (start < 0) start = i; else c[i] = ' '; np++; }
+        if (c[i] == '$' || c[i] == '.') c[i] = (c[i] == gch) ? c[i] : ' ';
+        seen[i] = 0;
+    }
+    if (start < 0) {
+        n = 0;
+        for (i = 0; i < area; i++) if (c[i] != '#') n++;
+        if (!n) { sfree(q); sfree(seen); return false; }
+        n = random_upto(rs, n);
+        for (i = 0; i < area; i++)
+            if (c[i] != '#' && n-- == 0) { start = i; break; }
+        c[start] = '@';
+    }
+    head = tail = 0; q[tail++] = start; seen[start] = 1;
+    while (head < tail) {
+        int p = q[head++], x = p % bw, y = p / bw;
+        if (x > 0 && !seen[p-1] && c[p-1] != '#') { seen[p-1] = 1; q[tail++] = p-1; }
+        if (x < bw-1 && !seen[p+1] && c[p+1] != '#') { seen[p+1] = 1; q[tail++] = p+1; }
+        if (y > 0 && !seen[p-bw] && c[p-bw] != '#') { seen[p-bw] = 1; q[tail++] = p-bw; }
+        if (y < bh-1 && !seen[p+bw] && c[p+bw] != '#') { seen[p+bw] = 1; q[tail++] = p+bw; }
+    }
+    if (tail < nb * 3 + 4) ok = false;
+    if (ok) {
+        int ng = 0;
+        for (i = 0; i < area; i++)
+            if (!seen[i]) c[i] = '#';
+            else if (c[i] == gch) ng++;
+        while (ng > nb) {
+            int k = random_upto(rs, ng);
+            for (i = 0; i < area; i++)
+                if (c[i] == gch && k-- == 0) { c[i] = ' '; ng--; break; }
+        }
+        while (ng < nb) {
+            int k = random_upto(rs, tail);
+            for (i = 0; i < area; i++)
+                if (seen[i] && c[i] == ' ' && k-- <= 0) { c[i] = gch; ng++; break; }
+            if (i == area) continue;
+        }
+    }
+    sfree(q); sfree(seen);
+    return ok;
+}
+
+static void yg_random(char *c, int bw, int bh, int nb, int fwd, int wallpct,
+                      random_state *rs)
+{
+    int area = bw * bh, i, tries = 0;
+    do {
+        for (i = 0; i < area; i++)
+            c[i] = (random_upto(rs, 100) < (unsigned)wallpct) ? '#' : ' ';
+        c[random_upto(rs, area)] = ' ';
+        tries++;
+        if (tries > 50) wallpct /= 2;
+    } while (!yg_fix(c, bw, bh, nb, fwd, rs));
+}
+
+/* returns fitness (pushes, discounted for boxes that start on a goal) and
+ * leaves the generated level in out */
+static int yg_eval(const char *c, int bw, int bh, int nb, int fwd, int randp,
+                   int maxopen, random_state *rs, char *out)
+{
+    int pushes = sokoban_yasgen_generate(bw, bh, c, random_bits(rs, 20), 32,
+                                         maxopen, fwd ? 0 : 1, randp, out);
+    int i, stars = 0;
+    if (pushes <= 0) return 0;
+    for (i = 0; i < bw * bh; i++) if (out[i] == '*' || out[i] == '+') stars++;
+    {
+        int floors = 0;
+        for (i = 0; i < bw * bh; i++) if (c[i] != '#') floors++;
+        /* prefer levels that use more of the board */
+        return pushes * (bw * bh + floors) / (2 * bw * bh) / (1 + 4 * stars);
+    }
+}
+
+static void yg_mutate(char *c, int bw, int bh, int fwd, random_state *rs)
+{
+    int area = bw * bh, k, p, q, t;
+    char gch = fwd ? '$' : '.';
+    for (k = 1 + random_upto(rs, 3); k > 0; k--) {
+        t = random_upto(rs, 10);
+        p = random_upto(rs, area);
+        if (t < 5) {            /* flip wall / floor */
+            if (c[p] == ' ') c[p] = '#';
+            else if (c[p] == '#') c[p] = ' ';
+        } else if (t < 9) {     /* move a goal/box */
+            int tries;
+            for (tries = 0; tries < 200 && c[p] != gch; tries++)
+                p = random_upto(rs, area);
+            if (c[p] != gch) continue;
+            for (tries = 0; tries < 200; tries++) {
+                q = random_upto(rs, area);
+                if (c[q] == ' ') { c[q] = gch; c[p] = ' '; break; }
+            }
+        } else {                /* move the player */
+            int tries;
+            for (tries = 0; tries < 200 && c[p] != '@'; tries++)
+                p = random_upto(rs, area);
+            if (c[p] != '@') continue;
+            for (tries = 0; tries < 200; tries++) {
+                q = random_upto(rs, area);
+                if (c[q] == ' ') { c[q] = '@'; c[p] = ' '; break; }
+            }
+        }
+    }
+}
+
 static bool sokoban_gen_yasgen(const game_params *params, random_state *rs,
                                unsigned char *grid)
 {
     int gw = params->w, gh = params->h;
-    int bw = gw - 2, bh = gh - 2, x, y, i, k, tries;
-    int area, ngoals, nwalls;
-    char *rows, *out;
-    int pushes = 0;
+    int bw = gw - 2, bh = gh - 2, x, y, i, g, a, b;
+    int area, nb, fwd = params->yg_mode, maxopen;
+    char *pop[YG_POP], *kid[YG_POP], *outs[YG_POP], *best, *work;
+    int fit[YG_POP], kfit[YG_POP], order[YG_POP], bestfit = -1;
+    clock_t t0; double budget;
 
     if (bw > 50) bw = 50;
     if (bh > 50) bh = 50;
     if (bw < 4 || bh < 4)
         return false;
     area = bw * bh;
-    rows = snewn(area, char);
-    out = snewn(area, char);
-
-    for (tries = 0; tries < 20 && pushes <= 0; tries++) {
-        int *cells = snewn(area, int), placed = 0;
-        for (i = 0; i < area; i++) { rows[i] = ' '; cells[i] = i; }
-        shuffle(cells, area, sizeof(int), rs);
-        /* a few isolated wall blocks (never touching each other or the
-         * outer ring, so the room stays connected) */
-        nwalls = area * params->yg_walls / 100;
-        for (i = 0; i < area && placed < nwalls; i++) {
-            int c = cells[i], cx = c % bw, cy = c / bw, ok = 1, dx, dy;
-            if (cx == 0 || cy == 0 || cx == bw-1 || cy == bh-1) continue;
-            for (dy = -1; dy <= 1; dy++)
-                for (dx = -1; dx <= 1; dx++)
-                    if (rows[(cy+dy)*bw + cx+dx] == '#') ok = 0;
-            if (ok) { rows[c] = '#'; placed++; }
-        }
-        ngoals = params->yg_goals ? params->yg_goals : area / 14;
-        if (ngoals < 2) ngoals = 2;
-        if (ngoals > 40) ngoals = 40;
-        k = 0;
-        for (i = 0; i < area && k < ngoals; i++)
-            if (rows[cells[i]] == ' ') {
-                rows[cells[i]] = params->yg_mode ? '$' : '.';
-                k++;
-            }
-        for (i = 0; i < area; i++)
-            if (rows[cells[i]] == ' ') { rows[cells[i]] = '@'; break; }
-        sfree(cells);
-        pushes = sokoban_yasgen_generate(bw, bh, rows,
-                                         random_bits(rs, 20),
-                                         params->yg_limit * 56 / 1024 < 16 ? 16 :
-                                         params->yg_limit * 56 / 1024 > 160 ? 160 :
-                                         params->yg_limit * 56 / 1024,
-                                         params->yg_limit * 1000,
-                                         params->yg_mode ? 0 : 1, params->yg_rand, out);
+    nb = params->yg_goals ? params->yg_goals : area / 16;
+    if (!params->yg_goals) {
+        if (nb < 3) nb = 3;
+        if (nb > 6) nb = 6;
     }
-    if (pushes <= 0) {
-        sfree(rows); sfree(out);
+    if (nb > area / 4) nb = area / 4;
+    if (nb < 1) nb = 1;
+    t0 = clock();
+    budget = (double)params->yg_limit / 80.0;
+    if (budget < 2) budget = 2;
+    maxopen = params->yg_limit * 1000 / YG_POP;
+    if (maxopen < 20000) maxopen = 20000;
+
+    best = snewn(area, char);
+    work = snewn(area, char);
+    for (i = 0; i < YG_POP; i++) {
+        pop[i] = snewn(area, char);
+        kid[i] = snewn(area, char);
+        outs[i] = snewn(area, char);
+    }
+    memset(best, '#', area);
+
+    for (i = 0; i < YG_POP; i++) {
+        yg_random(pop[i], bw, bh, nb, fwd, params->yg_walls, rs);
+        fit[i] = yg_eval(pop[i], bw, bh, nb, fwd, params->yg_rand, maxopen,
+                         rs, outs[i]);
+    }
+    for (g = 0; g <= params->yg_gens; g++) {
+        /* rank: descending fitness */
+        for (i = 0; i < YG_POP; i++) order[i] = i;
+        for (a = 0; a < YG_POP; a++)
+            for (b = a + 1; b < YG_POP; b++)
+                if (fit[order[b]] > fit[order[a]]) {
+                    int t = order[a]; order[a] = order[b]; order[b] = t;
+                }
+        if (fit[order[0]] > bestfit) {
+            bestfit = fit[order[0]];
+            memcpy(best, outs[order[0]], area);
+        }
+        if (g == params->yg_gens ||
+            (double)(clock() - t0) / CLOCKS_PER_SEC > budget) break;
+        /* elitism: two best go on, the rest are bred by rank selection */
+        for (i = 0; i < YG_POP; i++) {
+            if (i < 2) {
+                memcpy(kid[i], pop[order[i]], area);
+                kfit[i] = fit[order[i]];
+                continue;
+            }
+            {
+                int p1 = order[random_upto(rs, random_upto(rs, YG_POP) + 1)];
+                int p2 = order[random_upto(rs, random_upto(rs, YG_POP) + 1)];
+                int cut = 1 + random_upto(rs, area - 1), tries = 0;
+                do {
+                    for (x = 0; x < area; x++)
+                        work[x] = (random_upto(rs, 100) < 70 ?
+                                   (x < cut ? pop[p1][x] : pop[p2][x]) : pop[p1][x]);
+                    yg_mutate(work, bw, bh, fwd, rs);
+                    tries++;
+                } while (!yg_fix(work, bw, bh, nb, fwd, rs) && tries < 30);
+                if (tries >= 30) memcpy(work, pop[p1], area);
+                memcpy(kid[i], work, area);
+                kfit[i] = -1;
+            }
+        }
+        {
+            char *tmpout[YG_POP];
+            for (i = 0; i < YG_POP; i++) tmpout[i] = snewn(area, char);
+            for (i = 0; i < YG_POP; i++) {
+                if (kfit[i] >= 0) {
+                    /* elite: copy its level */
+                    memcpy(tmpout[i], outs[order[i]], area);
+                } else {
+                    kfit[i] = yg_eval(kid[i], bw, bh, nb, fwd, params->yg_rand,
+                                      maxopen, rs, tmpout[i]);
+                }
+            }
+            for (i = 0; i < YG_POP; i++) {
+                char *t;
+                t = pop[i]; pop[i] = kid[i]; kid[i] = t;
+                memcpy(outs[i], tmpout[i], area);
+                fit[i] = kfit[i];
+                sfree(tmpout[i]);
+            }
+        }
+    }
+
+    for (i = 0; i < YG_POP; i++) { sfree(pop[i]); sfree(kid[i]); sfree(outs[i]); }
+    sfree(work);
+    if (bestfit <= 0) {
+        sfree(best);
         return false;
     }
     for (i = 0; i < gw * gh; i++) grid[i] = WALL;
     for (y = 0; y < bh; y++)
         for (x = 0; x < bw; x++) {
             int c;
-            switch (out[y*bw + x]) {
+            switch (best[y*bw + x]) {
               case ' ': c = SPACE; break;
               case '.': c = TARGET; break;
               case '$': c = BARREL; break;
@@ -1389,7 +1566,7 @@ static bool sokoban_gen_yasgen(const game_params *params, random_state *rs,
             }
             grid[(y + 1 + (gh - 2 - bh) / 2) * gw + x + 1 + (gw - 2 - bw) / 2] = c;
         }
-    sfree(rows); sfree(out);
+    sfree(best);
     return true;
 }
 
