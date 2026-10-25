@@ -133,6 +133,11 @@ enum {
     COL_C_GOAL,
     COL_C_SUIT,
     COL_C_SKIN,
+    COL_T_PIT,                         /* colours shared by the non-original themes */
+    COL_T_DEEP_PIT,
+    COL_T_OUTLINE,
+    COL_T_TEXT,
+    COL_T_FLASH,
     COL_Y0,                            /* Yoshi skins palette */
     NCOLOURS = COL_Y0 + YO_NCOL
 };
@@ -148,6 +153,8 @@ struct game_params {
     int yg_goals, yg_walls, yg_limit, yg_mode, yg_rand, yg_gens;
     /* Rooms generator */
     int rm_boxes, rm_limit, rm_attempts;
+    /* not part of the game ID: time for one tile of a big board, in ms */
+    int tile_ms;
     /*
      * FIXME: a parameter involving degree of filling in?
      */
@@ -167,6 +174,7 @@ static void sokoban_gen_defaults(game_params *p)
     p->yg_goals = 0; p->yg_walls = 25; p->yg_limit = 400;
     p->yg_mode = 0; p->yg_rand = 1; p->yg_gens = 8;
     p->rm_boxes = 0; p->rm_limit = 100; p->rm_attempts = 1;
+    p->tile_ms = 0;
 }
 
 static game_params *default_params(void)
@@ -325,11 +333,11 @@ static config_item *game_configure(const game_params *params)
         ret[n].name = NAME; ret[n].type = C_STRING; \
         sprintf(buf, "%d", VAL); ret[n].u.string.sval = dupstr(buf); n++; } while (0)
     if (params->gen == 1) {
-        STR_ITEM("Boulders: number of boulders (0 = auto)", params->bm_count);
+        STR_ITEM("Boulders: number of boulders per structure (0 = auto)", params->bm_count);
         STR_ITEM("Boulders: attempts", params->bm_attempts);
         STR_ITEM("Boulders: search nodes per attempt", params->bm_nodes);
     } else if (params->gen == 2) {
-        STR_ITEM("MCTS: search time in seconds (0 = auto)", params->mc_time);
+        STR_ITEM("MCTS: search time in seconds, in total (0 = auto)", params->mc_time);
         STR_ITEM("MCTS: levels to keep", params->mc_keep);
         STR_ITEM("MCTS: level to use (1 = hardest ... levels to keep = easiest)", params->mc_pick);
     } else if (params->gen == 3) {
@@ -338,7 +346,7 @@ static config_item *game_configure(const game_params *params)
         ret[n].u.choices.choicenames = ":Reverse (pull boxes from goals):Forward (push given boxes)";
         ret[n].u.choices.selected = params->yg_mode;
         n++;
-        STR_ITEM("YASGen: number of goals/boxes (0 = auto)", params->yg_goals);
+        STR_ITEM("YASGen: number of goals/boxes in total (0 = auto)", params->yg_goals);
         STR_ITEM("YASGen: wall density in percent", params->yg_walls);
         STR_ITEM("YASGen: search limit (thousand positions)", params->yg_limit);
         STR_ITEM("YASGen: genetic generations", params->yg_gens);
@@ -347,7 +355,7 @@ static config_item *game_configure(const game_params *params)
         ret[n].u.boolean.bval = params->yg_rand != 0;
         n++;
     } else if (params->gen == 4) {
-        STR_ITEM("Rooms: number of boxes (0 = auto)", params->rm_boxes);
+        STR_ITEM("Rooms: number of boxes in total (0 = auto)", params->rm_boxes);
         STR_ITEM("Rooms: search limit (thousand states)", params->rm_limit);
         STR_ITEM("Rooms: goal placements to try", params->rm_attempts);
     }
@@ -408,8 +416,8 @@ static const char *validate_params(const game_params *params, bool full)
 	return "Width and height must both be at least 4";
     if (params->gen < 0 || params->gen > 4)
         return "Unknown level generator";
-    if (params->rm_boxes < 0 || params->rm_boxes > 8)
-        return "Rooms number of boxes must be between 0 and 8";
+    if (params->rm_boxes < 0 || params->rm_boxes > 400)
+        return "Rooms number of boxes must be between 0 and 400";
     if (params->rm_limit < 10 || params->rm_limit > 3000)
         return "Rooms search limit must be between 10 and 3000 thousand positions";
     if (params->rm_attempts < 1 || params->rm_attempts > 50)
@@ -426,8 +434,8 @@ static const char *validate_params(const game_params *params, bool full)
         return "MCTS levels to keep must be at least 1";
     if (params->mc_pick < 1 || params->mc_pick > params->mc_keep)
         return "MCTS level to use must be between 1 and the number of levels to keep";
-    if (params->yg_goals < 0 || params->yg_goals > 40)
-        return "YASGen number of goals must be between 0 and 40";
+    if (params->yg_goals < 0 || params->yg_goals > 400)
+        return "YASGen number of goals must be between 0 and 400";
     if (params->yg_mode < 0 || params->yg_mode > 1)
         return "Unknown YASGen mode";
     if (params->yg_walls < 0 || params->yg_walls > 50)
@@ -940,25 +948,21 @@ int sokoban_mcts_generate(int width, int height, unsigned long long seed,
 static bool sokoban_gen_mcts(const game_params *params, random_state *rs,
                              unsigned char *grid)
 {
-    int w = params->w, h = params->h, bw = w, bh = h, x, y, ox, oy;
+    int w = params->w, h = params->h, bw = w - 2, bh = h - 2, x, y;
     unsigned long long seed;
     char *buf;
     bool ok = false;
     const char *p;
 
-    while (bw * bh > 4000) {
-        if (bw >= bh) bw--; else bh--;
-    }
-    while (bw * bh < 16) {
-        if (bw <= bh) bw++; else bh++;
-    }
-    if (bw > w || bh > h)
+    /* the level is made inside a ring of wall of its own */
+    if (bw * bh < 16 || bw * bh > 4000)
         return false;
 
     seed = ((unsigned long long)random_bits(rs, 31) << 32) |
            random_bits(rs, 31);
     buf = snewn(bw * bh * 2 + 16, char);
     if (!sokoban_mcts_generate(bw, bh, seed ? seed : 1,
+                               params->tile_ms > 0 ? params->tile_ms / 1000.0 :
                                params->mc_time > 0 ? (double)params->mc_time
                                                    : 2.0 + 0.02 * bw * bh,
                                params->mc_keep, params->mc_pick,
@@ -970,8 +974,6 @@ static bool sokoban_gen_mcts(const game_params *params, random_state *rs,
     for (y = 0; y < h; y++)
         for (x = 0; x < w; x++)
             grid[y*w+x] = WALL;
-    ox = (w - bw) / 2;
-    oy = (h - bh) / 2;
     p = buf;
     ok = true;
     for (y = 0; y < bh && ok; y++) {
@@ -990,7 +992,7 @@ static bool sokoban_gen_mcts(const game_params *params, random_state *rs,
             }
             if (!ok) break;
             p++;
-            grid[(y+oy)*w + x+ox] = c;
+            grid[(y+1)*w + x+1] = c;
         }
     }
     sfree(buf);
@@ -1429,14 +1431,13 @@ static int yg_eval(const char *c, int bw, int bh, int nb, int fwd, int randp,
 {
     int pushes = sokoban_yasgen_generate(bw, bh, c, random_bits(rs, 20), 32,
                                          maxopen, fwd ? 0 : 1, randp, out);
-    int i, stars = 0;
+    int i;
     if (pushes <= 0) return 0;
-    for (i = 0; i < bw * bh; i++) if (out[i] == '*' || out[i] == '+') stars++;
     {
         int floors = 0;
         for (i = 0; i < bw * bh; i++) if (c[i] != '#') floors++;
         /* prefer levels that use more of the board */
-        return pushes * (bw * bh + floors) / (2 * bw * bh) / (1 + 4 * stars);
+        return pushes * (bw * bh + floors) / (2 * bw * bh);
     }
 }
 
@@ -1487,16 +1488,17 @@ static bool sokoban_gen_yasgen(const game_params *params, random_state *rs,
     if (bw < 4 || bh < 4)
         return false;
     area = bw * bh;
-    nb = params->yg_goals ? params->yg_goals : area / 16;
+    nb = params->yg_goals ? params->yg_goals : area / 14;
     if (!params->yg_goals) {
-        if (nb < 3) nb = 3;
-        if (nb > 6) nb = 6;
+        if (nb < 2) nb = 2;
+        if (nb > 40) nb = 40;
     }
     if (nb > area / 4) nb = area / 4;
     if (nb < 1) nb = 1;
     t0 = clock();
-    budget = (double)params->yg_limit / 80.0;
-    if (budget < 2) budget = 2;
+    budget = params->tile_ms > 0 ? params->tile_ms / 1000.0
+                                 : (double)params->yg_limit / 80.0;
+    if (params->tile_ms <= 0 && budget < 2) budget = 2;
     maxopen = params->yg_limit * 1000 / YG_POP;
     if (maxopen < 20000) maxopen = 20000;
 
@@ -1823,35 +1825,40 @@ static void rm_repair(char *g, int W, int H, random_state *rs)
     sfree(comp); sfree(stack);
 }
 
-/* One frame of the depth-first search of the original */
-struct rm_frame { unsigned short b[8]; unsigned short pl; int step; };
-struct rm_rec { int label; unsigned short maxcell; };
-
 /*
  * create_box_backtrack_map() + the choice of the farthest state, as in
  * the original: depth-first search over reverse moves from every
  * possible player start, remembering for every box layout and every
  * region reachable by the player the lowest move count it was reached
  * with; the level with the highest recorded count wins.  A limit on
- * the number of expanded states replaces the original's unbounded run.
+ * the number of recorded states (and on memory) replaces the original's
+ * unbounded run.  A search frame is nb box squares, the player's square
+ * and the move count (two halves), all unsigned shorts.
  */
+struct rm_rec { int label; unsigned short maxcell; };
+
 static bool rm_search(const char *g, int W, int H, const int *goals, int nb,
                       long maxrec, random_state *rs,
                       unsigned short *outbox, int *outplayer)
 {
-    int N = W * H, stride = nb + 1, i, j, d, s0, stamp = 0;
+    int N = W * H, stride = nb + 1, fsz = nb + 3, i, j, d, s0, stamp = 0;
     long nrec = 0, tsize = 1;
-    unsigned short *keys = snewn(maxrec * stride, unsigned short);
-    struct rm_rec *recs = snewn(maxrec, struct rm_rec);
+    unsigned short *keys, *key = snewn(stride, unsigned short);
+    struct rm_rec *recs;
     int *table, *mark = snewn(N, int), *stack = snewn(N, int);
     unsigned char *boxat = snewn(N, unsigned char);
     int dirx[4] = {0, 0, -1, 1}, diry[4] = {-1, 1, 0, 0};
-    struct rm_frame *fs = NULL;
-    long nfs = 0, fcap = 0;
-    unsigned short ib[8];
-    int cellist[1]; (void)cellist;
+    unsigned short *fs = NULL, *cur = snewn(fsz, unsigned short),
+                   *nf = snewn(fsz, unsigned short),
+                   *sorted = snewn(nb, unsigned short);
+    long nfs = 0, fcap = 0, fmax = (32L << 20) / (fsz * 2);
+    unsigned short *ib = snewn(nb, unsigned short);
     bool found = false;
 
+    if (maxrec > (48L << 20) / (stride * 2 + 8)) maxrec = (48L << 20) / (stride * 2 + 8);
+    if (maxrec < 1000) maxrec = 1000;
+    keys = snewn(maxrec * stride, unsigned short);
+    recs = snewn(maxrec, struct rm_rec);
     while (tsize < maxrec * 2) tsize <<= 1;
     table = snewn(tsize, int);
     for (i = 0; i < tsize; i++) table[i] = -1;
@@ -1866,25 +1873,27 @@ static bool rm_search(const char *g, int W, int H, const int *goals, int nb,
         for (d = 0; d < nb; d++) if (goals[d] == s0) break;
         if (d < nb) continue;                   /* a box stands there */
         nfs = 0;
-#define RM_PUSH(FR) do { if (nfs == fcap) { fcap = fcap ? fcap * 2 : 1024; \
-            fs = sresize(fs, fcap, struct rm_frame); } fs[nfs++] = (FR); } while (0)
-        {
-            struct rm_frame f0;
-            memset(&f0, 0, sizeof f0);
-            for (i = 0; i < nb; i++) f0.b[i] = ib[i];
-            f0.pl = s0; f0.step = 0;
-            RM_PUSH(f0);
-        }
+#define RM_PUSH(FR) do { if (nfs < fmax) { \
+            if (nfs == fcap) { fcap = fcap ? fcap * 2 : 1024; \
+                if (fcap > fmax) fcap = fmax; \
+                fs = sresize(fs, fcap * fsz, unsigned short); } \
+            memcpy(fs + nfs * fsz, (FR), fsz * sizeof(unsigned short)); nfs++; } } while (0)
+        for (i = 0; i < nb; i++) nf[i] = ib[i];
+        nf[nb] = s0; nf[nb+1] = 0; nf[nb+2] = 0;
+        RM_PUSH(nf);
         while (nfs > 0 && nrec < maxrec) {
-            struct rm_frame f = fs[--nfs];
-            int reg = f.pl, regmax = f.pl, sp = 0, cstamp;
-            unsigned short sorted[8];
+            int reg, regmax, sp = 0, cstamp, step, pl;
+            nfs--;
+            memcpy(cur, fs + nfs * fsz, fsz * sizeof(unsigned short));
+            pl = cur[nb];
+            step = cur[nb+1] | ((int)cur[nb+2] << 16);
+            reg = regmax = pl;
 
             memset(boxat, 0, N);
-            for (i = 0; i < nb; i++) boxat[f.b[i]] = 1;
+            for (i = 0; i < nb; i++) boxat[cur[i]] = 1;
             /* player's region */
             stamp++; cstamp = stamp;
-            stack[sp++] = f.pl; mark[f.pl] = stamp;
+            stack[sp++] = pl; mark[pl] = stamp;
             while (sp) {
                 int p = stack[--sp], px = p % W, py = p / W, e;
                 if (p < reg) reg = p;
@@ -1897,13 +1906,15 @@ static bool rm_search(const char *g, int W, int H, const int *goals, int nb,
                     mark[q] = stamp; stack[sp++] = q;
                 }
             }
-            if (f.step > 0) {
+            if (step > 0) {
                 unsigned h = 2166136261u;
                 long slot;
-                unsigned short key[9];
-                memcpy(sorted, f.b, nb * sizeof(unsigned short));
-                for (i = 0; i < nb; i++) for (j = i + 1; j < nb; j++)
-                    if (sorted[j] < sorted[i]) { unsigned short t = sorted[i]; sorted[i] = sorted[j]; sorted[j] = t; }
+                memcpy(sorted, cur, nb * sizeof(unsigned short));
+                for (i = 1; i < nb; i++) {      /* insertion sort */
+                    unsigned short t = sorted[i];
+                    for (j = i - 1; j >= 0 && sorted[j] > t; j--) sorted[j+1] = sorted[j];
+                    sorted[j+1] = t;
+                }
                 for (i = 0; i < nb; i++) { key[i] = sorted[i]; h = (h ^ key[i]) * 16777619u; }
                 key[nb] = reg; h = (h ^ reg) * 16777619u;
                 slot = h & (tsize - 1);
@@ -1912,20 +1923,19 @@ static bool rm_search(const char *g, int W, int H, const int *goals, int nb,
                     slot = (slot + 1) & (tsize - 1);
                 if (table[slot] >= 0) {
                     struct rm_rec *r = &recs[table[slot]];
-                    if (f.step < r->label) r->label = f.step;
+                    if (step < r->label) r->label = step;
                     continue;                   /* cached: do not expand */
                 }
                 memcpy(keys + nrec * stride, key, stride * sizeof(unsigned short));
-                recs[nrec].label = f.step;
+                recs[nrec].label = step;
                 recs[nrec].maxcell = regmax;
                 table[slot] = nrec++;
                 found = true;
             }
             for (i = 0; i < nb; i++) {
-                int bx = f.b[i] % W, by = f.b[i] / W;
+                int bx = cur[i] % W, by = cur[i] / W;
                 for (d = 0; d < 4; d++) {
                     int b2x = bx + dirx[d], b2y = by + diry[d], p2x, p2y, b2, p2;
-                    struct rm_frame nf;
                     if (b2x < 0 || b2y < 0 || b2x >= W || b2y >= H) continue;
                     b2 = b2y * W + b2x;
                     if (!RM_FLOOR(g[b2]) || boxat[b2] || mark[b2] != cstamp) continue;
@@ -1933,8 +1943,9 @@ static bool rm_search(const char *g, int W, int H, const int *goals, int nb,
                     if (p2x < 0 || p2y < 0 || p2x >= W || p2y >= H) continue;
                     p2 = p2y * W + p2x;
                     if (!RM_FLOOR(g[p2]) || boxat[p2] || mark[p2] != cstamp) continue;
-                    nf = f;
-                    nf.b[i] = b2; nf.pl = p2; nf.step = f.step + 1;
+                    memcpy(nf, cur, nb * sizeof(unsigned short));
+                    nf[i] = b2; nf[nb] = p2;
+                    nf[nb+1] = (step + 1) & 0xFFFF; nf[nb+2] = (step + 1) >> 16;
                     RM_PUSH(nf);
                 }
             }
@@ -1961,7 +1972,8 @@ static bool rm_search(const char *g, int W, int H, const int *goals, int nb,
         }
     }
     sfree(keys); sfree(recs); sfree(table); sfree(mark); sfree(stack);
-    sfree(boxat); sfree(fs);
+    sfree(boxat); sfree(fs); sfree(key); sfree(cur); sfree(nf); sfree(sorted);
+    sfree(ib);
     return found;
 }
 
@@ -1969,19 +1981,19 @@ static bool sokoban_gen_rooms(const game_params *params, random_state *rs,
                               unsigned char *grid)
 {
     int gw = params->w, gh = params->h;
-    int RW = (gw - 2) / 3, RH = (gh - 2) / 3, W, H, i, tries, nb;
+    int RW = (gw - 2) / 3, RH = (gh - 2) / 3, W, H, i, tries, nb, nbreq;
     char *g;
-    int *cand, ncand, goalset[8], bplayer = -1;
-    unsigned short bbox[8];
+    int *cand, ncand, *goalset, bplayer = -1, nfloor;
+    unsigned short *bbox;
     bool good = false;
 
     if (RW < 1 || RH < 1) return false;
     if (RW > 30) RW = 30;
     if (RH > 30) RH = 30;
     W = RW * 3; H = RH * 3;
-    nb = params->rm_boxes ? params->rm_boxes : 2 + (RW * RH) / 4;
-    if (!params->rm_boxes && nb > 4) nb = 4;
-    if (nb > 8) nb = 8;
+    nb = params->rm_boxes ? params->rm_boxes : 2 + (RW * RH) / 3;
+    if (!params->rm_boxes && nb > 8) nb = 8;
+    nbreq = nb < 6 ? nb : 6;
     g = snewn(W * H, char);
     cand = snewn(W * H, int);
 
@@ -1992,7 +2004,7 @@ static bool sokoban_gen_rooms(const game_params *params, random_state *rs,
         int bestfloor = -1, nvalid = 0, k;
         for (tries = 0; tries < 300 && nvalid < 12; tries++) {
             rm_rooms(RW, RH, g, rs);
-            if (rm_requirements(g, W, H, nb)) {
+            if (rm_requirements(g, W, H, nbreq)) {
                 int f = 0;
                 for (k = 0; k < W * H; k++) if (RM_FLOOR(g[k])) f++;
                 nvalid++;
@@ -2002,7 +2014,7 @@ static bool sokoban_gen_rooms(const game_params *params, random_state *rs,
         for (tries = 0; nvalid < 12 && tries < 60; tries++) {
             rm_rooms(RW, RH, g, rs);
             rm_repair(g, W, H, rs);
-            if (rm_requirements(g, W, H, nb)) {
+            if (rm_requirements(g, W, H, nbreq)) {
                 int f = 0;
                 for (k = 0; k < W * H; k++) if (RM_FLOOR(g[k])) f++;
                 nvalid++;
@@ -2017,6 +2029,13 @@ static bool sokoban_gen_rooms(const game_params *params, random_state *rs,
         return false;
     }
     ncand = rm_goal_cells(g, W, H, cand);
+    for (nfloor = 0, i = 0; i < W * H; i++) if (RM_FLOOR(g[i])) nfloor++;
+    /* more boxes than the room can sensibly hold are cut down */
+    if (nb > ncand) nb = ncand;
+    if (nb > nfloor / 3) nb = nfloor / 3;
+    if (nb < 1) nb = 1;
+    goalset = snewn(nb, int);
+    bbox = snewn(nb, unsigned short);
     for (tries = 0; tries < params->rm_attempts; tries++) {
         shuffle(cand, ncand, sizeof(int), rs);
         for (i = 0; i < nb; i++) goalset[i] = cand[i];
@@ -2025,33 +2044,52 @@ static bool sokoban_gen_rooms(const game_params *params, random_state *rs,
             break;
     }
     if (bplayer < 0) {
-        sfree(g); sfree(cand);
+        sfree(g); sfree(cand); sfree(goalset); sfree(bbox);
         return false;
     }
     for (i = 0; i < gw * gh; i++) grid[i] = WALL;
     {
         int ox = 1 + (gw - 2 - W) / 2, oy = 1 + (gh - 2 - H) / 2, x, y;
+        char *isb = snewn(W * H, char), *isg = snewn(W * H, char);
+        memset(isb, 0, W * H); memset(isg, 0, W * H);
+        for (i = 0; i < nb; i++) { isb[bbox[i]] = 1; isg[goalset[i]] = 1; }
         for (y = 0; y < H; y++)
             for (x = 0; x < W; x++) {
-                int idx = y*W + x, isbox = 0, isgoal = 0, k;
+                int idx = y*W + x;
                 unsigned char v;
-                for (k = 0; k < nb; k++) {
-                    if (bbox[k] == idx) isbox = 1;
-                    if (goalset[k] == idx) isgoal = 1;
-                }
                 if (!RM_FLOOR(g[idx])) v = WALL;
-                else if (isgoal) v = isbox ? BARRELTARGET : TARGET;
-                else v = isbox ? BARREL : SPACE;
+                else if (isg[idx]) v = isb[idx] ? BARRELTARGET : TARGET;
+                else v = isb[idx] ? BARREL : SPACE;
                 if (idx == bplayer)
                     v = (v == TARGET) ? PLAYERTARGET : PLAYER;
                 grid[(oy + y) * gw + ox + x] = v;
             }
+        sfree(isb); sfree(isg);
     }
-    sfree(g); sfree(cand);
+    sfree(g); sfree(cand); sfree(goalset); sfree(bbox);
     return true;
 }
 
-static bool sokoban_external(const game_params *params, random_state *rs,
+/* ----------------------------------------------------------------------
+ * Big boards.
+ *
+ * The alternative generators only give good puzzles on boards of modest
+ * size: the searches of YASGen and Rooms run out of steam, the MCTS level
+ * maker leaves unreachable islands and a single box, and the NetHack
+ * style Boulders level is a structure of fixed size.  A big board is
+ * therefore built as a chain of tiles, each made by the chosen generator
+ * and each a puzzle of its own.  Between the tiles runs a one square
+ * wide street; the tiles are linked in a snake-like order by carving a
+ * tunnel out of one tile, a corridor along the street, and a tunnel into
+ * the next one.  The player can leave a finished tile because the tunnel
+ * starts in the part of the finished tile that is connected to every
+ * square the player may stand on after pushing the last box, and enters
+ * the next tile in the part where its own player would start.  Carving
+ * only ever turns walls into floor, so the solution of every tile stays
+ * valid.
+ */
+
+static bool sokoban_tile_gen(const game_params *params, random_state *rs,
                              unsigned char *grid)
 {
     switch (params->gen) {
@@ -2061,6 +2099,547 @@ static bool sokoban_external(const game_params *params, random_state *rs,
       case 4: return sokoban_gen_rooms(params, rs, grid);
       default: return false;
     }
+}
+
+/* mode 0: squares the player can walk on; mode 1: anything but a wall */
+#define MO_PASS(c, m) ((m) ? (c) != WALL : \
+                       ((c) != WALL && !IS_BARREL(c) && \
+                        (c) != PIT && (c) != DEEP_PIT))
+
+static const int mo_dx[4] = { 0, 1, 0, -1 }, mo_dy[4] = { -1, 0, 1, 0 };
+
+static int mo_flood(const unsigned char *g, int w, int h, int start, int mode,
+                    unsigned char *mark, int *q)
+{
+    int head = 0, tail = 0;
+    memset(mark, 0, (size_t)w * h);
+    if (start < 0 || !MO_PASS(g[start], mode)) return 0;
+    mark[start] = 1; q[tail++] = start;
+    while (head < tail) {
+        int p = q[head++], x = p % w, y = p / w, k;
+        for (k = 0; k < 4; k++) {
+            int nx = x + mo_dx[k], ny = y + mo_dy[k], np;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            np = ny * w + nx;
+            if (mark[np] || !MO_PASS(g[np], mode)) continue;
+            mark[np] = 1; q[tail++] = np;
+        }
+    }
+    return tail;
+}
+
+/*
+ * Checks one generated tile and tidies it: the outer ring becomes wall,
+ * floor the player could never get to (not even by pushing boxes) is
+ * filled with wall.  A box or a goal that cannot be reached makes the
+ * tile unusable.  Returns the player's square, or -1.
+ */
+static int mo_tidy_tile(unsigned char *g, int w, int h)
+{
+    int i, pl = -1, nfree = 0, ngoal = 0;
+    unsigned char *mark = snewn(w * h, unsigned char);
+    int *q = snewn(w * h, int);
+    bool ok = true;
+
+    for (i = 0; i < w * h; i++) {
+        int x = i % w, y = i / w;
+        if (x == 0 || y == 0 || x == w - 1 || y == h - 1) {
+            if (g[i] == SPACE) g[i] = WALL;
+            else if (g[i] != WALL) ok = false;
+        }
+        if (IS_PLAYER(g[i])) {
+            if (pl >= 0) ok = false;
+            pl = i;
+        }
+    }
+    if (pl < 0) ok = false;
+    if (ok) {
+        mo_flood(g, w, h, pl, 1, mark, q);
+        for (i = 0; i < w * h; i++) {
+            if (mark[i]) continue;
+            if (g[i] == SPACE || g[i] == BARRELTARGET) g[i] = WALL;
+            else if (g[i] != WALL) ok = false;
+        }
+    }
+    if (ok) {
+        for (i = 0; i < w * h; i++) {
+            if (g[i] == BARREL) nfree++;
+            if (g[i] == TARGET || g[i] == PIT || g[i] == PLAYERTARGET) ngoal++;
+        }
+        if (nfree < 1 || ngoal < 1) ok = false;
+    }
+    sfree(mark); sfree(q);
+    return ok ? pl : -1;
+}
+
+/* the position in which every box stands on a goal (or fills a pit) */
+static void mo_solved_state(const unsigned char *g, int n, unsigned char *s)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        switch (g[i]) {
+          case BARREL: case PLAYER: case PIT: s[i] = SPACE; break;
+          case TARGET: case PLAYERTARGET: s[i] = BARRELTARGET; break;
+          default: s[i] = g[i]; break;
+        }
+    }
+}
+
+/*
+ * Squares on which the player can stand after pushing the last box: next
+ * to a goal, with the square behind it free so that the push was
+ * possible.  Returns how many there are.
+ */
+static int mo_needed(const unsigned char *g, const unsigned char *s,
+                     int w, int h, unsigned char *need)
+{
+    int i, k, n = 0;
+    memset(need, 0, (size_t)w * h);
+    for (i = 0; i < w * h; i++) {
+        int x = i % w, y = i / w;
+        if (g[i] != TARGET && g[i] != BARRELTARGET && g[i] != PIT &&
+            g[i] != PLAYERTARGET) continue;
+        for (k = 0; k < 4; k++) {
+            int cx = x + mo_dx[k], cy = y + mo_dy[k];
+            int px = cx + mo_dx[k], py = cy + mo_dy[k];
+            if (px < 0 || py < 0 || px >= w || py >= h) continue;
+            if (s[cy * w + cx] != SPACE || g[py * w + px] == WALL) continue;
+            if (!need[cy * w + cx]) { need[cy * w + cx] = 1; n++; }
+        }
+    }
+    return n;
+}
+
+#define MO_INF 1000000
+#define MO_RING(X, Y) ((X) == 0 || (Y) == 0 || (X) == w - 1 || (Y) == h - 1)
+
+/*
+ * Finds the cheapest route from a square of the region src to a square
+ * of the outer ring of the tile on the given side (0 top, 1 right, 2
+ * bottom, 3 left).  The route may cross walls (cost 3, to be carved) and
+ * squares of walk (cost 1); other ring squares are never used.  Returns
+ * the number of squares in path[], the ring square first, or 0.
+ */
+static int mo_route(const unsigned char *g, int w, int h,
+                    const unsigned char *src, const unsigned char *walk,
+                    const unsigned char *forbid, int side, int want,
+                    random_state *rs, int *path)
+{
+    int N = w * h, i, k, best = -1, bestscore = 0, n = 0;
+    int *dist = snewn(N, int), *prev = snewn(N, int);
+    unsigned char *done = snewn(N, unsigned char);
+
+#define MO_TARGET(X, Y) (side == 0 ? ((Y) == 0 && (X) >= 1 && (X) <= w - 2) : \
+                         side == 2 ? ((Y) == h - 1 && (X) >= 1 && (X) <= w - 2) : \
+                         side == 3 ? ((X) == 0 && (Y) >= 1 && (Y) <= h - 2) : \
+                                     ((X) == w - 1 && (Y) >= 1 && (Y) <= h - 2))
+    for (i = 0; i < N; i++) {
+        dist[i] = src[i] ? 0 : MO_INF; prev[i] = -1; done[i] = 0;
+    }
+    for (;;) {
+        int p = -1, x, y;
+        for (i = 0; i < N; i++)
+            if (!done[i] && dist[i] < MO_INF && (p < 0 || dist[i] < dist[p]))
+                p = i;
+        if (p < 0) break;
+        done[p] = 1;
+        x = p % w; y = p / w;
+        if (MO_RING(x, y)) continue;          /* a ring square ends a route */
+        for (k = 0; k < 4; k++) {
+            int nx = x + mo_dx[k], ny = y + mo_dy[k], np, c;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            np = ny * w + nx;
+            if (g[np] == WALL) {
+                if (forbid && forbid[np]) continue;
+                if (MO_RING(nx, ny) && !MO_TARGET(nx, ny)) continue;
+                c = 3;
+            } else if (walk[np]) c = 1;
+            else continue;
+            if (dist[p] + c < dist[np]) { dist[np] = dist[p] + c; prev[np] = p; }
+        }
+    }
+    for (i = 0; i < N; i++) {
+        int x = i % w, y = i / w, c, score;
+        if (dist[i] >= MO_INF || !MO_RING(x, y) || !MO_TARGET(x, y)) continue;
+        c = (side % 2 == 0) ? x : y;
+        score = dist[i] * 2 +
+                (want >= 0 ? abs(c - want)
+                           : abs(c - ((side % 2 == 0 ? w : h) - 1) / 2)) +
+                (int)random_upto(rs, 3);
+        if (best < 0 || score < bestscore) { best = i; bestscore = score; }
+    }
+    if (best >= 0)
+        for (i = best; i >= 0; i = prev[i]) path[n++] = i;
+#undef MO_TARGET
+    sfree(dist); sfree(prev); sfree(done);
+    return n;
+}
+
+/*
+ * In the finished position the free squares may fall apart into several
+ * parts (a box standing on a goal in a corridor, say).  Carves walls so
+ * that all the squares where the player may end up are in one part.
+ * Returns the number of squares carved, or -1 if that takes too many.
+ */
+static int mo_join(unsigned char *g, unsigned char *s,
+                   const unsigned char *need, int w, int h, int limit)
+{
+    int N = w * h, total = 0, i, k, result = 0;
+    int *label = snewn(N, int), *dist = snewn(N, int), *prev = snewn(N, int);
+    int *q = snewn(N, int);
+    unsigned char *done = snewn(N, unsigned char), *mark = snewn(N, unsigned char);
+    unsigned char *needlab = snewn(N + 1, unsigned char);
+
+    for (;;) {
+        int nl = 0, first = -1, A, nneed = 0, found = -1, p;
+        for (i = 0; i < N; i++) label[i] = -1;
+        for (i = 0; i < N; i++)
+            if (label[i] < 0 && MO_PASS(s[i], 0)) {
+                int cnt = mo_flood(s, w, h, i, 0, mark, q), j;
+                for (j = 0; j < cnt; j++) label[q[j]] = nl;
+                nl++;
+            }
+        memset(needlab, 0, (size_t)nl + 1);
+        for (i = 0; i < N; i++)
+            if (need[i] && label[i] >= 0) {
+                if (first < 0) first = i;
+                if (!needlab[label[i]]) { needlab[label[i]] = 1; nneed++; }
+            }
+        if (first < 0) { result = -1; break; }
+        if (nneed <= 1) break;
+        A = label[first];
+        for (i = 0; i < N; i++) {
+            dist[i] = (label[i] == A) ? 0 : MO_INF; prev[i] = -1; done[i] = 0;
+        }
+        for (;;) {
+            int x, y;
+            p = -1;
+            for (i = 0; i < N; i++)
+                if (!done[i] && dist[i] < MO_INF && (p < 0 || dist[i] < dist[p]))
+                    p = i;
+            if (p < 0) break;
+            if (label[p] >= 0 && label[p] != A && needlab[label[p]]) { found = p; break; }
+            done[p] = 1;
+            x = p % w; y = p / w;
+            for (k = 0; k < 4; k++) {
+                int nx = x + mo_dx[k], ny = y + mo_dy[k], np, c;
+                if (nx < 1 || ny < 1 || nx >= w - 1 || ny >= h - 1) continue;
+                np = ny * w + nx;
+                if (s[np] == WALL) c = 3;
+                else if (MO_PASS(s[np], 0)) c = 1;
+                else continue;
+                if (dist[p] + c < dist[np]) { dist[np] = dist[p] + c; prev[np] = p; }
+            }
+        }
+        if (found < 0) { result = -1; break; }
+        for (i = found; i >= 0; i = prev[i])
+            if (s[i] == WALL) { s[i] = g[i] = SPACE; total++; }
+        if (total > limit) { result = -1; break; }
+    }
+    sfree(label); sfree(dist); sfree(prev); sfree(q);
+    sfree(done); sfree(mark); sfree(needlab);
+    return result < 0 ? -1 : total;
+}
+
+struct mo_tile {
+    int x0, y0, w, h;                  /* where it lies in the whole grid */
+    unsigned char *g;
+    unsigned char *need;               /* squares where the player may end */
+    int pl;                            /* player's square, tile coordinates */
+    int entry_ring, exit_ring;         /* squares of the ring, or -1 */
+};
+
+/*
+ * Cuts the tunnels of one tile.  The way in leads to the region the
+ * player can walk about in at the beginning; the way out starts in the
+ * region of the finished position that holds every square the player
+ * can stand on at the end.
+ */
+static bool mo_tile_doors(struct mo_tile *t, int entry_side, int entry_want,
+                          int exit_side, random_state *rs)
+{
+    int w = t->w, h = t->h, N = w * h, i, k;
+    unsigned char *mark = snewn(N, unsigned char), *src = snewn(N, unsigned char);
+    unsigned char *walk = snewn(N, unsigned char);
+    unsigned char *forbid = snewn(N, unsigned char), *s = snewn(N, unsigned char);
+    int *q = snewn(N, int), *epath = snewn(N, int), *xpath = snewn(N, int);
+    int ne = 0, nx = 0, ncarve = 0;
+    bool ok = true;
+
+    memset(forbid, 0, N);
+    t->entry_ring = t->exit_ring = -1;
+    if (exit_side >= 0) {
+        int cnt;
+        mo_solved_state(t->g, N, s);
+        cnt = mo_needed(t->g, s, w, h, t->need);
+        if (cnt == 0) ok = false;
+        else if (mo_join(t->g, s, t->need, w, h, 6 + N / 20) < 0)
+            ok = false;
+    }
+    if (ok && entry_side >= 0) {
+        mo_flood(t->g, w, h, t->pl, 0, mark, q);
+        for (i = 0; i < N; i++) {
+            src[i] = mark[i];
+            walk[i] = !mark[i] && MO_PASS(t->g[i], 0);
+        }
+        ne = mo_route(t->g, w, h, src, walk, NULL, entry_side, entry_want, rs, epath);
+        if (!ne) ok = false;
+        else {
+            t->entry_ring = epath[0];
+            for (i = 0; i < ne; i++) {
+                int x = epath[i] % w, y = epath[i] / w;
+                forbid[epath[i]] = 1;
+                for (k = 0; k < 4; k++) {
+                    int ax = x + mo_dx[k], ay = y + mo_dy[k];
+                    if (ax >= 0 && ay >= 0 && ax < w && ay < h)
+                        forbid[ay * w + ax] = 1;
+                }
+            }
+        }
+    }
+    if (ok && exit_side >= 0) {
+        int first = -1;
+        for (i = 0; i < N; i++) if (t->need[i]) { first = i; break; }
+        mo_flood(s, w, h, first, 0, mark, q);
+        for (i = 0; i < N; i++) {
+            src[i] = mark[i];
+            walk[i] = !mark[i] && MO_PASS(s[i], 0);
+        }
+        nx = mo_route(t->g, w, h, src, walk, forbid, exit_side, -1, rs, xpath);
+        if (!nx) ok = false;
+        else t->exit_ring = xpath[0];
+    }
+    if (ok) {
+        for (i = 0; i < ne; i++)
+            if (t->g[epath[i]] == WALL) { t->g[epath[i]] = SPACE; ncarve++; }
+        for (i = 0; i < nx; i++)
+            if (t->g[xpath[i]] == WALL) { t->g[xpath[i]] = SPACE; ncarve++; }
+    }
+    sfree(mark); sfree(src); sfree(walk); sfree(forbid); sfree(s);
+    sfree(q); sfree(epath); sfree(xpath);
+    return ok;
+}
+
+#define MO_MAXSIDE 16
+#define MO_MAXTILES (MO_MAXSIDE * MO_MAXSIDE)
+
+/*
+ * Largest size of a tile for each generator: "soft" is the size the
+ * tiles are cut to when a board is divided, "hard" the biggest board that
+ * is still made in one piece; min is the smallest tile the generator can
+ * make.
+ */
+static void mo_limits(int gen, int *soft, int *hard, int *minw, int *minh)
+{
+    switch (gen) {
+      case 1:  soft[0] = hard[0] = 26; soft[1] = 10; hard[1] = 16;
+               *minw = 14; *minh = 9; break;
+      case 2:  soft[0] = soft[1] = 14; hard[0] = hard[1] = 16;
+               *minw = *minh = 8; break;
+      case 3:  soft[0] = soft[1] = 13; hard[0] = hard[1] = 14;
+               *minw = *minh = 7; break;
+      default: soft[0] = soft[1] = 17; hard[0] = hard[1] = 20;
+               *minw = *minh = 8; break;
+    }
+}
+
+/* cuts a length into tiles separated by one square; returns their number */
+static int mo_split(int len, int soft, int hard, int minlen, int *out)
+{
+    int n = 1, i, avail;
+    if (len > hard) {
+        n = (len + 1 + soft) / (soft + 1);
+        if (n > MO_MAXSIDE) n = MO_MAXSIDE;
+        while (n > 1 && (len - (n - 1)) / n < minlen) n--;
+    }
+    avail = len - (n - 1);
+    for (i = 0; i < n; i++) out[i] = avail / n + (i < avail % n ? 1 : 0);
+    return n;
+}
+
+/* every tile in its finished state, then can the player still get to the
+ * start of the next one? */
+static bool mo_chain_check(const unsigned char *grid, int w, int h,
+                           const struct mo_tile *tiles, int n)
+{
+    unsigned char *hg = snewn(w * h, unsigned char);
+    unsigned char *mark = snewn(w * h, unsigned char);
+    int *q = snewn(w * h, int);
+    bool ok = true;
+    int k, i, x, y;
+
+    memcpy(hg, grid, (size_t)w * h);
+    for (k = 1; k < n && ok; k++) {
+        const struct mo_tile *a = &tiles[k - 1], *b = &tiles[k];
+        int first = -1;
+        for (y = 0; y < a->h; y++)
+            for (x = 0; x < a->w; x++) {
+                unsigned char *c = &hg[(a->y0 + y) * w + a->x0 + x];
+                mo_solved_state(c, 1, c);
+            }
+        for (i = 0; i < a->w * a->h; i++)
+            if (a->need[i]) { first = (a->y0 + i / a->w) * w + a->x0 + i % a->w; break; }
+        mo_flood(hg, w, h, first, 0, mark, q);
+        if (first < 0) ok = false;
+        for (i = 0; ok && i < a->w * a->h; i++)
+            if (a->need[i] && !mark[(a->y0 + i / a->w) * w + a->x0 + i % a->w])
+                ok = false;
+        if (ok && !mark[(b->y0 + b->pl / b->w) * w + b->x0 + b->pl % b->w])
+            ok = false;
+    }
+    sfree(hg); sfree(mark); sfree(q);
+    return ok;
+}
+
+static bool sokoban_mosaic(const game_params *params, random_state *rs,
+                           unsigned char *grid, int tx, int ty,
+                           const int *tw, const int *th)
+{
+    int w = params->w, h = params->h, n = tx * ty, i, j, k, x, y;
+    struct mo_tile tiles[MO_MAXTILES];
+    int ti[MO_MAXTILES], tj[MO_MAXTILES];
+    int xs[MO_MAXTILES + 1], ys[MO_MAXTILES + 1];
+    long totalarea = 0, areas[MO_MAXTILES];
+    clock_t t0 = clock();
+    bool ok = true;
+    int maxtry = params->gen == 2 ? 6 : params->gen == 3 ? 5 : 30;
+
+    if (n > MO_MAXTILES) return false;
+    xs[0] = 0; for (i = 0; i < tx; i++) xs[i + 1] = xs[i] + tw[i] + 1;
+    ys[0] = 0; for (j = 0; j < ty; j++) ys[j + 1] = ys[j] + th[j] + 1;
+    k = 0;
+    for (j = 0; j < ty; j++)
+        for (i = 0; i < tx; i++) {
+            int ii = (j % 2 == 0) ? i : tx - 1 - i;
+            ti[k] = ii; tj[k] = j;
+            areas[k] = (long)(tw[ii] - 2) * (th[j] - 2);
+            totalarea += areas[k];
+            k++;
+        }
+    memset(tiles, 0, sizeof tiles);
+
+    for (k = 0; k < n && ok; k++) {
+        struct mo_tile *t = &tiles[k];
+        int entry_side = -1, exit_side = -1, entry_want = -1, attempt;
+        bool done = false;
+
+        t->x0 = xs[ti[k]]; t->y0 = ys[tj[k]];
+        t->w = tw[ti[k]]; t->h = th[tj[k]];
+        t->g = snewn(t->w * t->h, unsigned char);
+        t->need = snewn(t->w * t->h, unsigned char);
+        memset(t->need, 0, (size_t)t->w * t->h);
+        t->entry_ring = t->exit_ring = -1;
+        if (k > 0) {
+            if (ti[k - 1] < ti[k]) entry_side = 3;
+            else if (ti[k - 1] > ti[k]) entry_side = 1;
+            else entry_side = 0;
+            {
+                const struct mo_tile *a = &tiles[k - 1];
+                int r = a->exit_ring;
+                entry_want = (entry_side % 2 == 1) ? r / a->w : r % a->w;
+            }
+        }
+        if (k < n - 1) {
+            if (ti[k + 1] > ti[k]) exit_side = 1;
+            else if (ti[k + 1] < ti[k]) exit_side = 3;
+            else exit_side = 2;
+        }
+        for (attempt = 0; attempt < maxtry && !done; attempt++) {
+            game_params sub = *params;
+            sub.w = t->w; sub.h = t->h;
+            if (n > 1) {
+                /* the boxes asked for are shared out by area */
+                long total = params->gen == 3 ? params->yg_goals :
+                             params->gen == 4 ? params->rm_boxes : 0;
+                if (total) {
+                    long done_area = 0, i2, lo, hi, share;
+                    for (i2 = 0; i2 < k; i2++) done_area += areas[i2];
+                    lo = (total * done_area + totalarea / 2) / totalarea;
+                    hi = (total * (done_area + areas[k]) + totalarea / 2) / totalarea;
+                    share = hi - lo < 1 ? 1 : hi - lo;
+                    if (params->gen == 3) sub.yg_goals = (int)share;
+                    else sub.rm_boxes = (int)share;
+                }
+                if (params->gen == 2)
+                    sub.tile_ms = params->mc_time > 0 ?
+                        (params->mc_time * 1000 / n < 500 ? 500 : params->mc_time * 1000 / n) :
+                        1000;
+                if (params->gen == 3) {
+                    int ms = params->yg_limit * 5 / 2;
+                    sub.tile_ms = ms < 400 ? 400 : ms > 3000 ? 3000 : ms;
+                }
+            }
+            if ((double)(clock() - t0) / CLOCKS_PER_SEC > 20.0 + 4.0 * n) break;
+            if (!sokoban_tile_gen(&sub, rs, t->g)) continue;
+            t->pl = mo_tidy_tile(t->g, t->w, t->h);
+            if (t->pl < 0) continue;
+            if (mo_tile_doors(t, entry_side, entry_want, exit_side, rs))
+                done = true;
+        }
+        if (!done) ok = false;
+    }
+
+    if (ok) {
+        for (i = 0; i < w * h; i++) grid[i] = WALL;
+        for (k = 0; k < n; k++) {
+            const struct mo_tile *t = &tiles[k];
+            for (y = 0; y < t->h; y++)
+                for (x = 0; x < t->w; x++) {
+                    unsigned char c = t->g[y * t->w + x];
+                    if (k > 0) {
+                        if (c == PLAYER) c = SPACE;
+                        else if (c == PLAYERTARGET) c = TARGET;
+                    }
+                    grid[(t->y0 + y) * w + t->x0 + x] = c;
+                }
+        }
+        for (k = 0; k + 1 < n; k++) {
+            const struct mo_tile *a = &tiles[k], *b = &tiles[k + 1];
+            int ax = a->x0 + a->exit_ring % a->w, ay = a->y0 + a->exit_ring / a->w;
+            int bx = b->x0 + b->entry_ring % b->w, by = b->y0 + b->entry_ring / b->w;
+            if (ti[k + 1] != ti[k]) {              /* neighbours in a row */
+                int gx = (ax + bx) / 2, y0 = ay < by ? ay : by, y1 = ay < by ? by : ay;
+                if (abs(ax - bx) != 2) { ok = false; break; }
+                for (y = y0; y <= y1; y++) grid[y * w + gx] = SPACE;
+            } else {                                /* one below the other */
+                int gy = (ay + by) / 2, x0 = ax < bx ? ax : bx, x1 = ax < bx ? bx : ax;
+                if (abs(ay - by) != 2) { ok = false; break; }
+                for (x = x0; x <= x1; x++) grid[gy * w + x] = SPACE;
+            }
+        }
+        if (ok)
+            ok = mo_chain_check(grid, w, h, tiles, n);
+        if (ok) {
+            unsigned char *mark = snewn(w * h, unsigned char);
+            int *q = snewn(w * h, int), pl = tiles[0].y0 * w + tiles[0].x0 +
+                (tiles[0].pl / tiles[0].w) * w + tiles[0].pl % tiles[0].w;
+            mo_flood(grid, w, h, pl, 1, mark, q);
+            for (i = 0; i < w * h; i++)
+                if (!mark[i] && grid[i] != WALL) ok = false;
+            sfree(mark); sfree(q);
+        }
+    }
+    for (k = 0; k < n; k++) { sfree(tiles[k].g); sfree(tiles[k].need); }
+    return ok;
+}
+
+static bool sokoban_external(const game_params *params, random_state *rs,
+                             unsigned char *grid)
+{
+    int soft[2], hard[2], minw, minh, tw[MO_MAXTILES + 1], th[MO_MAXTILES + 1];
+    int tx, ty, attempt;
+
+    mo_limits(params->gen, soft, hard, &minw, &minh);
+    tx = mo_split(params->w, soft[0], hard[0], minw, tw);
+    ty = mo_split(params->h, soft[1], hard[1], minh, th);
+    if (tx == 1 && ty == 1) {
+        for (attempt = 0; attempt < 3; attempt++) {
+            if (!sokoban_tile_gen(params, rs, grid)) continue;
+            if (mo_tidy_tile(grid, params->w, params->h) >= 0) return true;
+        }
+        return false;
+    }
+    return sokoban_mosaic(params, rs, grid, tx, ty, tw, th);
 }
 
 static char *new_game_desc(const game_params *params, random_state *rs,
@@ -2648,6 +3227,11 @@ static float *game_colours(frontend *fe, int *ncolours)
     SETCOL(COL_C_GOAL, 0.80F, 0.10F, 0.10F);
     SETCOL(COL_C_SUIT, 0.15F, 0.25F, 0.75F);
     SETCOL(COL_C_SKIN, 0.98F, 0.80F, 0.62F);
+    SETCOL(COL_T_PIT, 0.36F, 0.28F, 0.20F);
+    SETCOL(COL_T_DEEP_PIT, 0.06F, 0.05F, 0.05F);
+    SETCOL(COL_T_OUTLINE, 0.0F, 0.0F, 0.0F);
+    SETCOL(COL_T_TEXT, 1.0F, 1.0F, 1.0F);
+    SETCOL(COL_T_FLASH, 1.0F, 1.0F, 0.80F);
 
     {
         int yi;
@@ -2687,7 +3271,7 @@ static void draw_tile_classic(drawing *dr, game_drawstate *ds, int tx, int ty,
                               int v, int flash)
 {
     int T = TILESIZE, cx = tx + T/2, cy = ty + T/2;
-    int bg = flash ? COL_HIGHLIGHT : COL_C_FLOOR;
+    int bg = flash ? COL_T_FLASH : COL_C_FLOOR;
 
     clip(dr, tx+1, ty+1, T-1, T-1);
     draw_rect(dr, tx+1, ty+1, T-1, T-1, bg);
@@ -2708,7 +3292,7 @@ static void draw_tile_classic(drawing *dr, game_drawstate *ds, int tx, int ty,
         }
     } else if (v == PIT || v == DEEP_PIT) {
         draw_circle(dr, cx, cy, T*3/7,
-                    v == PIT ? COL_PIT : COL_DEEP_PIT, COL_OUTLINE);
+                    v == PIT ? COL_T_PIT : COL_T_DEEP_PIT, COL_T_OUTLINE);
     } else {
         if (IS_ON_TARGET(v) && !IS_BARREL(v)) {
             int d = T / 6, c[8];
@@ -2716,7 +3300,7 @@ static void draw_tile_classic(drawing *dr, game_drawstate *ds, int tx, int ty,
             c[2] = cx + d; c[3] = cy;
             c[4] = cx; c[5] = cy + d;
             c[6] = cx - d; c[7] = cy;
-            draw_polygon(dr, c, 4, COL_C_GOAL, COL_OUTLINE);
+            draw_polygon(dr, c, 4, COL_C_GOAL, COL_T_OUTLINE);
         }
         if (IS_BARREL(v)) {
             int m = T / 8, x0 = tx + 1 + m, y0 = ty + 1 + m, x1 = tx + T - m,
@@ -2730,10 +3314,10 @@ static void draw_tile_classic(drawing *dr, game_drawstate *ds, int tx, int ty,
             str[0] = BARREL_LABEL(v);
             if (str[0])
                 draw_text(dr, cx, cy, FONT_VARIABLE, T/2,
-                          ALIGN_VCENTRE | ALIGN_HCENTRE, COL_TEXT, str);
+                          ALIGN_VCENTRE | ALIGN_HCENTRE, COL_T_TEXT, str);
         } else if (IS_PLAYER(v)) {
-            draw_circle(dr, cx, cy + T/8, T/4, COL_C_SUIT, COL_OUTLINE);
-            draw_circle(dr, cx, cy - T/5, T/6, COL_C_SKIN, COL_OUTLINE);
+            draw_circle(dr, cx, cy + T/8, T/4, COL_C_SUIT, COL_T_OUTLINE);
+            draw_circle(dr, cx, cy - T/5, T/6, COL_C_SKIN, COL_T_OUTLINE);
         }
     }
 
@@ -2767,15 +3351,15 @@ static void draw_tile_yoshi(drawing *dr, game_drawstate *ds, int x, int y,
     }
     if (v == PIT || v == DEEP_PIT)
         draw_circle(dr, tx + T/2, ty + T/2, T*3/7,
-                    v == PIT ? COL_PIT : COL_DEEP_PIT, COL_OUTLINE);
+                    v == PIT ? COL_T_PIT : COL_T_DEEP_PIT, COL_T_OUTLINE);
     if (IS_BARREL(v) && BARREL_LABEL(v)) {
         char str[2];
         str[0] = BARREL_LABEL(v); str[1] = '\0';
         draw_text(dr, tx + T/2, ty + T/2, FONT_VARIABLE, T/2,
-                  ALIGN_VCENTRE | ALIGN_HCENTRE, COL_TEXT, str);
+                  ALIGN_VCENTRE | ALIGN_HCENTRE, COL_T_TEXT, str);
     }
     if (flash)
-        draw_rect_outline(dr, tx + 1, ty + 1, T - 2, T - 2, COL_HIGHLIGHT);
+        draw_rect_outline(dr, tx + 1, ty + 1, T - 2, T - 2, COL_T_FLASH);
     unclip(dr);
     draw_update(dr, tx, ty, T, T);
 }

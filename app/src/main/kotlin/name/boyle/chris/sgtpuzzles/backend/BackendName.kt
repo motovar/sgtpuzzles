@@ -122,6 +122,12 @@ sealed class BackendName(
         )[this] ?: emptySet()
     }
 
+    /**
+     * Colours of the extra graphics themes of Sokoban (Classic, Yoshi skins) are full-colour pictures
+     * and must not be converted for night mode at all (the Original theme uses colours below 12).
+     */
+    fun isNightExactColour(index: Int): Boolean = this === SOKOBAN && index >= 12
+
     private val swapLRName by lazy { PrefsConstants.SWAP_L_R_PREFIX + this }
 
     val swapLRNatively by lazy { this in SWAP_L_R_NATIVE_PREFS }

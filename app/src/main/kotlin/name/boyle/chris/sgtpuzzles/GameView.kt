@@ -833,7 +833,8 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
             if (whichBackend.autoNightColours) {
                 val keep = whichBackend.nightKeepColours
                 for (i in 1 until colours.size) {
-                    colours[i] = if (i in keep) pictureNightColour(colours[i])
+                    colours[i] = if (whichBackend.isNightExactColour(i)) colours[i]
+                    else if (i in keep) pictureNightColour(colours[i])
                     else autoNightColour(colours[i], dayBackgroundLightness)
                 }
             }
