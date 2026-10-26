@@ -1655,7 +1655,6 @@ static void rm_rooms(int RW, int RH, char *g, random_state *rs)
             if (fh != RH-1) for (j = 0; j < 3; j++) cp[nc++] = g[(hb+3)*GW + wb+j];
             for (;;) {
                 char t[25], u[25];
-                bool ok = true;
                 memcpy(t, rm_templates[random_upto(rs, 17)], 25);
                 for (k = random_upto(rs, 4); k > 0; k--) {
                     for (i = 0; i < 5; i++)
@@ -2491,6 +2490,12 @@ static bool mo_chain_check(const unsigned char *grid, int w, int h,
     return ok;
 }
 
+#ifdef SOKOBAN_STATS
+/* for the test programs only: the tiles of the last mosaic, in chain order */
+int sokoban_dbg_ntiles;
+int sokoban_dbg_tile[MO_MAXTILES][6];  /* x0, y0, w, h, player x, player y */
+#endif
+
 static bool sokoban_mosaic(const game_params *params, random_state *rs,
                            unsigned char *grid, int tx, int ty,
                            const int *tw, const int *th)
@@ -2626,6 +2631,15 @@ static bool sokoban_mosaic(const game_params *params, random_state *rs,
             sfree(mark); sfree(q);
         }
     }
+#ifdef SOKOBAN_STATS
+    sokoban_dbg_ntiles = ok ? n : 0;
+    for (k = 0; ok && k < n; k++) {
+        sokoban_dbg_tile[k][0] = tiles[k].x0; sokoban_dbg_tile[k][1] = tiles[k].y0;
+        sokoban_dbg_tile[k][2] = tiles[k].w;  sokoban_dbg_tile[k][3] = tiles[k].h;
+        sokoban_dbg_tile[k][4] = tiles[k].x0 + tiles[k].pl % tiles[k].w;
+        sokoban_dbg_tile[k][5] = tiles[k].y0 + tiles[k].pl / tiles[k].w;
+    }
+#endif
     for (k = 0; k < n; k++) { sfree(tiles[k].g); sfree(tiles[k].need); }
     return ok;
 }
@@ -2636,6 +2650,9 @@ static bool sokoban_external(const game_params *params, random_state *rs,
     int soft[2], hard[2], minw, minh, tw[MO_MAXTILES + 1], th[MO_MAXTILES + 1];
     int tx, ty, attempt;
 
+#ifdef SOKOBAN_STATS
+    sokoban_dbg_ntiles = 0;
+#endif
     mo_limits(params->gen, soft, hard, &minw, &minh);
     tx = mo_split(params->w, soft[0], hard[0], minw, tw);
     ty = mo_split(params->h, soft[1], hard[1], minh, th);
@@ -3611,7 +3628,12 @@ static int sk_canon(const game_state *s, int *prev, int *queue)
     return m;
 }
 
+#ifndef SK_MAXN
 #define SK_MAXN 120000
+#endif
+#ifndef SK_HCAP_BITS
+#define SK_HCAP_BITS 20
+#endif
 /* Simple deadlock: barrel off-target stuck in a wall corner. */
 static bool sk_dead(const game_state *s)
 {
@@ -3646,6 +3668,9 @@ static int sk_heur(const game_state *s)
     }
     return tot;
 }
+#ifndef SOKOBAN_HINT_SECONDS
+#define SOKOBAN_HINT_SECONDS 6.0       /* the test programs may allow more */
+#endif
 static unsigned long long *sk_planh = NULL;
 static char *sk_planm = NULL;
 static int sk_plann = 0;
@@ -3655,7 +3680,7 @@ static char *hint_game(const game_state *orig, const game_state *curr,
 {
     int w = curr->p.w, h = curr->p.h, n = w*h;
     unsigned long long hh = sk_hash(curr, 1 + curr->py*w + curr->px);
-    int i, head, tail, hcap = 1 << 20, found = -1;
+    int i, head, tail, hcap = 1 << SK_HCAP_BITS, found = -1;
     game_state **nodes;
     int *parent, *prev, *queue, *gcost, *heap, hn = 0, *key;
     char **mv;
@@ -3687,7 +3712,7 @@ static char *hint_game(const game_state *orig, const game_state *curr,
     tail = 1; gcost[0] = 0; key[0] = 0; heap[hn++] = 0;
     hint_t0 = clock();
     while (hn > 0 && found < 0 &&
-           (double)(clock() - hint_t0) / CLOCKS_PER_SEC < 6.0) {
+           (double)(clock() - hint_t0) / CLOCKS_PER_SEC < SOKOBAN_HINT_SECONDS) {
         game_state *s;
         {   /* pop min key */
             int top = heap[0], x = 0;
@@ -3840,3 +3865,7 @@ const struct game thegame = {
     0,				       /* flags */
     hint_game,
 };
+
+#ifdef SOKOBAN_TEST_INCLUDE
+#include SOKOBAN_TEST_INCLUDE          /* test programs only: code that needs the internals */
+#endif
