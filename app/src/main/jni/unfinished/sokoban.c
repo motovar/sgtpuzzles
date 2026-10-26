@@ -955,7 +955,7 @@ static bool sokoban_gen_mcts(const game_params *params, random_state *rs,
     const char *p;
 
     /* the level is made inside a ring of wall of its own */
-    if (bw * bh < 16 || bw * bh > 4000)
+    if (bw < 3 || bh < 3 || bw * bh < 16 || bw * bh > 4000)
         return false;
 
     seed = ((unsigned long long)random_bits(rs, 31) << 32) |
@@ -2507,15 +2507,25 @@ static bool sokoban_mosaic(const game_params *params, random_state *rs,
     if (n > MO_MAXTILES) return false;
     xs[0] = 0; for (i = 0; i < tx; i++) xs[i + 1] = xs[i] + tw[i] + 1;
     ys[0] = 0; for (j = 0; j < ty; j++) ys[j + 1] = ys[j] + th[j] + 1;
-    k = 0;
-    for (j = 0; j < ty; j++)
-        for (i = 0; i < tx; i++) {
-            int ii = (j % 2 == 0) ? i : tx - 1 - i;
-            ti[k] = ii; tj[k] = j;
-            areas[k] = (long)(tw[ii] - 2) * (th[j] - 2);
-            totalarea += areas[k];
-            k++;
-        }
+    {
+        /* a snake through the tiles, starting in a random corner and
+         * running along rows or along columns */
+        int flipx = random_upto(rs, 2), flipy = random_upto(rs, 2);
+        int trans = random_upto(rs, 2), a, b;
+        int na = trans ? tx : ty, nb = trans ? ty : tx;
+        k = 0;
+        for (a = 0; a < na; a++)
+            for (b = 0; b < nb; b++) {
+                int bb = (a % 2 == 0) ? b : nb - 1 - b;
+                i = trans ? a : bb; j = trans ? bb : a;
+                if (flipx) i = tx - 1 - i;
+                if (flipy) j = ty - 1 - j;
+                ti[k] = i; tj[k] = j;
+                areas[k] = (long)(tw[i] - 2) * (th[j] - 2);
+                totalarea += areas[k];
+                k++;
+            }
+    }
     memset(tiles, 0, sizeof tiles);
 
     for (k = 0; k < n && ok; k++) {
@@ -2530,20 +2540,17 @@ static bool sokoban_mosaic(const game_params *params, random_state *rs,
         memset(t->need, 0, (size_t)t->w * t->h);
         t->entry_ring = t->exit_ring = -1;
         if (k > 0) {
-            if (ti[k - 1] < ti[k]) entry_side = 3;
-            else if (ti[k - 1] > ti[k]) entry_side = 1;
-            else entry_side = 0;
+            entry_side = ti[k - 1] < ti[k] ? 3 : ti[k - 1] > ti[k] ? 1 :
+                         tj[k - 1] < tj[k] ? 0 : 2;
             {
                 const struct mo_tile *a = &tiles[k - 1];
                 int r = a->exit_ring;
                 entry_want = (entry_side % 2 == 1) ? r / a->w : r % a->w;
             }
         }
-        if (k < n - 1) {
-            if (ti[k + 1] > ti[k]) exit_side = 1;
-            else if (ti[k + 1] < ti[k]) exit_side = 3;
-            else exit_side = 2;
-        }
+        if (k < n - 1)
+            exit_side = ti[k + 1] > ti[k] ? 1 : ti[k + 1] < ti[k] ? 3 :
+                        tj[k + 1] > tj[k] ? 2 : 0;
         for (attempt = 0; attempt < maxtry && !done; attempt++) {
             game_params sub = *params;
             sub.w = t->w; sub.h = t->h;
@@ -2642,6 +2649,10 @@ static bool sokoban_external(const game_params *params, random_state *rs,
     return sokoban_mosaic(params, rs, grid, tx, ty, tw, th);
 }
 
+#ifdef SOKOBAN_STATS
+int sokoban_fallbacks;                 /* counted by the test programs only */
+#endif
+
 static char *new_game_desc(const game_params *params, random_state *rs,
 			   char **aux, bool interactive)
 {
@@ -2657,6 +2668,9 @@ static char *new_game_desc(const game_params *params, random_state *rs,
      */
     grid = snewn(w*h, unsigned char);
     if (!(params->gen && sokoban_external(params, rs, grid))) {
+#ifdef SOKOBAN_STATS
+        if (params->gen) sokoban_fallbacks++;
+#endif
         /*
          * Generate a few candidates and keep the one that uses the
          * most floor (fewest unused squares), then open up much of
