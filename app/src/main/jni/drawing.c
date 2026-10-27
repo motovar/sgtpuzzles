@@ -436,3 +436,10 @@ void inertia_follow(drawing *dr, bool is_solved)
     if (! dri->pub.api->inertia_follow) return;
     dri->pub.api->inertia_follow(dr, is_solved);
 }
+
+bool draw_sprite(drawing *dr, int sheet, int cell, int x, int y, int w, int h)
+{
+    drawing_internal *dri = PRIVATE_CAST(dr);
+    if (! dri->pub.api->draw_sprite) return false;
+    return dri->pub.api->draw_sprite(dr, sheet, cell, x, y, w, h);
+}

@@ -443,8 +443,14 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
                     if (anchor != null) {
                         val dx = x - anchor.x
                         val dy = y - anchor.y
-                        val threshold = (sqrt(maxDistSq) * 2.5).toFloat()
-                        if (maxOf(abs(dx), abs(dy)) > threshold) {
+                        // The first step needs a clear swipe, further steps (when you keep dragging
+                        // on) a longer one each, so that overshooting the end of a swipe doesn't
+                        // walk another square
+                        val threshold = (sqrt(maxDistSq) *
+                                (if (swiping) SWIPE_NEXT_STEP_SLOPS else SWIPE_FIRST_STEP_SLOPS)).toFloat()
+                        val along = maxOf(abs(dx), abs(dy))
+                        // ... in a clear direction (not nearly diagonal)
+                        if (along > threshold && along > SWIPE_CLEAR_DIRECTION * minOf(abs(dx), abs(dy))) {
                             parent.handler.removeCallbacks(sendLongPress)
                             touchState = TouchState.IDLE
                             swiping = true
@@ -1052,6 +1058,46 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
         canvas.drawText(text, x.toFloat(), alignedY.toFloat(), paint)
     }
 
+    private val sprites by lazy { SpriteSheets(context) }
+    private val spriteFilterPaint = Paint().apply {
+        isAntiAlias = false
+        isFilterBitmap = true
+    }
+    private val spriteDestination = Rect()
+
+    /**
+     * Draws one cell of a picture sheet (Sokoban's Yoshi skins) into the given rectangle. Returns
+     * false if it can't, and then the game draws the tile itself.
+     */
+    @UsedByJNI
+    override fun drawSprite(sheet: Int, cell: Int, x: Int, y: Int, w: Int, h: Int): Boolean {
+        return try {
+            // The same rectangle fillRect would paint, in device pixels. Rounding each edge (not
+            // the size) makes neighbouring sprites meet exactly, without gaps or overlaps.
+            val f = floatArrayOf(x - 0.5f, y - 0.5f, x + w - 0.5f, y + h - 0.5f)
+            zoomMatrix.mapPoints(f)
+            val left = f[0].roundToInt()
+            val top = f[1].roundToInt()
+            val right = f[2].roundToInt()
+            val bottom = f[3].roundToInt()
+            if (right <= left || bottom <= top) return true
+            val picture = sprites.get(sheet, cell, right - left, bottom - top) ?: return false
+            val saved = canvas.save()
+            canvas.setMatrix(null)
+            if (picture.width == right - left && picture.height == bottom - top) {
+                canvas.drawBitmap(picture, left.toFloat(), top.toFloat(), null)
+            } else {
+                spriteDestination.set(left, top, right, bottom)
+                canvas.drawBitmap(picture, null, spriteDestination, spriteFilterPaint)
+            }
+            canvas.restoreToCount(saved)
+            true
+        } catch (e: Exception) {
+            Log.w("GameView", "drawSprite failed", e)
+            false
+        }
+    }
+
     @UsedByJNI
     override fun blitterAlloc(w: Int, h: Int): Int {
         for (i in blitters.indices) {
@@ -1154,6 +1200,11 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
             MOD_NUM_KEYPAD or '3'.code
         )
         private const val MAX_ZOOM = 30f
+
+        // Sokoban swipe-to-move: distances in multiples of the touch slop (8dp on most phones)
+        private const val SWIPE_FIRST_STEP_SLOPS = 5.0   // about 40dp (6-7mm) for the first square
+        private const val SWIPE_NEXT_STEP_SLOPS = 7.5    // about 60dp for each further square
+        private const val SWIPE_CLEAR_DIRECTION = 1.3f   // the main direction must beat the other by this
         private const val ZOOM_OVERDRAW_PROPORTION =
             0.25f // of a screen-full, in each direction, that you can see before checkerboard
 

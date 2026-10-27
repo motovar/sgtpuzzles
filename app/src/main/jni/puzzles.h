@@ -298,6 +298,7 @@ blitter *blitter_new(drawing *dr, int w, int h);
 void blitter_free(drawing *dr, blitter *bl);
 void blitter_save(drawing *dr, blitter *bl, int x, int y);
 void blitter_load(drawing *dr, blitter *bl, int x, int y);
+bool draw_sprite(drawing *dr, int sheet, int cell, int x, int y, int w, int h);
 #ifndef NO_PRINTING
 void print_begin_doc(drawing *dr, int pages);
 void print_begin_page(drawing *dr, int number);
@@ -869,6 +870,15 @@ struct drawing_api {
 			    float x1, float y1, float x2, float y2,
 			    int colour);
     void (*inertia_follow)(drawing *dr, bool is_solved);
+    /*
+     * Optional (may be NULL): draw one cell of a picture sheet that the
+     * front end keeps (used for the picture-based graphics themes of
+     * Sokoban). The cell is scaled to the rectangle (x, y, w, h). Returns
+     * false if the front end can't draw it, so that the game can fall back
+     * to drawing the tile itself.
+     */
+    bool (*draw_sprite)(drawing *dr, int sheet, int cell,
+			int x, int y, int w, int h);
 };
 
 /*

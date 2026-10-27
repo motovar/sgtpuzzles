@@ -66,7 +66,6 @@
 #endif
 
 #include "puzzles.h"
-#include "sokoban-yoshi.h"
 
 /*
  * Various subsets of these constants are used during game
@@ -138,8 +137,7 @@ enum {
     COL_T_OUTLINE,
     COL_T_TEXT,
     COL_T_FLASH,
-    COL_Y0,                            /* Yoshi skins palette */
-    NCOLOURS = COL_Y0 + YO_NCOL
+    NCOLOURS
 };
 
 struct game_params {
@@ -301,13 +299,30 @@ static char *encode_params(const game_params *params, bool full)
     return dupstr(data);
 }
 
+/*
+ * The custom game dialog lists the settings of all the level generators,
+ * in this order. The front end shows only the rows of the generator that is
+ * selected (it recognises them by the generator's name in front of the
+ * colon in the row's name), and changes which rows are shown as soon as
+ * another generator is picked. custom_params() reads them back from the
+ * same positions.
+ */
+enum {
+    CFG_W, CFG_H, CFG_GEN,
+    CFG_BM,                            /* Boulders: count, attempts, nodes */
+    CFG_MC = CFG_BM + 3,               /* MCTS: time, keep, pick */
+    CFG_YG = CFG_MC + 3,               /* YASGen: mode, goals, walls, limit, generations, random player */
+    CFG_RM = CFG_YG + 6,               /* Rooms: boxes, limit, placements */
+    CFG_COUNT = CFG_RM + 3
+};
+
 static config_item *game_configure(const game_params *params)
 {
     config_item *ret;
     char buf[80];
     int n = 0;
 
-    ret = snewn(12, config_item);
+    ret = snewn(CFG_COUNT + 1, config_item);
 
     ret[n].name = "Width";
     ret[n].type = C_STRING;
@@ -327,39 +342,37 @@ static config_item *game_configure(const game_params *params)
     ret[n].u.choices.selected = params->gen;
     n++;
 
-    /* Only the settings of the generator in use are shown; reopen this
-     * dialog after changing the generator to see the new settings. */
 #define STR_ITEM(NAME, VAL) do { \
         ret[n].name = NAME; ret[n].type = C_STRING; \
         sprintf(buf, "%d", VAL); ret[n].u.string.sval = dupstr(buf); n++; } while (0)
-    if (params->gen == 1) {
-        STR_ITEM("Boulders: number of boulders per structure (0 = auto)", params->bm_count);
-        STR_ITEM("Boulders: attempts", params->bm_attempts);
-        STR_ITEM("Boulders: search nodes per attempt", params->bm_nodes);
-    } else if (params->gen == 2) {
-        STR_ITEM("MCTS: search time in seconds, in total (0 = auto)", params->mc_time);
-        STR_ITEM("MCTS: levels to keep", params->mc_keep);
-        STR_ITEM("MCTS: level to use (1 = hardest ... levels to keep = easiest)", params->mc_pick);
-    } else if (params->gen == 3) {
-        ret[n].name = "YASGen: mode";
-        ret[n].type = C_CHOICES;
-        ret[n].u.choices.choicenames = ":Reverse (pull boxes from goals):Forward (push given boxes)";
-        ret[n].u.choices.selected = params->yg_mode;
-        n++;
-        STR_ITEM("YASGen: number of goals/boxes in total (0 = auto)", params->yg_goals);
-        STR_ITEM("YASGen: wall density in percent", params->yg_walls);
-        STR_ITEM("YASGen: search limit (thousand positions)", params->yg_limit);
-        STR_ITEM("YASGen: genetic generations", params->yg_gens);
-        ret[n].name = "YASGen: random player start";
-        ret[n].type = C_BOOLEAN;
-        ret[n].u.boolean.bval = params->yg_rand != 0;
-        n++;
-    } else if (params->gen == 4) {
-        STR_ITEM("Rooms: number of boxes in total (0 = auto)", params->rm_boxes);
-        STR_ITEM("Rooms: search limit (thousand states)", params->rm_limit);
-        STR_ITEM("Rooms: goal placements to try", params->rm_attempts);
-    }
+    assert(n == CFG_BM);
+    STR_ITEM("Boulders: number of boulders per structure (0 = auto)", params->bm_count);
+    STR_ITEM("Boulders: attempts", params->bm_attempts);
+    STR_ITEM("Boulders: search nodes per attempt", params->bm_nodes);
+    assert(n == CFG_MC);
+    STR_ITEM("MCTS: search time in seconds, in total (0 = auto)", params->mc_time);
+    STR_ITEM("MCTS: levels to keep", params->mc_keep);
+    STR_ITEM("MCTS: level to use (1 = hardest ... levels to keep = easiest)", params->mc_pick);
+    assert(n == CFG_YG);
+    ret[n].name = "YASGen: mode";
+    ret[n].type = C_CHOICES;
+    ret[n].u.choices.choicenames = ":Reverse (pull boxes from goals):Forward (push given boxes)";
+    ret[n].u.choices.selected = params->yg_mode;
+    n++;
+    STR_ITEM("YASGen: number of goals/boxes in total (0 = auto)", params->yg_goals);
+    STR_ITEM("YASGen: wall density in percent", params->yg_walls);
+    STR_ITEM("YASGen: search limit (thousand positions)", params->yg_limit);
+    STR_ITEM("YASGen: genetic generations", params->yg_gens);
+    ret[n].name = "YASGen: random player start";
+    ret[n].type = C_BOOLEAN;
+    ret[n].u.boolean.bval = params->yg_rand != 0;
+    n++;
+    assert(n == CFG_RM);
+    STR_ITEM("Rooms: number of boxes in total (0 = auto)", params->rm_boxes);
+    STR_ITEM("Rooms: search limit (thousand states)", params->rm_limit);
+    STR_ITEM("Rooms: goal placements to try", params->rm_attempts);
 #undef STR_ITEM
+    assert(n == CFG_COUNT);
 
     ret[n].name = NULL;
     ret[n].type = C_END;
@@ -370,41 +383,32 @@ static config_item *game_configure(const game_params *params)
 static game_params *custom_params(const config_item *cfg)
 {
     game_params *ret = snew(game_params);
-    int shown = 0;
 
-    ret->w = atoi(cfg[0].u.string.sval);
-    ret->h = atoi(cfg[1].u.string.sval);
-    ret->gen = cfg[2].u.choices.selected;
+    ret->w = atoi(cfg[CFG_W].u.string.sval);
+    ret->h = atoi(cfg[CFG_H].u.string.sval);
+    ret->gen = cfg[CFG_GEN].u.choices.selected;
     sokoban_gen_defaults(ret);
 
-    /* which generator's settings were displayed? */
-    if (cfg[3].type != C_END && cfg[3].name) {
-        if (!strncmp(cfg[3].name, "Boulders", 8)) shown = 1;
-        else if (!strncmp(cfg[3].name, "MCTS", 4)) shown = 2;
-        else if (!strncmp(cfg[3].name, "YASGen", 6)) shown = 3;
-        else if (!strncmp(cfg[3].name, "Rooms", 5)) shown = 4;
-    }
-    if (shown && shown == ret->gen) {
-        if (shown == 1) {
-            ret->bm_count = atoi(cfg[3].u.string.sval);
-            ret->bm_attempts = atoi(cfg[4].u.string.sval);
-            ret->bm_nodes = atoi(cfg[5].u.string.sval);
-        } else if (shown == 2) {
-            ret->mc_time = atoi(cfg[3].u.string.sval);
-            ret->mc_keep = atoi(cfg[4].u.string.sval);
-            ret->mc_pick = atoi(cfg[5].u.string.sval);
-        } else if (shown == 4) {
-            ret->rm_boxes = atoi(cfg[3].u.string.sval);
-            ret->rm_limit = atoi(cfg[4].u.string.sval);
-            ret->rm_attempts = atoi(cfg[5].u.string.sval);
-        } else {
-            ret->yg_mode = cfg[3].u.choices.selected;
-            ret->yg_goals = atoi(cfg[4].u.string.sval);
-            ret->yg_walls = atoi(cfg[5].u.string.sval);
-            ret->yg_limit = atoi(cfg[6].u.string.sval);
-            ret->yg_gens = atoi(cfg[7].u.string.sval);
-            ret->yg_rand = cfg[8].u.boolean.bval ? 1 : 0;
-        }
+    /* only the settings of the selected generator are used */
+    if (ret->gen == 1) {
+        ret->bm_count = atoi(cfg[CFG_BM].u.string.sval);
+        ret->bm_attempts = atoi(cfg[CFG_BM + 1].u.string.sval);
+        ret->bm_nodes = atoi(cfg[CFG_BM + 2].u.string.sval);
+    } else if (ret->gen == 2) {
+        ret->mc_time = atoi(cfg[CFG_MC].u.string.sval);
+        ret->mc_keep = atoi(cfg[CFG_MC + 1].u.string.sval);
+        ret->mc_pick = atoi(cfg[CFG_MC + 2].u.string.sval);
+    } else if (ret->gen == 3) {
+        ret->yg_mode = cfg[CFG_YG].u.choices.selected;
+        ret->yg_goals = atoi(cfg[CFG_YG + 1].u.string.sval);
+        ret->yg_walls = atoi(cfg[CFG_YG + 2].u.string.sval);
+        ret->yg_limit = atoi(cfg[CFG_YG + 3].u.string.sval);
+        ret->yg_gens = atoi(cfg[CFG_YG + 4].u.string.sval);
+        ret->yg_rand = cfg[CFG_YG + 5].u.boolean.bval ? 1 : 0;
+    } else if (ret->gen == 4) {
+        ret->rm_boxes = atoi(cfg[CFG_RM].u.string.sval);
+        ret->rm_limit = atoi(cfg[CFG_RM + 1].u.string.sval);
+        ret->rm_attempts = atoi(cfg[CFG_RM + 2].u.string.sval);
     }
 
     return ret;
@@ -2898,10 +2902,14 @@ struct game_ui {
     int theme;     /* 0 = original, 1 = classic, 2..5 = Yoshi skins */
 };
 
+#ifndef SOKOBAN_TEST_THEME
+#define SOKOBAN_TEST_THEME 0           /* only the test programs change this */
+#endif
+
 static game_ui *new_ui(const game_state *state)
 {
     game_ui *ui = snew(game_ui);
-    ui->theme = 0;
+    ui->theme = SOKOBAN_TEST_THEME;
     return ui;
 }
 
@@ -3263,13 +3271,6 @@ static float *game_colours(frontend *fe, int *ncolours)
     SETCOL(COL_T_OUTLINE, 0.0F, 0.0F, 0.0F);
     SETCOL(COL_T_TEXT, 1.0F, 1.0F, 1.0F);
     SETCOL(COL_T_FLASH, 1.0F, 1.0F, 0.80F);
-
-    {
-        int yi;
-        for (yi = 0; yi < YO_NCOL; yi++)
-            SETCOL(COL_Y0 + yi, yo_palette[yi][0] / 255.0F,
-                   yo_palette[yi][1] / 255.0F, yo_palette[yi][2] / 255.0F);
-    }
 #undef SETCOL
     *ncolours = NCOLOURS;
     return ret;
@@ -3356,42 +3357,54 @@ static void draw_tile_classic(drawing *dr, game_drawstate *ds, int tx, int ty,
     draw_update(dr, tx, ty, T, T);
 }
 
+/*
+ * The "Yoshi" skins are 64x64 pictures (the original skin sheets, four
+ * columns wide) which the front end keeps: the game only says which cell
+ * of which sheet goes into the tile, and the front end scales it to the
+ * exact pixel size. Cell = row * 4 + column.
+ */
+static const unsigned char yo_cell[10] = {
+    0,      /* floor */
+    4,      /* goal */
+    8, 9,   /* wall, even and odd columns */
+    12, 13, /* wall, odd rows (Yoshi New only) */
+    1,      /* player */
+    5,      /* player on a goal */
+    2,      /* box */
+    6       /* box on a goal */
+};
+
 static void draw_tile_yoshi(drawing *dr, game_drawstate *ds, int x, int y,
                             int v, int flash)
 {
-    int T = TILESIZE, tx = COORD(x), ty = COORD(y), ti, r, c;
-    const unsigned char *px;
+    int T = TILESIZE, tx = COORD(x), ty = COORD(y), ti;
 
     if (v == WALL) ti = 2 + (x & 1) + (ds->theme == 2 ? ((y & 1) << 1) : 0);
     else if (IS_BARREL(v)) ti = IS_ON_TARGET(v) ? 9 : 8;
     else if (IS_PLAYER(v)) ti = IS_ON_TARGET(v) ? 7 : 6;
     else if (IS_ON_TARGET(v)) ti = 1;
     else ti = 0;
-    px = yo_tiles[(ds->theme - 2) * YO_NTILE + ti];
 
-    clip(dr, tx, ty, T, T);
-    for (r = 0; r < YO_N; r++) {
-        int y0 = ty + r * T / YO_N, y1 = ty + (r + 1) * T / YO_N;
-        for (c = 0; c < YO_N; ) {
-            int c2 = c + 1, x0, x1;
-            while (c2 < YO_N && px[r*YO_N + c2] == px[r*YO_N + c]) c2++;
-            x0 = tx + c * T / YO_N; x1 = tx + c2 * T / YO_N;
-            draw_rect(dr, x0, y0, x1 - x0, y1 - y0, COL_Y0 + px[r*YO_N + c]);
-            c = c2;
+    if (!draw_sprite(dr, ds->theme - 2, yo_cell[ti], tx, ty, T, T)) {
+        /* the front end has no pictures: draw the Classic graphics */
+        draw_tile_classic(dr, ds, tx, ty, v, flash);
+        return;
+    }
+    if (v == PIT || v == DEEP_PIT || (IS_BARREL(v) && BARREL_LABEL(v)) || flash) {
+        clip(dr, tx, ty, T, T);
+        if (v == PIT || v == DEEP_PIT)
+            draw_circle(dr, tx + T/2, ty + T/2, T*3/7,
+                        v == PIT ? COL_T_PIT : COL_T_DEEP_PIT, COL_T_OUTLINE);
+        if (IS_BARREL(v) && BARREL_LABEL(v)) {
+            char str[2];
+            str[0] = BARREL_LABEL(v); str[1] = '\0';
+            draw_text(dr, tx + T/2, ty + T/2, FONT_VARIABLE, T/2,
+                      ALIGN_VCENTRE | ALIGN_HCENTRE, COL_T_TEXT, str);
         }
+        if (flash)
+            draw_rect_outline(dr, tx + 1, ty + 1, T - 2, T - 2, COL_T_FLASH);
+        unclip(dr);
     }
-    if (v == PIT || v == DEEP_PIT)
-        draw_circle(dr, tx + T/2, ty + T/2, T*3/7,
-                    v == PIT ? COL_T_PIT : COL_T_DEEP_PIT, COL_T_OUTLINE);
-    if (IS_BARREL(v) && BARREL_LABEL(v)) {
-        char str[2];
-        str[0] = BARREL_LABEL(v); str[1] = '\0';
-        draw_text(dr, tx + T/2, ty + T/2, FONT_VARIABLE, T/2,
-                  ALIGN_VCENTRE | ALIGN_HCENTRE, COL_T_TEXT, str);
-    }
-    if (flash)
-        draw_rect_outline(dr, tx + 1, ty + 1, T - 2, T - 2, COL_T_FLASH);
-    unclip(dr);
     draw_update(dr, tx, ty, T, T);
 }
 

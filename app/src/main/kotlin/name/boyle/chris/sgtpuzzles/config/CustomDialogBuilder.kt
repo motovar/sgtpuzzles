@@ -6,10 +6,13 @@ import android.text.InputType.TYPE_CLASS_NUMBER
 import android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
 import android.text.InputType.TYPE_NUMBER_FLAG_SIGNED
 import android.view.View
+import android.widget.AdapterView
 import android.widget.CheckBox
 import android.widget.ScrollView
+import android.widget.TableRow
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.widget.AppCompatSpinner
 import androidx.appcompat.widget.AppCompatTextView
 import name.boyle.chris.sgtpuzzles.launch.GameLaunch
 import name.boyle.chris.sgtpuzzles.launch.GameLaunch.Companion.fromSeed
@@ -19,6 +22,7 @@ import name.boyle.chris.sgtpuzzles.launch.GameLaunch.Origin
 import name.boyle.chris.sgtpuzzles.R
 import name.boyle.chris.sgtpuzzles.backend.BLACKBOX
 import name.boyle.chris.sgtpuzzles.backend.BackendName
+import name.boyle.chris.sgtpuzzles.backend.SOKOBAN
 import name.boyle.chris.sgtpuzzles.backend.SOLO
 import name.boyle.chris.sgtpuzzles.backend.UsedByJNI
 import name.boyle.chris.sgtpuzzles.config.ConfigBuilder.Event.CFG_DESC
@@ -94,9 +98,49 @@ class CustomDialogBuilder private constructor(
         dialogBuilder.setTitle(title)
     }
 
+    // Sokoban's custom game dialog lists the settings of all the level generators; the rows of the
+    // generators that are not selected are hidden, and this changes as soon as the choice does.
+    private val generatorRows = mutableListOf<Pair<Int, View>>()
+    private var generatorChoice: AppCompatSpinner? = null
+
+    private val isSokobanSettings get() = backend === SOKOBAN && dialogEvent == CFG_SETTINGS
+
+    /** 1.. for the rows of the level generators 1.. (Boulders, MCTS, ...), 0 for any other row. */
+    private fun generatorOfRow(name: String) =
+        SOKOBAN_GENERATOR_ROW_PREFIXES.indexOf(name.substringBefore(':')) + 1
+
+    private fun showSelectedGeneratorRows() {
+        val selected = generatorChoice?.selectedItemPosition ?: return
+        for ((generator, view) in generatorRows) {
+            view.visibility = if (generator == selected) View.VISIBLE else View.GONE
+        }
+    }
+
+    override fun choicesAdded(name: String, row: TableRow, spinner: AppCompatSpinner) {
+        if (!isSokobanSettings) return
+        val generator = generatorOfRow(name)
+        if (generator > 0) {
+            generatorRows += generator to row
+        } else if (name == SOKOBAN_GENERATOR_CHOICE) {
+            generatorChoice = spinner
+            spinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(
+                    parent: AdapterView<*>?, view: View?, position: Int, id: Long
+                ) {
+                    showSelectedGeneratorRows()
+                }
+
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+            }
+        }
+    }
+
     @UsedByJNI
     override fun addString(whichEvent: Int, kw: String, name: String, value: String) {
         super.addStringView(whichEvent, name, value).apply {
+            if (isSokobanSettings) {
+                generatorOfRow(name).takeIf { it > 0 }?.let { generatorRows += it to row }
+            }
             if (dialogEvent == CFG_SEED && value.indexOf('#') == value.length - 1) {
                 table.addView(AppCompatTextView(table.context).apply { setText(R.string.seedWarning) })
             }
@@ -123,6 +167,9 @@ class CustomDialogBuilder private constructor(
     @UsedByJNI
     override fun addBoolean(whichEvent: Int, kw: String, name: String, checked: Boolean) {
         super.addBooleanView(name, checked).apply {
+            if (isSokobanSettings) {
+                generatorOfRow(name).takeIf { it > 0 }?.let { generatorRows += it to this }
+            }
             if (backend === SOLO && name.startsWith("Jigsaw")) {
                 jigsawHack(this)
                 setOnClickListener { jigsawHack(this) }
@@ -157,6 +204,7 @@ class CustomDialogBuilder private constructor(
 
     @UsedByJNI
     override fun dialogShow() {
+        showSelectedGeneratorRows()
         dialogBuilder.create().show()
     }
 
@@ -167,5 +215,8 @@ class CustomDialogBuilder private constructor(
         private const val ROWS_EDITTEXT_TAG = "rowsEditText"
         private const val COLS_LABEL_TAG = "colLabel"
         private const val ROWS_ROW_TAG = "rowsRow"
+        private const val SOKOBAN_GENERATOR_CHOICE = "Level generator"
+        // the name in front of the colon in the row names, for generators 1, 2, 3 and 4
+        private val SOKOBAN_GENERATOR_ROW_PREFIXES = listOf("Boulders", "MCTS", "YASGen", "Rooms")
     }
 }

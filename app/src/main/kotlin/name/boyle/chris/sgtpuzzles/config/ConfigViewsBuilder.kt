@@ -131,5 +131,9 @@ abstract class ConfigViewsBuilder(
             gravity = Gravity.CENTER_VERTICAL
         }
         table.addView(tr)
+        choicesAdded(name, tr, s)
     }
+
+    /** For subclasses: called with the row (and its spinner) of every choice item that was added. */
+    protected open fun choicesAdded(name: String, row: TableRow, spinner: AppCompatSpinner) {}
 }

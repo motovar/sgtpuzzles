@@ -94,6 +94,7 @@ static jmethodID
 	drawLine,
 	drawPoly,
 	drawText,
+	drawSprite,
 	fillRect,
 	getBackgroundColour,
 	getText,
@@ -259,6 +260,16 @@ void android_blitter_load(drawing *dr, blitter *bl, int x, int y)
 	(*fe->env)->CallVoidMethod(fe->env, fe->viewCallbacks, blitterLoad, bl->handle, x + fe->ox, y + fe->oy);
 }
 
+bool android_draw_sprite(drawing *dr, int sheet, int cell, int x, int y, int w, int h)
+{
+	frontend *fe = GET_HANDLE_AS_TYPE(dr, frontend);
+	CHECK_FE_OR_RETURN(false)
+	jboolean ok = (*fe->env)->CallBooleanMethod(fe->env, fe->viewCallbacks, drawSprite,
+			sheet, cell, x + fe->ox, y + fe->oy, w, h);
+	if ((*fe->env)->ExceptionCheck(fe->env)) return false;
+	return ok != JNI_FALSE;
+}
+
 void android_end_draw(drawing *dr)
 {
 	HANDLE_TO_FE_OR_RETURN
@@ -325,6 +336,7 @@ const struct drawing_api android_drawing = {
 	android_purging_states,
 	android_draw_thick_line,
         android_inertia_follow,
+	android_draw_sprite,
 };
 
 JNIEXPORT void JNICALL Java_name_boyle_chris_sgtpuzzles_backend_GameEngineImpl_keyEvent(JNIEnv *env, jobject gameEngine, jint x, jint y, jint keyVal)
@@ -1078,6 +1090,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *jvm, __attribute__((unused)) void *res
 	drawLine       = (*env)->GetMethodID(env, ViewCallbacks, "drawLine", "(FFFFFI)V");
 	drawPoly       = (*env)->GetMethodID(env, ViewCallbacks, "drawPoly", "(F[IIIII)V");
 	drawText       = (*env)->GetMethodID(env, ViewCallbacks, "drawText", "(IIIIILjava/lang/String;)V");
+	drawSprite     = (*env)->GetMethodID(env, ViewCallbacks, "drawSprite", "(IIIIII)Z");
 	fillRect       = (*env)->GetMethodID(env, ViewCallbacks, "fillRect", "(IIIII)V");
 	getBackgroundColour = (*env)->GetMethodID(env, ViewCallbacks, "getDefaultBackgroundColour", "()I");
 	postInvalidate = (*env)->GetMethodID(env, ViewCallbacks, "postInvalidateOnAnimation", "()V");
