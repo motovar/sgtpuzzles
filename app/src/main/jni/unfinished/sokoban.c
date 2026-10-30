@@ -447,6 +447,16 @@ static const char *validate_params(const game_params *params, bool full)
 	return "Width and height must both be at least 4";
     if (params->gen < 0 || params->gen > 4)
         return "Unknown level generator";
+    /* the smallest board each generator can make (a new game only; the
+     * generators of big boards work on tiles, so there is no upper limit) */
+    if (full && params->gen == 1 && (params->w < 10 || params->h < 6))
+        return "Boulders needs a board of at least 10x6";
+    if (full && params->gen == 2 && params->w * params->h > 254 &&
+        (params->w < 5 || params->h < 5))
+        return "MCTS needs a board of at least 5x5 when it has more than 254 squares";
+    if (full && (params->gen == 3 || params->gen == 4) &&
+        (params->w < 5 || params->h < 5))
+        return "YASGen and Rooms need a board of at least 5x5";
     if (params->rm_boxes < 0 || params->rm_boxes > 400)
         return "Rooms number of boxes must be between 0 and 400";
     if (params->rm_limit < 10 || params->rm_limit > 3000)
