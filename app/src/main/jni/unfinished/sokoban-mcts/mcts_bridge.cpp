@@ -6,7 +6,8 @@ extern "C" int sokoban_mcts_generate(int width, int height, unsigned long long s
                                      double timeout_sec, int keep, int pick, unsigned rnd,
                                      char *out, int outcap)
 {
-    if (width < 1 || height < 1 || width * height < 16 || width * height > 4000)
+    /* the generator stores the board index in a u8: 16 <= w*h <= 254 */
+    if (width < 1 || height < 1 || width * height < 16 || width * height > 254)
         return 0;
 
     Default_Allocator default_allocator;
@@ -42,6 +43,7 @@ extern "C" int sokoban_mcts_generate(int width, int height, unsigned long long s
             }
             s.destroy();
         }
+        set.destroy();            /* the array only; the grids belong to the nodes */
     }
     delete_mcts(mcts);
     arena_allocator.destroy();

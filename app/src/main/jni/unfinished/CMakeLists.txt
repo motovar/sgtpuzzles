@@ -20,9 +20,9 @@ puzzle(sokoban
   DESCRIPTION "Barrel-pushing puzzle"
   OBJECTIVE "Push all the barrels into the target squares.")
 
-# Sokoban's YASGen level generator (plain C).
+# Sokoban's YASGen level generator (plain C; YASGen 1.50 translated to C).
 set(puzzle_sources ${puzzle_sources}
-  ${CMAKE_CURRENT_SOURCE_DIR}/sokoban-yasgen/yasgen.c)
+  ${CMAKE_CURRENT_SOURCE_DIR}/sokoban-yasgen/yasgen150.c)
 
 # Sokoban's MCTS level generator is written in C++.
 set(puzzle_sources ${puzzle_sources}
