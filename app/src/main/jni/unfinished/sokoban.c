@@ -449,8 +449,9 @@ static const char *validate_params(const game_params *params, bool full)
         return "Unknown level generator";
     /* the smallest board each generator can make (a new game only; the
      * generators of big boards work on tiles, so there is no upper limit) */
-    if (full && params->gen == 1 && (params->w < 10 || params->h < 6))
-        return "Boulders needs a board of at least 10x6";
+    if (full && params->gen == 1 && (params->w < 10 || params->h < 6 ||
+                                     (params->h < 8 && params->w < 16)))
+        return "Boulders needs a board of at least 10x8 (or 16x6)";
     if (full && params->gen == 2 && params->w * params->h > 254 &&
         (params->w < 5 || params->h < 5))
         return "MCTS needs a board of at least 5x5 when it has more than 254 squares";
@@ -2251,7 +2252,7 @@ static void mo_limits(int gen, int *soft, int *hard, int *minw, int *minh)
 {
     switch (gen) {
       case 1:  soft[0] = hard[0] = 28; soft[1] = 10; hard[1] = 16;
-               *minw = 14; *minh = 9; break;   /* 28 by 16: the board of the original */
+               *minw = 16; *minh = 9; break;   /* 28 by 16: the board of the original */
       case 2:  soft[0] = soft[1] = 14; hard[0] = hard[1] = 16;
                *minw = *minh = 8; break;       /* (a board up to 254 squares is not cut) */
       case 3:  soft[0] = soft[1] = 13; hard[0] = hard[1] = 14;
