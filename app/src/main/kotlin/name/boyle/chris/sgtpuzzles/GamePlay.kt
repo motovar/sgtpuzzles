@@ -87,6 +87,7 @@ import name.boyle.chris.sgtpuzzles.backend.MINES
 import name.boyle.chris.sgtpuzzles.backend.NET
 import name.boyle.chris.sgtpuzzles.backend.PALISADE
 import name.boyle.chris.sgtpuzzles.backend.SAMEGAME
+import name.boyle.chris.sgtpuzzles.backend.SOKOBAN
 import name.boyle.chris.sgtpuzzles.backend.SOLO
 import name.boyle.chris.sgtpuzzles.backend.UNDEAD
 import name.boyle.chris.sgtpuzzles.backend.UNEQUAL
@@ -1261,7 +1262,8 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
 
     private fun completedInternal() {
         everCompleted = true
-        val copyStatusBar = currentBackend in setOf(MINES, FLOOD,  SAMEGAME)
+        // (Sokoban shows its move count, with the fewest moves when known, in the completion message too)
+        val copyStatusBar = currentBackend in setOf(MINES, FLOOD, SAMEGAME, SOKOBAN)
         val titleText = if (copyStatusBar) statusBar.text else getString(R.string.COMPLETED)
         if (!prefs.getBoolean(COMPLETED_PROMPT_KEY, true)) {
             Toast.makeText(this@GamePlay, titleText, Toast.LENGTH_SHORT).show()

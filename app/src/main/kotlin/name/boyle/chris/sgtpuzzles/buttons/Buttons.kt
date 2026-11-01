@@ -298,8 +298,18 @@ private fun Buttons(
             }
 
             if (hasArrows) {
-                val arrowsRightEdge: Dp = if (isLandscape) largerWidth else maxDp
-                val arrowsBottomEdge: Dp = if (isLandscape) maxDp - bottomInset else largerHeight
+                // Sokoban has no keys but the arrows, which go in the middle of the strip
+                val centreArrows = backend.value == SOKOBAN && majors == 0
+                val arrowsRightEdge: Dp = when {
+                    isLandscape -> largerWidth
+                    centreArrows -> (maxDp + arrowCols * arrowKeySize) / 2
+                    else -> maxDp
+                }
+                val arrowsBottomEdge: Dp = when {
+                    !isLandscape -> largerHeight
+                    centreArrows -> (maxDp - bottomInset + arrowRows * arrowKeySize) / 2
+                    else -> maxDp - bottomInset
+                }
                 CompositionLocalProvider(LocalKeyScale provides keyScale * arrowScale) {
                 Arrows(
                     backend,

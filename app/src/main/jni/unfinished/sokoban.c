@@ -170,6 +170,9 @@ struct game_state {
     unsigned char *grid;
     int px, py;
     bool completed;
+    int moves;          /* steps made so far (a diagonal step counts as two) */
+    int final_moves;    /* the number of moves when the level was solved */
+    int minmoves;       /* fewest moves of a solution when it is known, else -1 */
 };
 
 static void sokoban_gen_defaults(game_params *p)
@@ -235,6 +238,8 @@ static bool game_fetch_preset(int i, char **name, game_params **params)
     return true;
 }
 
+static void bm_settle_params(game_params *p);       /* (Boulders, below) */
+
 static void decode_params(game_params *params, char const *string)
 {
     params->w = params->h = atoi(string);
@@ -279,6 +284,8 @@ static void decode_params(game_params *params, char const *string)
             }
         }
     }
+    if (params->gen == 1)
+        bm_settle_params(params);
 }
 
 static char *encode_params(const game_params *params, bool full)
@@ -361,7 +368,7 @@ static config_item *game_configure(const game_params *params)
         ret[n].name = NAME; ret[n].type = C_STRING; \
         sprintf(buf, "%d", VAL); ret[n].u.string.sval = dupstr(buf); n++; } while (0)
     assert(n == CFG_BM);
-    STR_ITEM("Boulders: number of boulders (0 = 4, as in the original)", params->bm_count);
+    STR_ITEM("Boulders: number of boulders in total (0 = 4 per tile, as in the original)", params->bm_count);
     STR_ITEM("Boulders: search time in seconds (0 = 5, as in the original)", params->bm_time);
     STR_ITEM("Boulders: search nodes per attempt", params->bm_nodes);
     assert(n == CFG_MC);
@@ -441,6 +448,8 @@ static game_params *custom_params(const config_item *cfg)
     return ret;
 }
 
+static const char *bm_check_board(const game_params *p);   /* (Boulders, below) */
+
 static const char *validate_params(const game_params *params, bool full)
 {
     if (params->w < 4 || params->h < 4)
@@ -448,10 +457,8 @@ static const char *validate_params(const game_params *params, bool full)
     if (params->gen < 0 || params->gen > 4)
         return "Unknown level generator";
     /* the smallest board each generator can make (a new game only; the
-     * generators of big boards work on tiles, so there is no upper limit) */
-    if (full && params->gen == 1 && (params->w < 10 || params->h < 6 ||
-                                     (params->h < 8 && params->w < 16)))
-        return "Boulders needs a board of at least 10x8 (or 16x6)";
+     * generators of big boards work on tiles, so there is no upper limit);
+     * Boulders is checked below, with its number of boulders */
     if (full && params->gen == 2 && params->w * params->h > 254 &&
         (params->w < 5 || params->h < 5))
         return "MCTS needs a board of at least 5x5 when it has more than 254 squares";
@@ -464,12 +471,16 @@ static const char *validate_params(const game_params *params, bool full)
         return "Rooms search limit must be between 10 and 3000 thousand positions";
     if (params->rm_attempts < 1 || params->rm_attempts > 50)
         return "Rooms goal placements must be between 1 and 50";
-    if (params->bm_count < 0 || params->bm_count > 7)
-        return "Number of boulders must be between 0 and 7";
+    if (params->bm_count < 0 || params->bm_count > 400)
+        return "Number of boulders must be between 0 and 400";
     if (params->bm_time < 0 || params->bm_time > 120)
         return "Boulders search time must be between 0 and 120 seconds";
     if (params->bm_nodes < 10 || params->bm_nodes > 5000)
         return "Boulders search nodes must be between 10 and 5000";
+    if (full && params->gen == 1) {
+        const char *why = bm_check_board(params);
+        if (why) return why;
+    }
     if (params->mc_time < 0 || params->mc_time > 120)
         return "MCTS search time must be between 0 and 120 seconds";
     if (params->mc_keep < 1)
@@ -1367,24 +1378,83 @@ static double sokoban_now(void)
 }
 
 /*
+ * The level maker likes a wide board (28 by 16 in the original), so a board
+ * that is higher than wide is made "turned": the maker works on the board
+ * with its sides exchanged and the level is turned back.  These two say
+ * whether the maker can make a level on a board of w by h (w being the
+ * longer side), and how many boulders it can place there.  The numbers
+ * come from trying: the most boulders for which at least one attempt in a
+ * thousand gives a level (the original asks for 3 to 7 on its 28 by 16).
+ */
+static bool bm_size_ok(int w, int h)
+{
+    return w >= 10 && h >= 6 && (h >= 8 || w >= 16);
+}
+
+static int bm_cap(int w, int h)
+{
+    static const unsigned char by_w[19] = {          /* w = 10 .. 28, h >= 10 */
+        3, 4, 5, 5, 6, 7, 8, 8, 8, 8, 9, 9, 9, 9, 9, 9, 10, 10, 10
+    };
+    int c = w >= 28 ? 10 : by_w[w < 10 ? 0 : w - 10];
+    if (h >= 10) return c;
+    if (h == 9) return c > 1 ? c - 1 : 1;
+    if (c > w / 2 - 3) c = w / 2 - 3;                /* h = 8 and less */
+    if (h <= 7 && c > w - 12) c = w - 12;
+    if (h <= 6) c--;
+    if (c > 9) c = 9;
+    return c < 1 ? 1 : c;
+}
+
+/*
+ * A boulder with a wall (or the edge of the board) on two sides that meet
+ * in a corner can never be moved.  The maker does not make such levels;
+ * this is only a check of its result.
+ */
+#define BM_WALL(C) ((C) != '.' && (C) != '+' && (C) != '0' && \
+                    (C) != '^' && (C) != '@')
+static bool bm_has_stuck(const char *g, int W, int H)
+{
+    int x, y;
+    for (y = 0; y < H; y++)
+        for (x = 0; x < W; x++) {
+            bool hb, vb;
+            if (g[y * W + x] != '0') continue;
+            hb = x == 0 || x == W - 1 ||
+                 BM_WALL(g[y * W + x - 1]) || BM_WALL(g[y * W + x + 1]);
+            vb = y == 0 || y == H - 1 ||
+                 BM_WALL(g[(y - 1) * W + x]) || BM_WALL(g[(y + 1) * W + x]);
+            if (hb && vb) return true;
+        }
+    return false;
+}
+#undef BM_WALL
+
+/*
  * The loop of Generator.generate() of the original app: many randomised
  * attempts for a time budget (5 seconds there), the deepest level wins.  The
  * original board is 28 by 16 with 3 to 7 boulders (4 by default); here the
- * size is the one of the board.
+ * size is the one of the board.  The tiles of a big board (tile_ms is set)
+ * are made inside a ring of wall of their own: the maker walks on the
+ * squares along the edge of its board, and closing them afterwards would
+ * leave boulders in corners.
  */
 static bool sokoban_gen_boulders(const game_params *params, random_state *rs,
                                  unsigned char *grid)
 {
-    int w = params->w, h = params->h, bestDepth = -1, i;
+    int bw = params->w, bh = params->h, o = 0, w, h, nb, bestDepth = -1, i;
+    bool turn;
     char *bestGrid = NULL;
-    int nb = params->bm_count ? params->bm_count : 4;
     double t0 = sokoban_now(), budget;
 
-    /* the boulders and the room of the prize take the width of the board */
-    if (nb > w - 8) nb = w - 8;
-    if (nb < 1) nb = 1;
-    if (w < 10 || h < 6)
+    if (params->tile_ms > 0) { o = 1; bw -= 2; bh -= 2; }
+    turn = bh > bw;
+    w = turn ? bh : bw;                  /* the board of the maker */
+    h = turn ? bw : bh;
+    if (!bm_size_ok(w, h))
         return false;
+    nb = params->bm_count ? params->bm_count : 4;
+    if (nb > bm_cap(w, h)) nb = bm_cap(w, h);
     budget = params->tile_ms > 0 ? params->tile_ms / 1000.0 :
              params->bm_time > 0 ? (double)params->bm_time : 5.0;
 
@@ -1402,7 +1472,7 @@ static bool sokoban_gen_boulders(const game_params *params, random_state *rs,
         memset(m.level, '#', w * h);
         memset(m.best, '?', w * h);
         ok = bm_make(&m);
-        if (ok && m.maxDepth > bestDepth) {
+        if (ok && m.maxDepth > bestDepth && !bm_has_stuck(m.best, w, h)) {
             bestDepth = m.maxDepth;
             sfree(bestGrid);
             bestGrid = snewn(w * h, char);
@@ -1413,14 +1483,20 @@ static bool sokoban_gen_boulders(const game_params *params, random_state *rs,
     }
     if (!bestGrid)
         return false;
+    for (i = 0; i < params->w * params->h; i++)
+        grid[i] = WALL;
     for (i = 0; i < w * h; i++) {
+        int mx = i % w, my = i / w;
+        int bx = (turn ? my : mx) + o, by = (turn ? mx : my) + o;
+        int c;
         switch (bestGrid[i]) {
-          case '.': case '+': grid[i] = SPACE; break;
-          case '0': grid[i] = BARREL; break;
-          case '^': grid[i] = PIT; break;
-          case '@': grid[i] = PLAYER; break;
-          default: grid[i] = WALL; break;
+          case '.': case '+': c = SPACE; break;
+          case '0': c = BARREL; break;
+          case '^': c = PIT; break;
+          case '@': c = PLAYER; break;
+          default: c = WALL; break;
         }
+        grid[by * params->w + bx] = c;
     }
     sfree(bestGrid);
     return true;
@@ -2251,8 +2327,7 @@ static bool mo_tile_doors(struct mo_tile *t, int entry_side, int entry_want,
 static void mo_limits(int gen, int *soft, int *hard, int *minw, int *minh)
 {
     switch (gen) {
-      case 1:  soft[0] = hard[0] = 28; soft[1] = 10; hard[1] = 16;
-               *minw = 16; *minh = 9; break;   /* 28 by 16: the board of the original */
+      /* (the tiles of the Boulders generator: see bm_tiles()) */
       case 2:  soft[0] = soft[1] = 14; hard[0] = hard[1] = 16;
                *minw = *minh = 8; break;       /* (a board up to 254 squares is not cut) */
       case 3:  soft[0] = soft[1] = 13; hard[0] = hard[1] = 14;
@@ -2274,6 +2349,130 @@ static int mo_split(int len, int soft, int hard, int minlen, int *out)
     avail = len - (n - 1);
     for (i = 0; i < n; i++) out[i] = avail / n + (i < avail % n ? 1 : 0);
     return n;
+}
+
+/*
+ * How a board is divided for the Boulders generator.  The level maker works
+ * on a wide board, so the long side of the board is cut first (tiles of up
+ * to 30 squares, 28 inside the ring of wall each tile has, the board of
+ * the original), then the short side (tiles of up to 12).  A board that
+ * needs no cutting is made in one piece, without a ring; so is a board
+ * that is too narrow to hold tiles with a ring (under 8 squares across).
+ */
+static void bm_tiles(int w, int h, int *tx, int *ty, int *tw, int *th)
+{
+    bool turn = h > w;
+    int lt[MO_MAXSIDE + 1], st[MO_MAXSIDE + 1], nl, ns, i, lmin = 1 << 20;
+
+    nl = mo_split(turn ? h : w, 30, (turn ? w : h) < 8 ? 1 << 20 : 28, 18, lt);
+    for (i = 0; i < nl; i++)
+        if (lt[i] < lmin) lmin = lt[i];
+    ns = mo_split(turn ? w : h, 12, 16, lmin >= 18 ? 9 : 10, st);
+    *tx = turn ? ns : nl;
+    *ty = turn ? nl : ns;
+    for (i = 0; i < *tx; i++) tw[i] = turn ? st[i] : lt[i];
+    for (i = 0; i < *ty; i++) th[i] = turn ? lt[i] : st[i];
+}
+
+/* the boulders that fit in a tile with the given size (its ring included) */
+static int bm_tile_cap(int tw, int th, bool ring)
+{
+    int iw = ring ? tw - 2 : tw, ih = ring ? th - 2 : th;
+    return bm_cap(iw > ih ? iw : ih, iw > ih ? ih : iw);
+}
+
+/*
+ * The tiles of a board for the Boulders generator: false if one is too
+ * small to make a level in (*ring says which message fits), else the number
+ * of boulders the board can take in all and the number of tiles.
+ */
+static bool bm_board(const game_params *p, int *total, int *ntiles, bool *ring)
+{
+    int tx, ty, tw[MO_MAXTILES + 1], th[MO_MAXTILES + 1], i, j;
+
+    bm_tiles(p->w, p->h, &tx, &ty, tw, th);
+    *ring = tx * ty > 1;
+    *ntiles = tx * ty;
+    *total = 0;
+    for (j = 0; j < ty; j++)
+        for (i = 0; i < tx; i++) {
+            int iw = *ring ? tw[i] - 2 : tw[i], ih = *ring ? th[j] - 2 : th[j];
+            if (!bm_size_ok(iw > ih ? iw : ih, iw > ih ? ih : iw))
+                return false;
+            *total += bm_tile_cap(tw[i], th[j], *ring);
+        }
+    return true;
+}
+
+/*
+ * Why the Boulders generator cannot make a board, or NULL.  A number of
+ * boulders is a total for the whole board: every tile of a big board has
+ * at least one, and as many as the maker can place there.
+ */
+static const char *bm_check_board(const game_params *p)
+{
+    static char msg[160];
+    int total, ntiles;
+    bool ring;
+
+    if (!bm_board(p, &total, &ntiles, &ring))
+        return ring ? "Boulders needs a board that is at least 8 squares across" :
+                      "Boulders needs a board of at least 10x8 or 16x6 (either way up)";
+    if (p->bm_count > total) {
+        sprintf(msg, "At most %d boulders fit on a board of this size", total);
+        return msg;
+    }
+    if (p->bm_count > 0 && p->bm_count < ntiles) {
+        sprintf(msg, "This board is made of %d tiles with at least one boulder each", ntiles);
+        return msg;
+    }
+    return NULL;
+}
+
+/*
+ * A game ID, a saved game or the last settings of an earlier version can ask
+ * for what the maker cannot do: a board that is too small (such a game was
+ * made by the Original generator), or more boulders than fit.  Reading them
+ * brings the settings to the nearest ones that work, so that the game still
+ * loads; the Custom dialog does not do that, it refuses (bm_check_board()).
+ */
+static void bm_settle_params(game_params *p)
+{
+    int total, ntiles;
+    bool ring;
+
+    if (!bm_board(p, &total, &ntiles, &ring)) {
+        p->gen = 0;
+        return;
+    }
+    if (p->bm_count > total) p->bm_count = total;
+    if (p->bm_count > 0 && p->bm_count < ntiles) p->bm_count = ntiles;
+}
+
+/*
+ * Shares the boulders out among the tiles by their area: one for each
+ * tile, the rest to the tile that is furthest below its share, never more
+ * than a tile can take (bm_check_board() has seen to it that they fit).
+ */
+static void bm_share(int total, int n, const int *cap, const long *area, int *out)
+{
+    long sum = 0;
+    int i, left = total - n;
+
+    for (i = 0; i < n; i++) { out[i] = 1; sum += area[i]; }
+    while (left > 0) {
+        int best = -1;
+        double bestv = 0;
+        for (i = 0; i < n; i++) {
+            double v;
+            if (out[i] >= cap[i]) continue;
+            v = (double)total * area[i] / (double)(sum ? sum : 1) - out[i];
+            if (best < 0 || v > bestv) { best = i; bestv = v; }
+        }
+        if (best < 0) break;
+        out[best]++;
+        left--;
+    }
 }
 
 /* every tile in its finished state, then can the player still get to the
@@ -2325,6 +2524,7 @@ static bool sokoban_mosaic(const game_params *params, random_state *rs,
     int ti[MO_MAXTILES], tj[MO_MAXTILES];
     int xs[MO_MAXTILES + 1], ys[MO_MAXTILES + 1];
     long totalarea = 0, areas[MO_MAXTILES];
+    int bmcap[MO_MAXTILES], bmshare[MO_MAXTILES];
     clock_t t0 = clock();
     bool ok = true;
     int maxtry = params->gen == 2 ? 6 : params->gen == 3 ? 5 : 30;
@@ -2348,9 +2548,12 @@ static bool sokoban_mosaic(const game_params *params, random_state *rs,
                 ti[k] = i; tj[k] = j;
                 areas[k] = (long)(tw[i] - 2) * (th[j] - 2);
                 totalarea += areas[k];
+                bmcap[k] = bm_tile_cap(tw[i], th[j], true);
                 k++;
             }
     }
+    if (params->gen == 1 && params->bm_count > 0)
+        bm_share(params->bm_count, n, bmcap, areas, bmshare);
     memset(tiles, 0, sizeof tiles);
 
     for (k = 0; k < n && ok; k++) {
@@ -2395,6 +2598,8 @@ static bool sokoban_mosaic(const game_params *params, random_state *rs,
                 if (params->gen == 1) {
                     int ms = params->bm_time > 0 ? params->bm_time * 1000 / n : 1000;
                     sub.tile_ms = ms < 300 ? 300 : ms > 5000 ? 5000 : ms;
+                    /* the boulders asked for are shared out by area */
+                    if (params->bm_count > 0) sub.bm_count = bmshare[k];
                 }
                 if (params->gen == 2)
                     sub.tile_ms = params->mc_time > 0 ?
@@ -2470,7 +2675,7 @@ static bool sokoban_mosaic(const game_params *params, random_state *rs,
 }
 
 static bool sokoban_external(const game_params *params, random_state *rs,
-                             unsigned char *grid)
+                             unsigned char *grid, bool *tiled)
 {
     int soft[2], hard[2], minw, minh, tw[MO_MAXTILES + 1], th[MO_MAXTILES + 1];
     int tx, ty, attempt;
@@ -2479,7 +2684,9 @@ static bool sokoban_external(const game_params *params, random_state *rs,
     sokoban_dbg_ntiles = 0;
 #endif
     mo_limits(params->gen, soft, hard, &minw, &minh);
-    if (params->gen == 2 && params->w * params->h <= 254) {
+    if (params->gen == 1) {
+        bm_tiles(params->w, params->h, &tx, &ty, tw, th);
+    } else if (params->gen == 2 && params->w * params->h <= 254) {
         tx = ty = 1;                   /* a board of the original app */
         tw[0] = params->w; th[0] = params->h;
     } else {
@@ -2493,7 +2700,262 @@ static bool sokoban_external(const game_params *params, random_state *rs,
         }
         return false;
     }
+    *tiled = true;
     return sokoban_mosaic(params, rs, grid, tx, ty, tw, th);
+}
+
+/* ----------------------------------------------------------------------
+ * The fewest moves of a level, for the status bar ("Moves: 12 (min 31)", as
+ * in Slide).  An exact answer needs a search of every position the level can
+ * get into, which is possible only for a level with a few boxes; the search
+ * is given up after a while, and then the game shows no minimum.  A* over
+ * the pushes: a push costs the walk to the square behind the box plus the
+ * push itself (a move is a step along the squares), and the estimate is the
+ * sum of the pushes each box needs at least to reach a goal.
+ */
+#define SKM_MAXB 8                     /* most boxes */
+#define SKM_MAXP 8                     /* most pits */
+#define SKM_NODES 400000               /* positions the search may keep */
+#define SKM_SECONDS 1.5                /* and the time it may take */
+#define SKM_INF 1000000
+
+struct skm_node {
+    unsigned short b[SKM_MAXB];        /* the boxes, in order */
+    unsigned short pl;                 /* the player */
+    unsigned char nb, pits;            /* boxes left, mask of the pits still open */
+    int g;                             /* moves so far */
+};
+
+struct skm_item { int f, g, idx; };
+
+static void skm_push(struct skm_item **heap, int *hn, int *hcap,
+                     int f, int g, int idx)
+{
+    int x;
+    if (*hn >= *hcap) {
+        *hcap = *hcap ? *hcap * 2 : 4096;
+        *heap = sresize(*heap, *hcap, struct skm_item);
+    }
+    x = (*hn)++;
+    (*heap)[x].f = f; (*heap)[x].g = g; (*heap)[x].idx = idx;
+    while (x > 0) {
+        int up = (x - 1) / 2;
+        struct skm_item t;
+        if ((*heap)[up].f < (*heap)[x].f ||
+            ((*heap)[up].f == (*heap)[x].f && (*heap)[up].g >= (*heap)[x].g))
+            break;
+        t = (*heap)[up]; (*heap)[up] = (*heap)[x]; (*heap)[x] = t;
+        x = up;
+    }
+}
+
+static struct skm_item skm_pop(struct skm_item *heap, int *hn)
+{
+    struct skm_item top = heap[0];
+    int x = 0;
+    heap[0] = heap[--(*hn)];
+    for (;;) {
+        int l = 2 * x + 1, r = l + 1, m = x;
+        struct skm_item t;
+#define SKM_BEFORE(A, B) (heap[A].f < heap[B].f || \
+                          (heap[A].f == heap[B].f && heap[A].g > heap[B].g))
+        if (l < *hn && SKM_BEFORE(l, m)) m = l;
+        if (r < *hn && SKM_BEFORE(r, m)) m = r;
+#undef SKM_BEFORE
+        if (m == x) break;
+        t = heap[x]; heap[x] = heap[m]; heap[m] = t;
+        x = m;
+    }
+    return top;
+}
+
+static unsigned skm_hash(const struct skm_node *s)
+{
+    unsigned long long x = 1469598103934665603ULL;
+    int i;
+    for (i = 0; i < s->nb; i++) { x ^= s->b[i]; x *= 1099511628211ULL; }
+    x ^= s->pl; x *= 1099511628211ULL;
+    x ^= s->pits; x *= 1099511628211ULL;
+    x ^= x >> 29;
+    return (unsigned)x;
+}
+
+static bool skm_same(const struct skm_node *a, const struct skm_node *b)
+{
+    return a->nb == b->nb && a->pl == b->pl && a->pits == b->pits &&
+           !memcmp(a->b, b->b, a->nb * sizeof a->b[0]);
+}
+
+/*
+ * Returns the fewest moves, or -1 if they are not known: too many boxes, a
+ * level with spare boxes or goals, or a search that did not finish.
+ */
+static int sk_fewest_moves(const unsigned char *grid, int w, int h,
+                           int px, int py)
+{
+    static const int dx4[4] = {0, 1, 0, -1}, dy4[4] = {-1, 0, 1, 0};
+    int n = w * h, i, c, d, k, nbox = 0, ngoal = 0, npit = 0, result = -1;
+    unsigned char *wall = snewn(n, unsigned char);
+    unsigned char *tgt = snewn(n, unsigned char);
+    unsigned char *occ = snewn(n, unsigned char);
+    int *pitidx = snewn(n, int), *pd = snewn(n, int);
+    int *dist = snewn(n, int), *q = snewn(n, int);
+    struct skm_node *pool = NULL, start;
+    struct skm_item *heap = NULL;
+    int *table = NULL, tsize = 1 << 20, npool = 0, hn = 0, hcap = 0, pops = 0;
+    clock_t t0 = clock();
+    bool ok = true;
+
+    memset(&start, 0, sizeof start);
+    if (n > 60000) ok = false;         /* (a square number has 16 bits) */
+    for (c = 0; c < n; c++) {
+        int v = grid[c];
+        wall[c] = v == WALL || v == INITIAL;
+        tgt[c] = v == TARGET || v == BARRELTARGET || v == PLAYERTARGET;
+        pitidx[c] = -1;
+        if (v == DEEP_PIT) ok = false;
+        if (v == PIT) {
+            if (npit >= SKM_MAXP) ok = false; else pitidx[c] = npit++;
+        }
+        if (IS_BARREL(v)) {
+            if (nbox >= SKM_MAXB) ok = false; else start.b[nbox++] = c;
+        }
+        if (tgt[c]) ngoal++;
+    }
+    ngoal += npit;
+    /* (a level with spare boxes is complete earlier: not handled) */
+    if (!ok || nbox == 0 || nbox != ngoal)
+        goto out;
+    start.nb = nbox;
+    start.pl = py * w + px;
+    start.pits = (unsigned char)((1u << npit) - 1);
+
+    /* the pushes each square needs at least to bring a box to a goal */
+    {
+        int qh = 0, qt = 0;
+        for (c = 0; c < n; c++) pd[c] = SKM_INF;
+        for (c = 0; c < n; c++)
+            if (tgt[c] || pitidx[c] >= 0) { pd[c] = 0; q[qt++] = c; }
+        while (qh < qt) {
+            c = q[qh++];
+            for (d = 0; d < 4; d++) {
+                int bx = c % w - dx4[d], by = c / w - dy4[d];
+                int ux = bx - dx4[d], uy = by - dy4[d];
+                if (bx < 0 || by < 0 || bx >= w || by >= h ||
+                    ux < 0 || uy < 0 || ux >= w || uy >= h) continue;
+                if (wall[by*w+bx] || wall[uy*w+ux] || pitidx[by*w+bx] >= 0 ||
+                    pd[by*w+bx] != SKM_INF) continue;
+                pd[by*w+bx] = pd[c] + 1;
+                q[qt++] = by*w + bx;
+            }
+        }
+    }
+    for (i = 0; i < start.nb; i++)
+        if (pd[start.b[i]] >= SKM_INF) goto out;     /* cannot be solved */
+
+    pool = snewn(SKM_NODES, struct skm_node);
+    table = snewn(tsize, int);
+    for (i = 0; i < tsize; i++) table[i] = -1;
+    pool[0] = start;
+    npool = 1;
+    table[skm_hash(&start) & (tsize - 1)] = 0;
+    {
+        int h0 = 0;
+        for (i = 0; i < start.nb; i++) h0 += pd[start.b[i]];
+        skm_push(&heap, &hn, &hcap, h0, 0, 0);
+    }
+
+    while (hn > 0 && hn <= 4 * SKM_NODES) {          /* (and not too much memory) */
+        struct skm_item top = skm_pop(heap, &hn);
+        struct skm_node cur = pool[top.idx];
+        int qh = 0, qt = 0, alldone = 1;
+
+        if (top.g != cur.g) continue;                /* an old entry */
+        if (cur.pits == 0) {
+            for (i = 0; i < cur.nb; i++)
+                if (!tgt[cur.b[i]]) { alldone = 0; break; }
+            if (alldone) { result = cur.g; break; }
+        }
+        if ((++pops & 255) == 0 &&
+            (double)(clock() - t0) / CLOCKS_PER_SEC > SKM_SECONDS)
+            break;
+
+        /* the squares the player can walk to, and how far they are */
+        memset(occ, 0, n);
+        for (i = 0; i < cur.nb; i++) occ[cur.b[i]] = 1;
+        for (c = 0; c < n; c++) dist[c] = -1;
+        dist[cur.pl] = 0; q[qt++] = cur.pl;
+        while (qh < qt) {
+            c = q[qh++];
+            for (d = 0; d < 4; d++) {
+                int nx = c % w + dx4[d], ny = c / w + dy4[d], nc;
+                if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+                nc = ny * w + nx;
+                if (dist[nc] >= 0 || wall[nc] || occ[nc] ||
+                    (pitidx[nc] >= 0 && (cur.pits >> pitidx[nc] & 1))) continue;
+                dist[nc] = dist[c] + 1;
+                q[qt++] = nc;
+            }
+        }
+
+        for (i = 0; i < cur.nb; i++) {
+            c = cur.b[i];
+            for (d = 0; d < 4; d++) {
+                int fx = c % w - dx4[d], fy = c / w - dy4[d];
+                int tx = c % w + dx4[d], ty = c / w + dy4[d];
+                int to, j, hh, slot;
+                struct skm_node ch;
+                if (fx < 0 || fy < 0 || fx >= w || fy >= h ||
+                    tx < 0 || ty < 0 || tx >= w || ty >= h) continue;
+                if (dist[fy * w + fx] < 0) continue;
+                to = ty * w + tx;
+                if (wall[to] || occ[to]) continue;
+                ch = cur;
+                if (pitidx[to] >= 0 && (cur.pits >> pitidx[to] & 1)) {
+                    /* the box fills the pit and is gone */
+                    ch.pits &= ~(1u << pitidx[to]);
+                    memmove(&ch.b[i], &ch.b[i + 1],
+                            (ch.nb - i - 1) * sizeof ch.b[0]);
+                    ch.nb--;
+                } else {
+                    if (pd[to] >= SKM_INF) continue; /* a dead square */
+                    ch.b[i] = to;
+                    for (j = i; j > 0 && ch.b[j-1] > ch.b[j]; j--) {
+                        unsigned short t = ch.b[j]; ch.b[j] = ch.b[j-1]; ch.b[j-1] = t;
+                    }
+                    for (j = i; j + 1 < ch.nb && ch.b[j+1] < ch.b[j]; j++) {
+                        unsigned short t = ch.b[j]; ch.b[j] = ch.b[j+1]; ch.b[j+1] = t;
+                    }
+                }
+                ch.pl = c;
+                ch.g = cur.g + dist[fy * w + fx] + 1;
+                hh = 0;
+                for (j = 0; j < ch.nb; j++) hh += pd[ch.b[j]];
+
+                slot = skm_hash(&ch) & (tsize - 1);
+                while (table[slot] >= 0 && !skm_same(&pool[table[slot]], &ch))
+                    slot = (slot + 1) & (tsize - 1);
+                if (table[slot] >= 0) {
+                    k = table[slot];
+                    if (ch.g < pool[k].g) {
+                        pool[k].g = ch.g;
+                        skm_push(&heap, &hn, &hcap, ch.g + hh, ch.g, k);
+                    }
+                } else {
+                    if (npool >= SKM_NODES) goto out;       /* too big */
+                    pool[npool] = ch;
+                    table[slot] = npool;
+                    skm_push(&heap, &hn, &hcap, ch.g + hh, ch.g, npool);
+                    npool++;
+                }
+            }
+        }
+    }
+
+  out:
+    sfree(wall); sfree(tgt); sfree(occ); sfree(pitidx); sfree(pd);
+    sfree(dist); sfree(q); sfree(pool); sfree(table); sfree(heap);
+    return result;
 }
 
 #ifdef SOKOBAN_STATS
@@ -2513,8 +2975,11 @@ static char *new_game_desc(const game_params *params, random_state *rs,
      * FIXME: perhaps some more interesting means of choosing how
      * many moves to try?
      */
+    bool tiled = false;
+
     grid = snewn(w*h, unsigned char);
-    if (!(params->gen && sokoban_external(params, rs, grid))) {
+    if (!(params->gen && sokoban_external(params, rs, grid, &tiled))) {
+        tiled = false;
 #ifdef SOKOBAN_STATS
         if (params->gen) sokoban_fallbacks++;
 #endif
@@ -2607,6 +3072,19 @@ static char *new_game_desc(const game_params *params, random_state *rs,
     }
 
     desc[desclen] = '\0';
+
+    /* the fewest moves of a solution, when the level is small enough to
+     * find out (the status bar shows them, as in Slide) */
+    if (!tiled) {
+        int pl = -1, minmoves;
+        for (i = 0; i < w*h; i++)
+            if (grid[i] == PLAYER || grid[i] == PLAYERTARGET) { pl = i; break; }
+        minmoves = pl < 0 ? -1 : sk_fewest_moves(grid, w, h, pl % w, pl / w);
+        if (minmoves >= 0) {
+            desc = sresize(desc, desclen + 16, char);
+            sprintf(desc + desclen, ",%d", minmoves);
+        }
+    }
     sfree(grid);
 
     return desc;
@@ -2618,7 +3096,7 @@ static const char *validate_desc(const game_params *params, const char *desc)
     int area = 0;
     int nplayers = 0;
 
-    while (*desc) {
+    while (*desc && *desc != ',') {
         int c = *desc++;
         int n = 1;
         if (*desc && isdigit((unsigned char)*desc)) {
@@ -2635,6 +3113,14 @@ static const char *validate_desc(const game_params *params, const char *desc)
             /* ok */;
         else
             return "Invalid character in game description";
+    }
+    if (*desc == ',') {                /* the fewest moves of a solution */
+        desc++;
+        if (!isdigit((unsigned char)*desc))
+            return "Invalid number of moves in game description";
+        while (isdigit((unsigned char)*desc)) desc++;
+        if (*desc)
+            return "Invalid number of moves in game description";
     }
 
     if (area > w*h)
@@ -2660,10 +3146,13 @@ static game_state *new_game(midend *me, const game_params *params,
     state->grid = snewn(w*h, unsigned char);
     state->px = state->py = -1;
     state->completed = false;
+    state->moves = state->final_moves = 0;
+    state->minmoves = -1;
 
     i = 0;
 
-    while (*desc) {
+    /* the level, optionally followed by ",N": the fewest moves of a solution */
+    while (*desc && *desc != ',') {
         int c = *desc++;
         int n = 1;
         if (*desc && isdigit((unsigned char)*desc)) {
@@ -2684,6 +3173,9 @@ static game_state *new_game(midend *me, const game_params *params,
     assert(i == w*h);
     assert(state->px != -1 && state->py != -1);
 
+    if (*desc == ',')
+        state->minmoves = atoi(desc + 1);
+
     return state;
 }
 
@@ -2698,6 +3190,9 @@ static game_state *dup_game(const game_state *state)
     ret->px = state->px;
     ret->py = state->py;
     ret->completed = state->completed;
+    ret->moves = state->moves;
+    ret->final_moves = state->final_moves;
+    ret->minmoves = state->minmoves;
 
     return ret;
 }
@@ -2980,6 +3475,9 @@ static game_state *execute_move(const game_state *state, const char *move)
 
     ret->px = nx;
     ret->py = ny;
+    /* a diagonal step is two steps along the squares, so that it never
+     * beats the fewest moves worked out for the level */
+    ret->moves = state->moves + (dx && dy ? 2 : 1);
 
     /*
      * Check for completion. This is surprisingly complicated,
@@ -3006,8 +3504,10 @@ static game_state *execute_move(const game_state *state, const char *move)
                 freetargets = true;
         }
 
-        if (!freebarrels || !freetargets)
+        if (!freebarrels || !freetargets) {
             ret->completed = true;
+            ret->final_moves = ret->moves;
+        }
     }
 
     return ret;
@@ -3371,6 +3871,20 @@ static void game_redraw(drawing *dr, game_drawstate *ds,
 	    }
 	}
 
+    /*
+     * The status bar, as in Slide: the moves made so far and the fewest
+     * moves of a solution, if the game knows them.
+     */
+    {
+        char statusbuf[80];
+
+        sprintf(statusbuf, "%sMoves: %d",
+                state->completed ? "COMPLETED! " : "",
+                state->completed ? state->final_moves : state->moves);
+        if (state->minmoves >= 0)
+            sprintf(statusbuf + strlen(statusbuf), " (min %d)", state->minmoves);
+        status_bar(dr, statusbuf);
+    }
 }
 
 static float game_anim_length(const game_state *oldstate,
@@ -3699,7 +4213,7 @@ const struct game thegame = {
 #ifndef NO_PRINTING
     false, false, game_print_size, game_print,
 #endif
-    false,			       /* wants_statusbar */
+    true,			       /* wants_statusbar */
     false, game_timing_state,
     0,				       /* flags */
     hint_game,

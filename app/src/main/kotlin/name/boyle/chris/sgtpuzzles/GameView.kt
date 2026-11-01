@@ -126,6 +126,7 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
     private var touchStart: PointF? = null
     private var swipeAnchor: PointF? = null
     private var swiping = false
+    private var swipeStepTime = 0L // event time of the last swipe step
     private var mousePos: PointF? = null
     private val maxDistSq = ViewConfiguration.get(context).scaledTouchSlop.toDouble().pow(2.0)
     var keysHandled = 0 // debug
@@ -443,17 +444,21 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
                     if (anchor != null) {
                         val dx = x - anchor.x
                         val dy = y - anchor.y
-                        // The first step needs a clear swipe, further steps (when you keep dragging
-                        // on) a longer one each, so that overshooting the end of a swipe doesn't
-                        // walk another square
+                        // The first step needs a clear swipe.  Dragging on keeps walking, but a
+                        // further step needs a long stretch of the drag *and* some time since the
+                        // last step, so that the end of a fast or long swipe never walks another
+                        // square by accident
                         val threshold = (sqrt(maxDistSq) *
                                 (if (swiping) SWIPE_NEXT_STEP_SLOPS else SWIPE_FIRST_STEP_SLOPS)).toFloat()
                         val along = maxOf(abs(dx), abs(dy))
+                        val restedEnough = !swiping || event.eventTime - swipeStepTime >= SWIPE_NEXT_STEP_MS
                         // ... in a clear direction (not nearly diagonal)
-                        if (along > threshold && along > SWIPE_CLEAR_DIRECTION * minOf(abs(dx), abs(dy))) {
+                        if (along > threshold && restedEnough &&
+                            along > SWIPE_CLEAR_DIRECTION * minOf(abs(dx), abs(dy))) {
                             parent.handler.removeCallbacks(sendLongPress)
                             touchState = TouchState.IDLE
                             swiping = true
+                            swipeStepTime = event.eventTime
                             val key = if (abs(dx) > abs(dy)) {
                                 if (dx > 0) CURSOR_RIGHT else CURSOR_LEFT
                             } else {
@@ -1203,7 +1208,8 @@ class GameView(context: Context, attrs: AttributeSet?) : View(context, attrs), V
 
         // Sokoban swipe-to-move: distances in multiples of the touch slop (8dp on most phones)
         private const val SWIPE_FIRST_STEP_SLOPS = 5.0   // about 40dp (6-7mm) for the first square
-        private const val SWIPE_NEXT_STEP_SLOPS = 7.5    // about 60dp for each further square
+        private const val SWIPE_NEXT_STEP_SLOPS = 16.0   // about 130dp (2cm) for each further square ...
+        private const val SWIPE_NEXT_STEP_MS = 250L      // ... and at least this long after the last one
         private const val SWIPE_CLEAR_DIRECTION = 1.3f   // the main direction must beat the other by this
         private const val ZOOM_OVERDRAW_PROPORTION =
             0.25f // of a screen-full, in each direction, that you can see before checkerboard
