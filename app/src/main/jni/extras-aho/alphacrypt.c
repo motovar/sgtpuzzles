@@ -1316,14 +1316,9 @@ static bool game_changed_state(game_ui *ui, const game_state *oldstate,
         ui->hpencil = 0;
 #endif
     }
-    if (oldstate && !oldstate->completed && !oldstate->cheated &&
-        !newstate->completed && !newstate->cheated &&
-        !(ui && ui->pending) && !check_errors(newstate, NULL)) {
-        /* Just solved. (The flag is set here rather than in flash_length so
-           - flash_length sets it afterwards. */
-        return true;
-    }
-    return false;
+    /* Just solved (the 'completed' flag is set by execute_move). */
+    return newstate->completed && !newstate->cheated &&
+           oldstate && !oldstate->completed;
 }
 
 static const char *current_key_label(const game_ui *ui,
@@ -1665,10 +1660,13 @@ static game_state *execute_move(const game_state *from0, const char *move)
 	ret = dup_game(from);
         ret->grid[i] = n;
         ret->pencil[i] = 0;
+        /* Every letter filled in, all values distinct, all equations hold. */
+        if (!ret->completed && !ret->cheated && !check_errors(ret, NULL))
+            ret->completed = true;
 	return ret;
       } else
         return from;
-    } else 
+    } else
       return from;
 }
 
