@@ -16,10 +16,6 @@
 /*
  * To do list:
  *
- * - (done) The generator first grows a random region layout and then fills the
- *   numbers with a backtracking search; Seismic up to 10x10 and Tectonic up
- *   to 9x9 now generate in a few seconds at most.
- *
  * - Add symmetric clues
  *
  * - Optimize drawing routines
@@ -729,7 +725,10 @@ static bool seismic_gen_numbers(game_state *state, random_state *rs)
 			}
 		}
 		if (k > 9)
+		{
+			sfree(spaces);
 			return false;
+		}
 	}
 	
 	sfree(spaces);
@@ -933,209 +932,918 @@ static bool seismic_gen_diff(game_state *state, int diff)
 	return ret;
 }
 
-/* ---- Region-first generator --------------------------------------------
- * The old generator coloured the grid first and merged regions at random,
- * which almost never produced valid layouts above 7x7. Instead we first grow
- * a random partition into connected regions, then fill in the numbers with a
- * randomised backtracking search that respects the region and distance rules.
+/* ---- Generator -----------------------------------------------------------
+ *
+ * The generator is the one of the original game.  Fill the grid with numbers
+ * (Seismic: visit the cells in random order and give each the lowest number
+ * that is still allowed; Tectonic: random numbers 1-5, then relabel so that
+ * the most frequent one is 1, the next one 2 and so on), then merge
+ * neighbouring cells at random as long as their numbers differ, and accept the
+ * result only if every region of size N holds exactly 1..N.  Nothing about the
+ * sizes of the regions is decided by hand: many singletons and dominoes and a
+ * few big regions are simply what this process produces.
+ *
+ * The weak point of the original is that the final test is all or nothing, so
+ * the chance of success drops exponentially with the size of the grid.  Hence:
+ *
+ *  - Up to GEN_ORIGINAL_CELLS cells the original algorithm is run as it is
+ *    (with a limit on the number of tries).
+ *
+ *  - Seismic, larger: the same algorithm, window by window.  The numbers and
+ *    the regions of a small part of the grid are drawn the way the original
+ *    draws them, with the numbers around it kept as they are, again and
+ *    again over the whole grid (see below).  Nothing is decided by hand, so
+ *    the sizes of the regions come out as in the original.
+ *
+ *  - Tectonic, larger: the regions come from the same random merging (a region
+ *    can have at most 5 cells because Tectonic only uses the numbers 1-5), the
+ *    numbers are then filled in by a search, and wherever that fails the
+ *    neighbourhood is merged and filled again.
  */
 
-struct fill_ctx {
-	game_state *state;
-	int *region;       /* region id per cell */
-	int *rsize;        /* size per region id */
-	int nodes;
-	random_state *rs;
-	int *used;         /* bitmask of numbers placed, per region */
-};
+#ifndef GEN_ORIGINAL_CELLS
+#define GEN_ORIGINAL_CELLS 36
+#endif
+#define GEN_ORIGINAL_TRIES 30000
 
-static bool fill_allowed(struct fill_ctx *c, int i, int n)
+static bool seismic_gen_original(game_state *state, random_state *rs)
 {
-	game_state *st = c->state;
-	int w = st->w, h = st->h, x = i % w, y = i / w, j, k;
+	int w = state->w;
+	int h = state->h;
+	int tries;
+	bool ok;
 
-	if (n > c->rsize[c->region[i]]) return false;
-	if (c->used[c->region[i]] & (1 << n)) return false;
-	if (st->mode == MODE_SEISMIC)
+	for (tries = 0; tries < GEN_ORIGINAL_TRIES; tries++)
 	{
-		for (k = 1; k <= n; k++)
-		{
-			if (x+k < w && st->grid[y*w+x+k] == n) return false;
-			if (x-k >= 0 && st->grid[y*w+x-k] == n) return false;
-			if (y+k < h && st->grid[(y+k)*w+x] == n) return false;
-			if (y-k >= 0 && st->grid[(y-k)*w+x] == n) return false;
-		}
-	}
-	else
-	{
-		int dx, dy;
-		for (dx = -1; dx <= 1; dx++)
-			for (dy = -1; dy <= 1; dy++)
-			{
-				int xx = x + dx, yy = y + dy;
-				if ((!dx && !dy) || xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
-				if (st->grid[yy*w+xx] == n) return false;
-			}
-	}
-	return true;
-}
+		memset(state->grid, 0, w*h*sizeof(char));
+		dsf_reinit(state->dsf);
 
-static bool fill_search(struct fill_ctx *c)
-{
-	game_state *st = c->state;
-	int s = st->w * st->h, i, best = -1, bestn = 99, n;
-	int cand[10], nc, order[10];
+		if (state->mode == MODE_TECTONIC)
+			ok = tectonic_gen_numbers(state, rs);
+		else
+			ok = seismic_gen_numbers(state, rs);
 
-	if (c->nodes++ > 5000) return false;
-	/* most constrained unfilled cell */
-	for (i = 0; i < s; i++)
-	{
-		int cnt = 0;
-		if (st->grid[i]) continue;
-		for (n = 1; n <= c->rsize[c->region[i]]; n++)
-			if (fill_allowed(c, i, n)) cnt++;
-		if (cnt == 0) return false;
-		if (cnt < bestn || (cnt == bestn && random_upto(c->rs, 2)))
-		{
-			bestn = cnt;
-			best = i;
-		}
-	}
-	if (best < 0) return true;
-	nc = 0;
-	for (n = 1; n <= c->rsize[c->region[best]]; n++)
-		if (fill_allowed(c, best, n)) cand[nc++] = n;
-	for (i = 0; i < nc; i++) order[i] = cand[i];
-	shuffle(order, nc, sizeof(int), c->rs);
-	for (i = 0; i < nc; i++)
-	{
-		st->grid[best] = order[i];
-		c->used[c->region[best]] |= 1 << order[i];
-		if (fill_search(c)) return true;
-		c->used[c->region[best]] &= ~(1 << order[i]);
-		st->grid[best] = 0;
-		if (c->nodes > 5000) return false;
+		if (ok && seismic_gen_areas(state, rs))
+			return true;
 	}
 	return false;
 }
 
-static bool seismic_gen_region_first(game_state *state, random_state *rs)
+/* ---- Seismic, larger grids: the original algorithm, window by window ----
+ *
+ * The all or nothing test of the original generator makes it hopeless on a big
+ * grid, but nothing in it is global: a number only looks at its neighbours in
+ * the row and column, and a region is complete or not no matter what happens
+ * elsewhere.  So the same algorithm is run on small windows of the grid, one
+ * after the other:
+ *
+ *   - give the cells of the window a random order and numbers in that order:
+ *     each gets the lowest number that none of the neighbours placed before it
+ *     has (the original's way of choosing the numbers);
+ *   - merge neighbouring cells of the window at random while their numbers
+ *     differ (the original's way of making regions);
+ *   - if every region of size N holds exactly 1..N, keep the result,
+ *     otherwise try again (up to SG_WIN_TRIES times, then leave the window as
+ *     it was).
+ *
+ * That is the same all or nothing test as the original, but on a window, so
+ * it succeeds after a few hundred tries instead of billions.  The cells
+ * outside a window keep their numbers, so they take part as neighbours, and
+ * none of their numbers may change.  A window is the cells around a random
+ * cell plus every region that touches them (so whole regions only).
+ *
+ * It is done in two steps.  First a grid is made out of nothing: windows are
+ * put around cells that have no number yet, and the cells outside count as
+ * placed before the cells of the window.  That is easy and always works, but
+ * the numbers it draws are too large, because every cell sees all its
+ * neighbours as placed first.  Then the order of the cells is made explicit
+ * (the order the original draws the numbers in) and windows are drawn again
+ * and again around random cells until every cell has been drawn about 40
+ * times: a window gets a new random order for its cells, the cells outside
+ * keep their places in the order, and every number outside must still be the
+ * one the original rule gives it.  This second step is what makes the numbers
+ * and the regions come out like the original's.
+ *
+ * Nothing says how big a region may be or how many small ones there are; that
+ * comes out of the numbers as in the original, and the puzzles come out with
+ * the same kind of layout, the same numbers around each number and about as
+ * many clues as theirs.  (Measured against the original on 6x6 and 7x7: the
+ * sizes of the regions are within 2-3 percentage points of its, a bit more
+ * single cells and a bit fewer dominoes, and the clues are within a few
+ * percent.)  It runs on a private random generator seeded from the game's
+ * one, so the same seed gives the same game.
+ */
+
+#ifndef SG_WIN_RADIUS
+#define SG_WIN_RADIUS 2		/* window: cells within this distance of a random cell */
+#endif
+#ifndef SG_WIN_CELLS
+#define SG_WIN_CELLS 20		/* at most this many cells with the regions touching them */
+#endif
+#ifndef SG_WIN_TRIES
+#define SG_WIN_TRIES 300	/* tries of the original algorithm per window */
+#endif
+#ifndef SG_WIN_STEPS
+#define SG_WIN_STEPS(s) ((s) * 40 * 5 / (SG_WIN_CELLS * 3))	/* about 40 draws per cell, 0.6 SG_WIN_CELLS cells per window */
+#endif
+#define SG_ARM 9		/* a number n only looks at cells up to n away */
+
+struct sg_ctx {
+	int w, h, s;
+	char *num;		/* the numbers: the grid of the game */
+	unsigned *rank;		/* place of each cell in the order */
+	int *rep;		/* region of each cell, named by one of its cells; -1: no number yet */
+	char *touched, *inwin, *isaff;
+	int *lidx, *aff;
+	int nun;		/* cells that have no number yet */
+	unsigned long long st;	/* the private random generator */
+	int nwin;
+	int win[SG_WIN_CELLS], order[SG_WIN_CELLS];
+	int bord[4 * SG_WIN_CELLS], bo[2 * SG_WIN_CELLS];
+	int dsf[SG_WIN_CELLS], size[SG_WIN_CELLS], mask[SG_WIN_CELLS];
+	char oldnum[SG_WIN_CELLS];
+	unsigned oldrank[SG_WIN_CELLS];
+};
+
+static unsigned sg_rand32(unsigned long long *st)
+{
+	unsigned long long x = *st;
+
+	x ^= x << 13;
+	x ^= x >> 7;
+	x ^= x << 17;
+	*st = x;
+	return (unsigned)(x >> 32);
+}
+
+static unsigned sg_rand(unsigned long long *st, unsigned n)
+{
+	return (unsigned)(((unsigned long long)sg_rand32(st) * n) >> 32);
+}
+
+static int sg_find(int *dsf, int x)
+{
+	while (dsf[x] != x)
+	{
+		dsf[x] = dsf[dsf[x]];
+		x = dsf[x];
+	}
+	return x;
+}
+
+/* Does cell a come before cell b in the order? */
+static bool sg_before(const unsigned *rank, int a, int b)
+{
+	return rank[a] < rank[b] || (rank[a] == rank[b] && a < b);
+}
+
+/* Is n allowed in cell i if only the numbers of the cells that come before
+ * it count? */
+static bool sg_allowed_before(const char *num, const unsigned *rank,
+			      int w, int h, int i, int n)
+{
+	int x = i % w, y = i / w, d;
+
+	for (d = 1; d <= n; d++)
+	{
+		if (x + d < w && num[i + d] == n && sg_before(rank, i + d, i))
+			return false;
+		if (x - d >= 0 && num[i - d] == n && sg_before(rank, i - d, i))
+			return false;
+		if (y + d < h && num[i + d*w] == n && sg_before(rank, i + d*w, i))
+			return false;
+		if (y - d >= 0 && num[i - d*w] == n && sg_before(rank, i - d*w, i))
+			return false;
+	}
+	return true;
+}
+
+/* The number the original rule gives cell i: the lowest one that none of the
+ * cells before it has within that distance. */
+static int sg_lowest_before(const char *num, const unsigned *rank,
+			    int w, int h, int i)
+{
+	int k;
+
+	for (k = 1; k <= 9; k++)
+		if (sg_allowed_before(num, rank, w, h, i, k))
+			return k;
+	return 0;
+}
+
+/* Is every smaller number k there to stop cell i from having k, that is, is
+ * there a k within distance k of it?  (First step: no order yet.) */
+static bool sg_justified(const char *num, int w, int h, int i)
+{
+	int n = num[i], x = i % w, y = i / w, k, d;
+
+	for (k = 1; k < n; k++)
+	{
+		bool found = false;
+		for (d = 1; d <= k && !found; d++)
+			found = (x + d < w && num[i + d] == k) ||
+				(x - d >= 0 && num[i - d] == k) ||
+				(y + d < h && num[i + d*w] == k) ||
+				(y - d >= 0 && num[i - d*w] == k);
+		if (!found)
+			return false;
+	}
+	return true;
+}
+
+/* The window around cell cc: the cells within SG_WIN_RADIUS of it and every
+ * region that touches them, if that is no more than SG_WIN_CELLS cells;
+ * otherwise a smaller ball. */
+static void sg_window_around(struct sg_ctx *c, int cc)
+{
+	int w = c->w, s = c->s, cx = cc % w, cy = cc / w;
+	int rad, i, n = 0;
+
+	for (rad = SG_WIN_RADIUS; rad >= 0; rad--)
+	{
+		memset(c->touched, 0, s);
+		for (i = 0; i < s; i++)
+		{
+			int x = i % w, y = i / w;
+			if (c->rep[i] >= 0 && x >= cx - rad && x <= cx + rad &&
+			    y >= cy - rad && y <= cy + rad)
+				c->touched[c->rep[i]] = 1;
+		}
+		n = 0;
+		for (i = 0; i < s; i++)
+		{
+			int x = i % w, y = i / w;
+			if ((x >= cx - rad && x <= cx + rad &&
+			     y >= cy - rad && y <= cy + rad) ||
+			    (c->rep[i] >= 0 && c->touched[c->rep[i]]))
+			{
+				if (n == SG_WIN_CELLS)
+				{
+					n++;
+					break;
+				}
+				c->win[n++] = i;
+			}
+		}
+		if (n <= SG_WIN_CELLS)
+			break;
+	}
+	c->nwin = n <= SG_WIN_CELLS ? n : 0;
+	for (i = 0; i < c->nwin; i++)
+		c->inwin[c->win[i]] = 1;
+}
+
+/* Try to give the cells of the window new numbers and new regions, as the
+ * original generator would, and keep them if they pass the test.  In the first
+ * step (first) there is no order of the cells yet. */
+static bool sg_try_window(struct sg_ctx *c, bool first, int tries)
+{
+	int w = c->w, h = c->h, nwin = c->nwin;
+	int *win = c->win, *order = c->order;
+	char *num = c->num;
+	unsigned *rank = c->rank;
+	int nb = 0, naff = 0, t, i, j, k, d;
+	bool ok = false;
+
+	for (i = 0; i < nwin; i++)
+	{
+		c->lidx[win[i]] = i;
+		c->oldnum[i] = num[win[i]];
+		c->oldrank[i] = rank[win[i]];
+	}
+	/* the borders between two cells of the window */
+	for (i = 0; i < nwin; i++)
+	{
+		int cc = win[i], x = cc % w, y = cc / w;
+		if (x + 1 < w && c->inwin[cc + 1])
+		{
+			c->bord[2*nb] = i;
+			c->bord[2*nb + 1] = c->lidx[cc + 1];
+			nb++;
+		}
+		if (y + 1 < h && c->inwin[cc + w])
+		{
+			c->bord[2*nb] = i;
+			c->bord[2*nb + 1] = c->lidx[cc + w];
+			nb++;
+		}
+	}
+	for (i = 0; i < nb; i++)
+		c->bo[i] = i;
+	/* the numbers outside the window that look at a cell of it */
+	for (i = 0; i < nwin; i++)
+	{
+		int x = win[i] % w, y = win[i] / w;
+		for (d = 1; d <= SG_ARM; d++)
+			for (k = 0; k < 4; k++)
+			{
+				int xx = x + (k == 0 ? d : k == 1 ? -d : 0);
+				int yy = y + (k == 2 ? d : k == 3 ? -d : 0);
+				int cc;
+				if (xx < 0 || xx >= w || yy < 0 || yy >= h)
+					continue;
+				cc = yy * w + xx;
+				if (c->inwin[cc] || c->isaff[cc] || num[cc] < d + (first ? 1 : 0))
+					continue;
+				c->isaff[cc] = 1;
+				c->aff[naff++] = cc;
+			}
+	}
+
+	for (t = 0; t < tries && !ok; t++)
+	{
+		for (i = 0; i < nwin; i++)
+		{
+			num[win[i]] = 0;
+			order[i] = i;
+		}
+		if (first)
+		{
+			for (i = nwin - 1; i > 0; i--)
+			{
+				j = (int)sg_rand(&c->st, i + 1);
+				k = order[i];
+				order[i] = order[j];
+				order[j] = k;
+			}
+			/* the numbers, in that order, next to all the numbers that are there */
+			for (j = 0; j < nwin; j++)
+			{
+				int cc = win[order[j]], x = cc % w, y = cc / w;
+				for (k = 1; k <= 9; k++)
+				{
+					bool free = true;
+					for (d = 1; d <= k && free; d++)
+						free = !((x + d < w && num[cc + d] == k) ||
+							 (x - d >= 0 && num[cc - d] == k) ||
+							 (y + d < h && num[cc + d*w] == k) ||
+							 (y - d >= 0 && num[cc - d*w] == k));
+					if (free)
+						break;
+				}
+				if (k > 9)
+					break;
+				num[cc] = k;
+			}
+			if (j < nwin)
+				continue;
+		}
+		else
+		{
+			for (i = 0; i < nwin; i++)
+				rank[win[i]] = sg_rand32(&c->st);
+			for (i = 1; i < nwin; i++)
+			{
+				int v = order[i];
+				for (j = i - 1; j >= 0 && sg_before(rank, win[v], win[order[j]]); j--)
+					order[j + 1] = order[j];
+				order[j + 1] = v;
+			}
+			/* the numbers, in that order */
+			for (j = 0; j < nwin; j++)
+			{
+				int cc = win[order[j]];
+				k = sg_lowest_before(num, rank, w, h, cc);
+				if (!k)
+					break;
+				num[cc] = k;
+			}
+			if (j < nwin)
+				continue;
+		}
+		/* the numbers outside must still be the ones they would pick */
+		for (j = 0; j < naff; j++)
+			if (first ? !sg_justified(num, w, h, c->aff[j])
+				  : sg_lowest_before(num, rank, w, h, c->aff[j]) != num[c->aff[j]])
+				break;
+		if (j < naff)
+			continue;
+
+		/* merge at random while the numbers differ */
+		for (i = 0; i < nwin; i++)
+		{
+			c->dsf[i] = i;
+			c->size[i] = 1;
+			c->mask[i] = NUM_BIT(num[win[i]]);
+		}
+		for (i = nb - 1; i > 0; i--)
+		{
+			j = (int)sg_rand(&c->st, i + 1);
+			k = c->bo[i];
+			c->bo[i] = c->bo[j];
+			c->bo[j] = k;
+		}
+		for (j = 0; j < nb; j++)
+		{
+			int a = sg_find(c->dsf, c->bord[2*c->bo[j]]);
+			int b = sg_find(c->dsf, c->bord[2*c->bo[j] + 1]);
+			if (a == b || (c->mask[a] & c->mask[b]))
+				continue;
+			c->dsf[b] = a;
+			c->size[a] += c->size[b];
+			c->mask[a] |= c->mask[b];
+		}
+
+		/* every region of size N must hold exactly 1..N */
+		ok = true;
+		for (i = 0; i < nwin; i++)
+			if (c->dsf[i] == i && c->mask[i] != AREA_BITS(c->size[i]))
+			{
+				ok = false;
+				break;
+			}
+	}
+
+	if (ok)
+	{
+		for (i = 0; i < nwin; i++)
+		{
+			if (c->rep[win[i]] < 0)
+				c->nun--;
+			c->rep[win[i]] = win[sg_find(c->dsf, i)];
+		}
+	}
+	else
+	{
+		for (i = 0; i < nwin; i++)
+		{
+			num[win[i]] = c->oldnum[i];
+			rank[win[i]] = c->oldrank[i];
+		}
+	}
+	for (i = 0; i < nwin; i++)
+		c->inwin[win[i]] = 0;
+	for (i = 0; i < naff; i++)
+		c->isaff[c->aff[i]] = 0;
+	return ok;
+}
+
+/* Does the grid obey the rules: every number n has no equal number within
+ * distance n in its row and column, and every region of size N holds 1..N? */
+static bool sg_valid(const game_state *state)
+{
+	int w = state->w, h = state->h, s = w * h, i, d;
+	int *mask = snewn(s, int);
+	bool ok = true;
+
+	memset(mask, 0, s * sizeof(int));
+	for (i = 0; i < s && ok; i++)
+	{
+		int n = state->grid[i], x = i % w, y = i / w;
+
+		if (n < 1 || n > 9)
+		{
+			ok = false;
+			break;
+		}
+		mask[dsf_canonify(state->dsf, i)] |= NUM_BIT(n);
+		for (d = 1; d <= n; d++)
+			if ((x + d < w && state->grid[i + d] == n) ||
+			    (y + d < h && state->grid[i + d*w] == n))
+				ok = false;
+	}
+	for (i = 0; i < s && ok; i++)
+		if (dsf_canonify(state->dsf, i) == i &&
+		    mask[i] != AREA_BITS(dsf_size(state->dsf, i)))
+			ok = false;
+	sfree(mask);
+	return ok;
+}
+
+static bool seismic_gen_windows(game_state *state, random_state *rs)
 {
 	int w = state->w, h = state->h, s = w * h;
-	int cap = state->mode == MODE_TECTONIC ? 5 : (3 + (w + h) / 4 > 7 ? 7 : 3 + (w + h) / 4);
-	int *region = snewn(s, int), *rsize = snewn(s, int);
-	int *cells = snewn(s, int), *front = snewn(4 * s + 4, int);
-	int nreg = 0, i, j;
-	struct fill_ctx ctx;
-	bool ok;
+	struct sg_ctx *c = snew(struct sg_ctx);
+	long step = 0, steps = SG_WIN_STEPS(s), maxsteps = 4 * steps + 1000;
+	int scan = 0, i, j, k;
+	bool done = true;
 
-	for (i = 0; i < s; i++) { region[i] = -1; cells[i] = i; }
-	shuffle(cells, s, sizeof(int), rs);
-	for (j = 0; j < s; j++)
-	{
-		int start = cells[j], target, size = 1, nf = 0, k;
-		if (region[start] >= 0) continue;
-		/* size distribution in the style of hand-made puzzles: plenty of
-		 * small regions (1 and 2) as well as medium ones, few at the cap */
-		{
-			int wt[10], tot = 0, r, k2;
-			for (k2 = 1; k2 <= cap; k2++)
-			{
-				int wv = k2 == 1 ? 2 : k2 == 2 ? 4 : k2 <= (cap + 1) / 2 + 1 ? 4 : 2;
-				wt[k2] = wv; tot += wv;
-			}
-			r = random_upto(rs, tot);
-			for (target = 1; target < cap && r >= wt[target]; target++)
-				r -= wt[target];
-		}
-		region[start] = nreg;
-		for (;;)
-		{
-			int cur;
-			/* collect the frontier */
-			nf = 0;
-			for (cur = 0; cur < s; cur++)
-			{
-				int cx = cur % w, cy = cur / w, d;
-				if (region[cur] != nreg) continue;
-				for (d = 0; d < 4; d++)
-				{
-					int nx = cx + (d == 0) - (d == 1), ny = cy + (d == 2) - (d == 3);
-					if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-					if (region[ny*w+nx] < 0) front[nf++] = ny*w+nx;
-				}
-			}
-			if (size >= target || nf == 0) break;
-			k = front[random_upto(rs, nf)];
-			region[k] = nreg;
-			size++;
-		}
-		rsize[nreg] = size;
-		nreg++;
-	}
+	c->w = w;
+	c->h = h;
+	c->s = s;
+	c->num = state->grid;
+	c->rank = snewn(s, unsigned);
+	c->rep = snewn(s, int);
+	c->touched = snewn(s, char);
+	c->inwin = snewn(s, char);
+	c->isaff = snewn(s, char);
+	c->lidx = snewn(s, int);
+	c->aff = snewn(s, int);
+	c->nun = s;
+	c->nwin = 0;
+	c->st = (unsigned long long)random_bits(rs, 32) << 32;
+	c->st |= random_bits(rs, 32);
+	if (!c->st)
+		c->st = 88172645463325252ULL;
 
-	/* absorb undersized regions into a neighbour while the size cap allows */
-	{
-		int minsize = 1, r, changed = 1, guard = 0;
-		while (changed && guard++ < 50)
-		{
-			changed = 0;
-			for (r = 0; r < nreg; r++)
-			{
-				int best = -1, bi;
-				if (rsize[r] == 0 || rsize[r] >= minsize) continue;
-				for (bi = 0; bi < s; bi++)
-				{
-					int cx = bi % w, cy = bi / w, d;
-					if (region[bi] != r) continue;
-					for (d = 0; d < 4; d++)
-					{
-						int nx = cx + (d == 0) - (d == 1), ny = cy + (d == 2) - (d == 3);
-						int o;
-						if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-						o = region[ny*w+nx];
-						if (o == r || rsize[o] + rsize[r] > cap) continue;
-						if (best < 0 || rsize[o] < rsize[best]) best = o;
-					}
-				}
-				if (best >= 0)
-				{
-					for (bi = 0; bi < s; bi++) if (region[bi] == r) region[bi] = best;
-					rsize[best] += rsize[r];
-					rsize[r] = 0;
-					changed = 1;
-				}
-			}
-		}
-	}
-
-	memset(state->grid, 0, s * sizeof(char));
-	dsf_reinit(state->dsf);
+	memset(c->num, 0, s);
+	memset(c->inwin, 0, s);
+	memset(c->isaff, 0, s);
 	for (i = 0; i < s; i++)
-		for (j = i + 1; j < s; j++)
-			if (region[i] == region[j]) { dsf_merge(state->dsf, i, j); break; }
-	/* the loop above links each cell to the next one of its region only, which
-	 * is enough to join the whole region transitively */
+	{
+		c->rep[i] = -1;
+		c->rank[i] = 0;
+	}
 
-	ctx.used = snewn(nreg + 1, int);
-	memset(ctx.used, 0, (nreg + 1) * sizeof(int));
-	ctx.state = state; ctx.region = region; ctx.rsize = rsize; ctx.nodes = 0; ctx.rs = rs;
-	ok = fill_search(&ctx);
-	sfree(ctx.used);
+	/* first step: a grid out of nothing, the first cell without a number
+	 * and the cells around it again and again */
+	while (c->nun > 0)
+	{
+		int cc;
 
-	sfree(region); sfree(rsize); sfree(cells); sfree(front);
+		if (step++ >= maxsteps)
+		{
+			done = false;
+			break;
+		}
+		while (c->rep[scan] >= 0)
+			scan++;
+		cc = scan;
+		if (step % 2 == 0)
+		{
+			/* now and then somewhere near it */
+			int x = cc % w + (int)sg_rand(&c->st, 5) - 2;
+			int y = cc / w + (int)sg_rand(&c->st, 5) - 2;
+			x = x < 0 ? 0 : x >= w ? w - 1 : x;
+			y = y < 0 ? 0 : y >= h ? h - 1 : y;
+			cc = y * w + x;
+		}
+		sg_window_around(c, cc);
+		if (c->nwin > 0)
+			sg_try_window(c, true, SG_WIN_TRIES);
+	}
+
+	if (done)
+	{
+		/* the order: by number, then at random (every number is justified by
+		 * smaller ones, so each cell comes after the ones that stop it from
+		 * having a smaller number) */
+		int *perm = snewn(s, int);
+		int n = 0;
+
+		for (i = 0; i < s; i++)
+			perm[i] = i;
+		for (i = s - 1; i > 0; i--)
+		{
+			j = (int)sg_rand(&c->st, i + 1);
+			k = perm[i];
+			perm[i] = perm[j];
+			perm[j] = k;
+		}
+		for (k = 1; k <= 9; k++)
+			for (i = 0; i < s; i++)
+				if (c->num[perm[i]] == k)
+					c->rank[perm[i]] = (unsigned)(((unsigned long long)n++ << 32) / ((unsigned long long)s + 1));
+		sfree(perm);
+
+		/* second step: the original's order of the cells */
+		for (step = 0; step < steps; step++)
+		{
+			sg_window_around(c, (int)sg_rand(&c->st, s));
+			if (c->nwin > 0)
+				sg_try_window(c, false, SG_WIN_TRIES);
+		}
+	}
+
+	if (done)
+	{
+		dsf_reinit(state->dsf);
+		for (i = 0; i < s; i++)
+			dsf_merge(state->dsf, i, c->rep[i]);
+		done = sg_valid(state);
+	}
+
+	sfree(c->rank);
+	sfree(c->rep);
+	sfree(c->touched);
+	sfree(c->inwin);
+	sfree(c->isaff);
+	sfree(c->lidx);
+	sfree(c->aff);
+	sfree(c);
+	return done;
+}
+
+/* ---- Tectonic, larger grids: random merging, then numbers by search ---- */
+
+#define TEC_MAX 5      /* Tectonic only uses the numbers 1 to 5 */
+
+struct tecgen {
+	int w, h, s;
+	char *val;             /* the numbers */
+	int *rid, *rsz;        /* region of a cell (its lowest cell) and its size */
+	int *usedm;            /* numbers used so far, by region */
+	int *uf, *usz;
+	int *wl, nwl;          /* cells that are being filled in */
+	long nodes, limit;
+	random_state *rs;
+};
+
+static int tg_find(struct tecgen *t, int x)
+{
+	while (t->uf[x] != x)
+	{
+		t->uf[x] = t->uf[t->uf[x]];
+		x = t->uf[x];
+	}
+	return x;
+}
+
+/* Merge neighbouring cells at random into regions of at most TEC_MAX cells,
+ * either everywhere (act == NULL) or only among the cells marked in act. */
+static void tg_remerge(struct tecgen *t, const char *act)
+{
+	int w = t->w, h = t->h, s = t->s, n = 0, c, x, y, q;
+	int *edges = snewn(2 * s, int), *minc = snewn(s, int);
+
+	for (c = 0; c < s; c++)
+		if (!act || act[c])
+		{
+			t->uf[c] = c;
+			t->usz[c] = 1;
+		}
+	for (y = 0; y < h; y++)
+		for (x = 0; x < w - 1; x++)
+		{
+			c = y * w + x;
+			if (!act || (act[c] && act[c + 1]))
+				edges[n++] = c;
+		}
+	for (y = 0; y < h - 1; y++)
+		for (x = 0; x < w; x++)
+		{
+			c = y * w + x;
+			if (!act || (act[c] && act[c + w]))
+				edges[n++] = s + c;
+		}
+	shuffle(edges, n, sizeof(int), t->rs);
+	for (q = 0; q < n; q++)
+	{
+		int i1 = edges[q] % s, i2 = edges[q] >= s ? i1 + w : i1 + 1;
+		int r1 = tg_find(t, i1), r2 = tg_find(t, i2);
+
+		if (r1 == r2 || t->usz[r1] + t->usz[r2] > TEC_MAX)
+			continue;
+		t->uf[r2] = r1;
+		t->usz[r1] += t->usz[r2];
+	}
+	for (c = 0; c < s; c++)
+		if (!act || act[c])
+			minc[c] = s;
+	for (c = 0; c < s; c++)
+		if (!act || act[c])
+		{
+			int r = tg_find(t, c);
+			if (c < minc[r])
+				minc[r] = c;
+		}
+	for (c = 0; c < s; c++)
+		if (!act || act[c])
+		{
+			int r = tg_find(t, c);
+			t->rid[c] = minc[r];
+			t->rsz[c] = t->usz[r];
+		}
+	for (c = 0; c < s; c++)
+		if (!act || act[c])
+			t->usedm[t->rid[c]] = 0;
+	sfree(edges);
+	sfree(minc);
+}
+
+static bool tg_allowed(const struct tecgen *t, int i, int n)
+{
+	int w = t->w, h = t->h, x = i % w, y = i / w, dx, dy;
+
+	if (n > t->rsz[i] || (t->usedm[t->rid[i]] & (1 << n)))
+		return false;
+	for (dy = -1; dy <= 1; dy++)
+		for (dx = -1; dx <= 1; dx++)
+		{
+			int xx = x + dx, yy = y + dy;
+			if ((!dx && !dy) || xx < 0 || yy < 0 || xx >= w || yy >= h)
+				continue;
+			if (t->val[yy * w + xx] == n)
+				return false;
+		}
+	return true;
+}
+
+/* Fill in the numbers of the cells in wl: always the cell with the fewest
+ * possibilities next. */
+static bool tg_search(struct tecgen *t)
+{
+	int q, i, best = -1, bn = 99, n, nc, k, cand[TEC_MAX + 1];
+
+	if (t->nodes++ > t->limit)
+		return false;
+	for (q = 0; q < t->nwl; q++)
+	{
+		int c = 0;
+
+		i = t->wl[q];
+		if (t->val[i])
+			continue;
+		for (n = 1; n <= t->rsz[i]; n++)
+			if (tg_allowed(t, i, n))
+				c++;
+		if (!c)
+			return false;
+		if (c < bn || (c == bn && random_upto(t->rs, 2)))
+		{
+			bn = c;
+			best = i;
+		}
+	}
+	if (best < 0)
+		return true;
+	nc = 0;
+	for (n = 1; n <= t->rsz[best]; n++)
+		if (tg_allowed(t, best, n))
+			cand[nc++] = n;
+	shuffle(cand, nc, sizeof(int), t->rs);
+	for (k = 0; k < nc; k++)
+	{
+		t->val[best] = cand[k];
+		t->usedm[t->rid[best]] |= 1 << cand[k];
+		if (tg_search(t))
+			return true;
+		t->usedm[t->rid[best]] &= ~(1 << cand[k]);
+		t->val[best] = 0;
+		if (t->nodes > t->limit)
+			return false;
+	}
+	return false;
+}
+
+/* Numbers for one region, cell by cell. */
+static bool tg_fill_region(struct tecgen *t, const int *cells, int k, int idx)
+{
+	int c, n, nc = 0, cand[TEC_MAX + 1], j;
+
+	if (idx == k)
+		return true;
+	c = cells[idx];
+	for (n = 1; n <= k; n++)
+		if (tg_allowed(t, c, n))
+			cand[nc++] = n;
+	shuffle(cand, nc, sizeof(int), t->rs);
+	for (j = 0; j < nc; j++)
+	{
+		t->val[c] = cand[j];
+		t->usedm[t->rid[c]] |= 1 << cand[j];
+		if (tg_fill_region(t, cells, k, idx + 1))
+			return true;
+		t->usedm[t->rid[c]] &= ~(1 << cand[j]);
+		t->val[c] = 0;
+	}
+	return false;
+}
+
+static bool tectonic_gen_scalable(game_state *state, random_state *rs)
+{
+	int w = state->w, h = state->h, s = w * h;
+	struct tecgen t;
+	long it, itcap = 3000 + 60L * s;
+	bool ok = false;
+	int c, q, nr, k;
+	int *reglist = snewn(s, int), *hl = snewn(s, int);
+	int *bkr = snewn(s, int), *bks = snewn(s, int), *bku = snewn(s + 1, int);
+	char *bkv = snewn(s, char), *inw = snewn(s, char), *ra = snewn(s, char);
+
+	t.w = w; t.h = h; t.s = s;
+	t.val = state->grid;
+	t.rid = snewn(s, int);
+	t.rsz = snewn(s, int);
+	t.usedm = snewn(s + 1, int);
+	t.uf = snewn(s, int);
+	t.usz = snewn(s, int);
+	t.wl = snewn(s, int);
+	t.nwl = 0;
+	t.rs = rs;
+
+	memset(t.val, 0, s * sizeof(char));
+	memset(t.usedm, 0, (s + 1) * sizeof(int));
+	tg_remerge(&t, NULL);
+
+	/* numbers region by region; regions that do not fit are left empty */
+	nr = 0;
+	for (c = 0; c < s; c++)
+		if (t.rid[c] == c)
+			reglist[nr++] = c;
+	shuffle(reglist, nr, sizeof(int), rs);
+	for (q = 0; q < nr; q++)
+	{
+		int cells[TEC_MAX];
+
+		k = 0;
+		for (c = 0; c < s; c++)
+			if (t.rid[c] == reglist[q])
+				cells[k++] = c;
+		shuffle(cells, k, sizeof(int), rs);
+		tg_fill_region(&t, cells, k, 0);
+	}
+
+	/* where numbers are missing, merge and fill in the neighbourhood again */
+	for (it = 0; it < itcap; it++)
+	{
+		int nh = 0, f, rad, fx, fy, x, y, before = 0, after = 0;
+		bool good;
+
+		for (c = 0; c < s; c++)
+			if (!t.val[c])
+				hl[nh++] = c;
+		if (!nh)
+		{
+			ok = true;
+			break;
+		}
+		f = hl[random_upto(rs, nh)];
+		rad = 1 + (int)((it / 4) % 2);
+		if (it > 1500 && (it / 4) % 3 == 2)
+			rad = 3;
+		fx = f % w;
+		fy = f / w;
+
+		/* the regions within reach of the empty cell */
+		memset(ra, 0, s);
+		for (y = fy - rad; y <= fy + rad; y++)
+			for (x = fx - rad; x <= fx + rad; x++)
+				if (x >= 0 && y >= 0 && x < w && y < h)
+					ra[t.rid[y * w + x]] = 1;
+		t.nwl = 0;
+		for (c = 0; c < s; c++)
+		{
+			inw[c] = ra[t.rid[c]];
+			if (inw[c])
+			{
+				t.wl[t.nwl++] = c;
+				if (!t.val[c])
+					before++;
+			}
+		}
+
+		memcpy(bkv, t.val, s * sizeof(char));
+		memcpy(bkr, t.rid, s * sizeof(int));
+		memcpy(bks, t.rsz, s * sizeof(int));
+		memcpy(bku, t.usedm, (s + 1) * sizeof(int));
+
+		for (q = 0; q < t.nwl; q++)
+			t.val[t.wl[q]] = 0;
+		tg_remerge(&t, inw);
+		t.nodes = 0;
+		t.limit = 400;
+		good = tg_search(&t);
+		for (q = 0; q < t.nwl; q++)
+			if (!t.val[t.wl[q]])
+				after++;
+		if (!good && after >= before)
+		{
+			memcpy(t.val, bkv, s * sizeof(char));
+			memcpy(t.rid, bkr, s * sizeof(int));
+			memcpy(t.rsz, bks, s * sizeof(int));
+			memcpy(t.usedm, bku, (s + 1) * sizeof(int));
+		}
+	}
+
+	if (ok)
+	{
+		dsf_reinit(state->dsf);
+		for (c = 0; c < s; c++)
+			if (t.rid[c] != c)
+				dsf_merge(state->dsf, c, t.rid[c]);
+	}
+
+	sfree(reglist); sfree(hl); sfree(bkr); sfree(bks); sfree(bku);
+	sfree(bkv); sfree(inw); sfree(ra);
+	sfree(t.rid); sfree(t.rsz); sfree(t.usedm); sfree(t.uf); sfree(t.usz);
+	sfree(t.wl);
 	return ok;
+}
+
+static bool seismic_gen_layout(game_state *state, random_state *rs)
+{
+	int w = state->w, h = state->h;
+
+	if (w * h <= GEN_ORIGINAL_CELLS && seismic_gen_original(state, rs))
+		return true;
+
+	memset(state->grid, 0, w*h*sizeof(char));
+	dsf_reinit(state->dsf);
+	if (state->mode == MODE_TECTONIC)
+		return tectonic_gen_scalable(state, rs);
+	return seismic_gen_windows(state, rs);
 }
 
 static bool seismic_gen_puzzle(game_state *state, random_state *rs, int diff)
 {
-	if (!seismic_gen_region_first(state, rs))
+	if (!seismic_gen_layout(state, rs))
 		return false;
 	if(!seismic_gen_clues(state, rs, diff))
 		return false;
 	if(!seismic_gen_diff(state, diff))
 		return false;
-	
+
 	return true;
 }
 
