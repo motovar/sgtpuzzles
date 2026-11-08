@@ -1044,6 +1044,20 @@ static bool solve_combinations(game_state *state, int *current_guess,
             case 2: num_check = state->common->num_zombies  - num_fixed; break;
         }
 
+        /* Inconsistent position: more monsters of this type are still
+         * missing than there are undecided fields, or more have been
+         * placed than exist. A consistent grid never gets here, but the
+         * hint's what-if search does. Report it as an empty candidate set,
+         * which the callers treat as a contradiction, instead of running
+         * past the end of the arrays below. */
+        if (num_check < 0 || num_check > num_unclear) {
+            current_guess[monsters_variable[0]] = 0;
+            sfree(monsters_variable);
+            sfree(monsters_fixed);
+            sfree(var_guess);
+            return false;
+        }
+
         /* Special case: All monsters of a type are found, but there are
          * still ambiguous fields. (This can happen in grids with an
          * internal loop) Remove all corresponding ambiguities */
