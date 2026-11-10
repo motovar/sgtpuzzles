@@ -22,6 +22,18 @@ All three source collections are MIT-licensed (see `LICENCE`, same text as upstr
   small leaks in clusters/mathrax/rome. Crossing's `free_puzzle` is still disabled upstream ("TODO FIX!").
 * Help topics set for every game; help pages generated from the repos' markdown docs.
 
+## Upstream sync
+
+The 40 official games follow Simon Tatham's upstream sources. They were last merged, file by file with a three-way merge that keeps the Android changes, from the snapshot `puzzles-20260923.616da16` (previous base: `88e4b45` of 20 Oct 2025). The next merge should use `616da16` as its base.
+
+Taken from the snapshot: Mines on generic grids (triangles, hexagons, ... with wrapping, question marks, new first-click handling; the layouts of old seeds are unchanged), Undead monster counters, Keen blocks without a clue, Dominosa right-click number highlight, Filling, Mosaic, "click outside deselects" in Unequal and Group, flags of Untangle, Map and Palisade, `grid.c`, `grid.h`, `malloc.c` and the manual.
+
+Left out on purpose:
+* the stylus series (`MOD_STYLUS` and `STYLUS_SUPPORT` in `midend.c` and `puzzles.h`, and the matching code in Lights Up, Loopy, Net, Pattern and Tents). The app keeps the compile-time `STYLUS_BASED` behaviour, which on a touch screen does exactly the same;
+* the GTK front end, the CMake, web, KaiOS and OS X files, the icon sources and the version stamp, none of which the Android build uses.
+
+Android changes kept or added in that merge: the Mines hint for every grid type, long press on an uncovered number clears around it, Undead keeps the highlighted cell, Filling key list for the on-screen keyboard, tapping outside the grid no longer moves the Filling cursor out of it, and Mines orders its remaining sets exactly as the old code did (the snapshot shifted by the wrong sign there). The extra variants Solo+, Unequal+ and Undead+ did not get the new upstream changes.
+
 ## Sokoban level generators
 
 Sokoban (`unfinished/sokoban.c`) has four extra generators next to the original one, chosen under Custom. The presets use the original one.

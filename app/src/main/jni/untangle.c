@@ -2128,10 +2128,11 @@ const struct game thegame = {
 #endif
     false,			       /* wants_statusbar */
     false, NULL,                       /* timing_state */
-    SOLVE_ANIMATES,		       /* flags */
-#ifndef EDITOR
-    hint_game,
-#else
+#ifdef EDITOR
+    SOLVE_ANIMATES | REQUIRE_RBUTTON,  /* flags */
     NULL,
+#else
+    SOLVE_ANIMATES,                    /* flags */
+    hint_game,
 #endif
 };

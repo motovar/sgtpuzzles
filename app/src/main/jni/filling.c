@@ -1326,9 +1326,9 @@ static const char *validate_desc(const game_params *params, const char *desc)
 static key_label *game_request_keys(const game_params *params, int *nkeys, int *arrow_mode)
 {
     int i;
-    key_label *keys = snewn(11, key_label);
+    key_label *keys = snewn(10, key_label);
 
-    *nkeys = 11;
+    *nkeys = 10;
     *arrow_mode = ANDROID_ARROWS_LEFT_RIGHT;
 
     for(i = 1; i < 10; ++i)
@@ -1337,13 +1337,9 @@ static key_label *game_request_keys(const game_params *params, int *nkeys, int *
         keys[i-1].label = NULL;
         keys[i-1].needs_arrows = false;
     }
-    keys[9].button = '0';
+    keys[9].button = '\b';
     keys[9].label = NULL;
     keys[9].needs_arrows = false;
-
-    keys[10].button = '\b';
-    keys[10].label = NULL;
-    keys[10].needs_arrows = false;
 
     return keys;
 }
@@ -1563,8 +1559,11 @@ static char *interpret_move(const game_state *state, game_ui *ui,
                 ui->sel[w*ty+tx] = true;
         }
 #ifdef ANDROID
-        ui->cur_x = tx;
-        ui->cur_y = ty;
+        /* A tap outside the grid must not leave the cursor outside it. */
+        if (tx >= 0 && tx < w && ty >= 0 && ty < h) {
+            ui->cur_x = tx;
+            ui->cur_y = ty;
+        }
 #else
         ui->cur_visible = false;
 #endif

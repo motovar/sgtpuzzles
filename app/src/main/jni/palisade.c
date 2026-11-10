@@ -1732,6 +1732,6 @@ const struct game thegame = {
 #endif
     true,                                     /* wants_statusbar */
     false, NULL,                       /* timing_state */
-    0,                                         /* flags */
+    REQUIRE_RBUTTON,                           /* flags */
     hint_game,
 };

@@ -6388,7 +6388,8 @@ msgid ""
 "Portions copyright Richard Boulton, James Harvey, Mike Pinna, Jonas "
 "K\\u00F6{oe}lker, Dariusz Olszewski, Michael Schierl, Lambros Lambrou, Bernd "
 "Schmidt, Steffen Bauer, Lennard Sprong, Rogier Goossens, Michael Quevillon, "
-"Asher Gordon, Didi Kohen, Ben Harris, Chris Boyle and Phil Tunstall."
+"Asher Gordon, Didi Kohen, Ben Harris, Anders H\\u00F6{oe}glund, Chris Boyle "
+"and Phil Tunstall."
 msgstr ""
 
 #. type: Plain text
