@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Maze 3D</title>
+<link rel="ToC" href="index.html">
+<link rel="up" href="index.html">
+<style type="text/css">body { word-wrap: break-word; } img { max-width: 100%; } body.night { color: #dddddd; background: #000000; } body.night a:link { color: #8888ff; } body.night a:visited { color: #cc88ff; }</style></head>
+<body>
+<p><a href="index.html">Contents</a></p>
+<h1 id="maze3d">Maze 3D</h1>
+<p>Find your way through a maze that is three-dimensional &ndash; so
+don't forget to look up and down too! You stand inside the maze and see
+the passage in front of you in perspective; you can look up, down, left
+and right, roll your head sideways, and walk forwards or backwards along
+the passage you are looking down. Your objective is to reach the target,
+which shows up as a yellow disc at the end of a passage when you can see
+it.</p>
+<h2 id="maze3d-picture">What you see</h2>
+<p>The big square on the left is the view along the passage you are
+facing: the walls, the floor and the ceiling of every cell you can see
+(up to eight cells ahead) are drawn in perspective, and a passage that
+is open to a side is drawn as an opening. The colour of a wall depends
+on the compass direction it faces, so you can keep your bearings even
+when you have rolled over: green for north and south, pink for east
+and west, blue for up and down. Cells that you have marked are outlined
+in pink.</p>
+<p>The panel on the right shows</p>
+<ul>
+<li>how many steps (<em>Moves</em>) and how many turns (<em>Turns</em>)
+you have made so far, and how many markers you have dropped
+(<em>Marks</em>);</li>
+<li>the size of the maze;</li>
+<li>depending on the <em>Display</em> setting, either nothing, your
+coordinates in the maze, or the distance to the target as the crow flies
+and the compass direction it lies in;</li>
+<li>a compass: for each of the six directions (up, down, left, right,
+forwards and backwards, from where you stand) the letter of the compass
+direction it points to &ndash; N, S, W, E, U (up, towards the ceiling of
+the whole maze) or D (down).</li>
+</ul>
+<h2 id="maze3d-controls">Controls</h2>
+<p>Touch the picture:</p>
+<ul>
+<li>the <strong>middle</strong> walks one cell forwards (if there is no
+wall in the way);</li>
+<li>the <strong>top</strong> and <strong>bottom</strong> edges turn your
+view up and down, the <strong>left</strong> and <strong>right</strong>
+edges turn it left and right;</li>
+<li>the <strong>corners</strong> roll you: the top right and bottom left
+corners roll clockwise, the top left and bottom right corners roll
+anticlockwise;</li>
+<li><strong>long press</strong> drops a marker in the cell you are in, or
+takes it away again. The markers are only there to help you remember
+where you have been.</li>
+</ul>
+<p>The buttons below the puzzle have the same moves and some more:
+<em>Fwd</em> and <em>Back</em> walk forwards and backwards, <em>Turn</em>
+turns you right around, <em>Roll L</em> and <em>Roll R</em> roll you, and
+<em>Mark</em> drops or takes away a marker.</p>
+<p>With a keyboard: the cursor keys (or 8, 2, 4 and 6) turn up, down, left
+and right; Enter, Space, + or 5 walk forwards; B or &minus; walk
+backwards; T or * turn around; A, 7 or 3 roll anticlockwise; C, 9 or 1
+roll clockwise; M or 0 drop or take away a marker.</p>
+<p>When you stand on the target the puzzle is complete.</p>
+<h2 id="maze3d-solve">Solve and Show next step</h2>
+<p>For your first few games you may find it helpful to play on a flat
+maze (height 1), or to ask for help:</p>
+<ul>
+<li><em>Solve</em> does not walk for you. It shows a yellow thread that
+leads from where you are to the target (and the direction to take next
+lights up in yellow in the compass); using it again hides the thread.</li>
+<li><em>Show next step</em> makes the next move along a shortest way to
+the target for you: it turns you towards the way to go, or walks one
+cell. It is a move like any other, so you can undo it.</li>
+</ul>
+<h2 id="maze3d-parameters">Maze 3D parameters</h2>
+<p>These parameters are available from the ‘Custom…’ option on the
+‘Type’ menu.</p>
+<dl>
+    <dt>Width, Length, Height</dt>
+    <dd>Size of the maze in cells, from 2 (but at least 3 x 2 x 1 in all)
+        to 20.</dd>
+    <dt>Target location</dt>
+    <dd>Where the target can be: in a <em>Corner</em> of the maze, on an
+        <em>Edge</em>, on a <em>Face</em> of the maze, or <em>Anywhere</em>.
+        You start at the place that is furthest from the target by way of the
+        passages.</dd>
+    <dt>Double Routes/Circles</dt>
+    <dd>If on, some of the walls are knocked down after the maze has been
+        made, so that there are several ways to the target and passages that
+        lead round in circles. This makes the maze much harder.</dd>
+    <dt>Display</dt>
+    <dd>What the panel shows below the size: <em>Nothing</em>,
+        <em>Coordinates</em>, or <em>Direction/Distance</em> to the target.</dd>
+</dl>
+
+<h2 id="status">Status</h2>
+<p>This puzzle is playable. There are no difficulty settings; the size, the
+place of the target, the double routes and what is displayed are the
+settings that make a maze harder or easier.</p>
+<p>Maze 3D was written by Edward Macnaghten (2006) and is part of the
+collection of puzzles for handhelds by Lee Dowling
+(<a href="https://github.com/ledow/stppc2x">stppc2x</a>).</p>
+
+</body>
+</html>

@@ -212,6 +212,7 @@ Version %s"</string>
     <string name="desc_sokoban">Push all the barrels into the target squares.</string>
     <string name="desc_identifier">Similar to Battleships, but with arbitrary shapes</string>
     <string name="desc_kakuro">Fill the board so that unique numbers sum up to each clue</string>
+    <string name="desc_maze3d">Find your way through the three-dimensional maze to the target.</string>
     <string name="desc_mathrax">Place each number according to the arithmetic clues.</string>
     <string name="desc_rome">Fill the grid with arrows leading to a goal.</string>
     <string name="desc_salad">Place each character once in every row and column. Some squares remain empty.</string>
@@ -232,6 +233,7 @@ Version %s"</string>
     <string name="toast_flood">Tap a colour to flood fill from the top left</string>
     <string name="toast_guess">Drag colours into place, then tap smaller pegs when done</string>
     <string name="toast_tracks">Tap two edges of a square to place track</string>
+    <string name="toast_maze3d">Tap the middle to walk forward, the edges to turn and the corners to roll; long press to drop a marker</string>
     <!-- Non-obvious aspects of controls when arrow keys disabled (specifically because left/right mouse buttons hidden), shown in a toast -->
     <string name="toast_no_arrows_dominosa">Long press to mark a divider</string>
     <string name="toast_no_arrows_galaxies">Long press and drag to place an arrow marker</string>

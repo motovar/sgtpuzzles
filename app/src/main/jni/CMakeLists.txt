@@ -274,6 +274,7 @@ add_subdirectory(unfinished)
 add_subdirectory(extras-unreleased)
 add_subdirectory(extras-aho)
 add_subdirectory(extras-extended)
+add_subdirectory(extras-stppc2x)
 # The extra puzzles were written and tested on x86, where plain `char` is signed; on Android/ARM it
 # is unsigned, which breaks code that stores -1 in a char (shows "255", hangs generators, etc).
 file(GLOB extras_sources ${CMAKE_CURRENT_SOURCE_DIR}/extras-*/*.c)
