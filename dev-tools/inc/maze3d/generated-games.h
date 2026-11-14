@@ -1,0 +1,1 @@
+GAME(maze3d)
