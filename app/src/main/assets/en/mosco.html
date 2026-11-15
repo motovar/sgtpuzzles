@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mosco</title>
+<link rel="ToC" href="index.html">
+<link rel="up" href="index.html">
+<style type="text/css">body { word-wrap: break-word; } img { max-width: 100%; } body.night { color: #dddddd; background: #000000; } body.night a:link { color: #8888ff; } body.night a:visited { color: #cc88ff; }</style></head>
+<body>
+<p><a href="index.html">Contents</a></p>
+<h1 id="mosco">Mosco</h1>
+<p>A puzzle from Ivan Moscovich's &ldquo;Magic Arrow Tile Puzzles&rdquo;.
+You are given a rectangular arena that is to be filled up completely with
+arrow tiles, and a ring of numbers around it. Every number counts the
+arrows that point at the square it stands in &ndash; along the row, the
+column or the diagonal that the square is on, no matter how far away the
+arrow is and no matter what lies in between. Your objective is to give
+every tile of the arena an arrow so that every number is right.</p>
+<p>There is one more rule: you have a fixed set of tiles to use. Each of the
+eight kinds of arrow (up, up-left, left, down-left, down, down-right, right
+and up-right) is used exactly <em>area / 8</em> times &ndash; two of each
+kind on a 4 x 4 arena, eight of each on 8 x 8. This is why the area of the
+arena has to be a multiple of eight.</p>
+<p>There are usually several arrangements that fit the numbers, and any of
+them completes the puzzle.</p>
+<h2 id="mosco-picture">What you see</h2>
+<p>The numbers around the arena are black while they are still to be
+fulfilled, <span style="color:#008c00">green</span> when exactly that many
+arrows point at them, and <span style="color:#e60000">red</span> when too
+many arrows point at them already. The four corner numbers count along
+the diagonal only.</p>
+<p>The arrows are coloured by the way they point: blue for up and down, green
+for up-left and down-right, red for left and right and yellow for up-right
+and down-left. When you have laid more tiles of one kind than there are in
+the set, those tiles get a red frame.</p>
+<p>The status bar shows how many tiles of each of the eight kinds are still
+left to lay &ndash; they have to come out at zero all along when the arena
+is full.</p>
+<h2 id="mosco-controls">Controls</h2>
+<p>Touch a tile of the arena:</p>
+<ul>
+<li>a <strong>tap</strong> changes the arrow of the tile: it goes round
+from nothing to up, up-left, left, down-left, down, down-right, right and
+up-right, and back to nothing;</li>
+<li>a <strong>swipe</strong> from the tile in the direction that you want
+lays that arrow straight away (a preview of the arrow shows while your
+finger is on the way, and you can still change your mind by swiping
+somewhere else before you let go);</li>
+<li>a <strong>long press</strong> followed by a swipe puts a small
+&ldquo;maybe&rdquo; arrow in the corner or edge of the tile that lies in that
+direction, or takes it away again. These marks are only notes of your own;
+they do not count as arrows. A long press on one of the edges or corners of
+a tile (without swiping) switches the mark of that edge or corner, and a long
+press on the <strong>middle</strong> of the tile clears it of all arrows and
+marks.</li>
+</ul>
+<p>A <strong>tap on a number</strong> highlights all the tiles that can
+point at it (and a second tap puts the highlight out), which makes it easy
+to see where its arrows can come from.</p>
+<p>With a keyboard (or the cursor keys of your device): the cursor keys
+move the cursor over the arena and the numbers around it; Enter or Space
+change the arrow of the tile that the cursor is on (or highlight the
+number); the keys 7 8 9 / 4 6 / 1 2 3 of the number pad lay the arrow that
+points that way (8 is up, 6 is right, 7 is up-left and so on); 5, 0,
+Backspace and the second select key clear the tile.</p>
+<p>When every number is right and every kind of arrow has been laid the
+right number of times, the puzzle is complete.</p>
+<h2 id="mosco-solve">Solve and Show next step</h2>
+<ul>
+<li><em>Solve</em> lays an arrangement that fits all the numbers on every
+tile of the arena, replacing the arrows that you have laid. It is the
+arrangement that the puzzle was made from or, for a game that was typed in,
+one that the program finds.</li>
+<li><em>Show next step</em> works out whether the arrows that you have laid
+can still be completed to a solution. If they can, it lays one more arrow
+for you &ndash; one that has to be there, when the numbers leave no
+choice, or otherwise one that goes with a way of completing the puzzle.
+If they cannot, it tells you which tile the mistake is on (it shows the row
+and the column of the arrow that stands in the way). The step is a move like
+any other, so you can undo it.</li>
+</ul>
+<h2 id="mosco-parameters">Mosco parameters</h2>
+<p>These parameters are available from the ‘Custom…’ option on the
+‘Type’ menu.</p>
+<dl>
+    <dt>Width, Height</dt>
+    <dd>Size of the arena in tiles. Both have to be at least 4 and at most
+        255 and the area (width times height) has to be a multiple of eight.
+        The presets are 4x4, 6x4, 8x4, 8x8 and 16x16.</dd>
+</dl>
+
+<h2 id="status">Status</h2>
+<p>This puzzle is playable. There are no difficulty settings: the size of the
+arena is the way to make the puzzle harder or easier. The numbers do not
+always pin down a single arrangement &ndash; that is how the puzzle is
+designed &ndash; so on the larger sizes the hint may have to choose one of
+several arrows that all lead to a solution.</p>
+<p>The puzzle is from Ivan Moscovich's books &ldquo;Magic Arrow Tile
+Puzzles&rdquo;; Mosco is part of the collection of puzzles for handhelds by
+Lee Dowling (<a href="https://github.com/ledow/stppc2x">stppc2x</a>).</p>
+
+</body>
+</html>

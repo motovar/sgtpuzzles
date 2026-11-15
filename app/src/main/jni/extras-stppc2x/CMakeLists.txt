@@ -6,6 +6,11 @@ puzzle(maze3d
   DESCRIPTION "First-person three-dimensional maze"
   OBJECTIVE "Find your way through the three-dimensional maze to the target.")
 
+puzzle(mosco
+  DISPLAYNAME "Mosco"
+  DESCRIPTION "Magic arrow tile puzzle"
+  OBJECTIVE "Lay an arrow on every tile so that each clue says how many arrows point at it.")
+
 # The maze library that Maze 3D is built on.
 set(puzzle_sources ${puzzle_sources} ${CMAKE_CURRENT_SOURCE_DIR}/maze3dc.c)
 
