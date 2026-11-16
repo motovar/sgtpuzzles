@@ -1204,7 +1204,7 @@ static int getcontradoors(const game_params *params, int* coord, int dir, int** 
     return 0;
 }
 
-static int binary(float p, random_state *rs)
+static int bernoulli_flip(float p, random_state *rs)
 {
   return (random_bits(rs, 10) < 1024*p);
 }
@@ -1687,7 +1687,7 @@ static SmPowerRoom** makepowerstates(const game_params *params, random_state *rs
       pool[ind] = pool[--numpool];
       for (j=0; j<ndoors; j++)
         if (rstate->door[j] == Unset) {
-          if (binary(doorprobability(params, states, rstate, j, 0), rs) && canopendoor(params, states, rstate, j))
+          if (bernoulli_flip(doorprobability(params, states, rstate, j, 0), rs) && canopendoor(params, states, rstate, j))
             opendoor(params, states, rstate, j, ndoors, pool, &numpool);
           else
             closedoor(params, states, rstate, j);
@@ -1946,9 +1946,9 @@ static SuperMaze* makesupermaze(SmPowerRoom** states, const game_params *params,
         if (ind > -1) {
           rstate = states[ind];
           setdoor(maze->doorvector, size, coord[0], coord[1], 0, 0, 
-                  ((rstate->door[0] == Open || (rstate->door[0] == Unset && binary(probdoor, rs))) ? 1 : 0));
+                  ((rstate->door[0] == Open || (rstate->door[0] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
           setdoor(maze->doorvector, size, coord[0], coord[1], 0, 2,
-                  ((rstate->door[2] == Open || (rstate->door[2] == Unset && binary(probdoor, rs))) ? 1 : 0));
+                  ((rstate->door[2] == Open || (rstate->door[2] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
         }
       }
   } else if (params->style == Tandem) {
@@ -1959,9 +1959,9 @@ static SuperMaze* makesupermaze(SmPowerRoom** states, const game_params *params,
         if (ind > -1) {
           rstate = states[ind];
           setdoor(maze->doorvector, size, coord[2], coord[3], 0, 0, 
-                  ((rstate->door[4] == Open || (rstate->door[4] == Unset && binary(probdoor, rs))) ? 1 : 0));
+                  ((rstate->door[4] == Open || (rstate->door[4] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
           setdoor(maze->doorvector, size, coord[2], coord[3], 0, 2,
-                  ((rstate->door[6] == Open || (rstate->door[6] == Unset && binary(probdoor, rs))) ? 1 : 0));
+                  ((rstate->door[6] == Open || (rstate->door[6] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
         }
       }
     for (sw=0, coord[1]=0; coord[1]<size; coord[1]++)
@@ -1978,11 +1978,11 @@ static SuperMaze* makesupermaze(SmPowerRoom** states, const game_params *params,
                 rstate = states[ind];
                 setdoor(maze->doorswitches[sw], size, coord[2], coord[3], 0, 0, 
                         (rstate->door[ord?4:0] == Impossible ? 0 :
-                         rstate->door[ord?4:0] == Unset ? (binary(probdoor, rs) ? 1 : 0) :
+                         rstate->door[ord?4:0] == Unset ? (bernoulli_flip(probdoor, rs) ? 1 : 0) :
                          (rstate->door[ord?4:0] == Open ? 1 : 0) ^ getdoor(maze->doorvector, size, coord[2], coord[3], 0, 0)));
                 setdoor(maze->doorswitches[sw], size, coord[2], coord[3], 0, 2, 
                         (rstate->door[ord?6:2] == Impossible ? 0 :
-                         rstate->door[ord?6:2] == Unset ? (binary(probdoor, rs) ? 1 : 0) :
+                         rstate->door[ord?6:2] == Unset ? (bernoulli_flip(probdoor, rs) ? 1 : 0) :
                          (rstate->door[ord?6:2] == Open ? 1 : 0) ^ getdoor(maze->doorvector, size, coord[2], coord[3], 0, 2)));
               }
             }
@@ -1997,10 +1997,10 @@ static SuperMaze* makesupermaze(SmPowerRoom** states, const game_params *params,
           if (ind > -1) {
             rstate = states[ind];
             setdoor(maze->doorvector, size, coord[0], coord[1], coord[2], 0, 
-                    ((rstate->door[0] == Open || (rstate->door[0] == Unset && binary(probdoor, rs))) ? 1 : 0));
+                    ((rstate->door[0] == Open || (rstate->door[0] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
             setdoor(maze->doorvector, size, coord[0], coord[1], coord[2], 2,
-                    ((rstate->door[2] == Open || (rstate->door[2] == Unset && binary(probdoor, rs))) ? 1 : 0));
-            up = ((rstate->door[4] == Open || (rstate->door[4] == Unset && binary(probdoor, rs))) ? 1 : 0);
+                    ((rstate->door[2] == Open || (rstate->door[2] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
+            up = ((rstate->door[4] == Open || (rstate->door[4] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0);
             down = ((rstate->door[5] == Open || (rstate->door[5] == Unset && states[ind-size*size]->door[4] == Open)) ? 1 : 0);
             maze->roomvector[k] = up + 2*down;
         }
@@ -2014,9 +2014,9 @@ static SuperMaze* makesupermaze(SmPowerRoom** states, const game_params *params,
           if (ind > -1) {
             rstate = states[ind];
             setdoor(maze->doorvector, size, coord[0], coord[1], coord[2], 0, 
-                    ((rstate->door[0] == Open || (rstate->door[0] == Unset && binary(probdoor, rs))) ? 1 : 0));
+                    ((rstate->door[0] == Open || (rstate->door[0] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
             setdoor(maze->doorvector, size, coord[0], coord[1], coord[2], 2,
-                    ((rstate->door[2] == Open || (rstate->door[2] == Unset && binary(probdoor, rs))) ? 1 : 0));
+                    ((rstate->door[2] == Open || (rstate->door[2] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
             fl = -1;
             for (i=0; i<params->floors-1; i++)
               if (rstate->door[4+i] == Open)
@@ -2058,10 +2058,10 @@ static SuperMaze* makesupermaze(SmPowerRoom** states, const game_params *params,
           }
           if (!done_e)
             setdoor(maze->doorvector, size, coord[0], coord[1], 0, 0, 
-                    ((rstate->door[0] == Open || (rstate->door[0] == Unset && binary(probdoor, rs))) ? 1 : 0));
+                    ((rstate->door[0] == Open || (rstate->door[0] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
           if (!done_s)
             setdoor(maze->doorvector, size, coord[0], coord[1], 0, 2,
-                    ((rstate->door[2] == Open || (rstate->door[2] == Unset && binary(probdoor, rs))) ? 1 : 0));
+                    ((rstate->door[2] == Open || (rstate->door[2] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
           key = -1;
           for (i=0; i<params->keys; i++)
             if (rstate->door[4+4*params->keys+i] == Open)
@@ -2103,10 +2103,10 @@ static SuperMaze* makesupermaze(SmPowerRoom** states, const game_params *params,
           }
           if (!done_e)
             setdoor(maze->doorvector, size, coord[0], coord[1], 0, 0, 
-                    ((rstate->door[0] == Open || (rstate->door[0] == Unset && binary(probdoor, rs))) ? 1 : 0));
+                    ((rstate->door[0] == Open || (rstate->door[0] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
           if (!done_s)
             setdoor(maze->doorvector, size, coord[0], coord[1], 0, 2,
-                    ((rstate->door[2] == Open || (rstate->door[2] == Unset && binary(probdoor, rs))) ? 1 : 0));
+                    ((rstate->door[2] == Open || (rstate->door[2] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
           lev = -1;
           for (i=0; i<params->levers; i++)
             if (rstate->door[4+4*params->levers+i] == Open)
@@ -2149,11 +2149,11 @@ static SuperMaze* makesupermaze(SmPowerRoom** states, const game_params *params,
             }
             if (!done_e)
               setdoor(maze->doorvector, size, coord[0], coord[1], coord[2], 0, 
-                      ((rstate->door[0] == Open || (rstate->door[0] == Unset && binary(probdoor, rs))) ? 1 : 0));
+                      ((rstate->door[0] == Open || (rstate->door[0] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
             if (!done_s)
               setdoor(maze->doorvector, size, coord[0], coord[1], coord[2], 2,
-                      ((rstate->door[2] == Open || (rstate->door[2] == Unset && binary(probdoor, rs))) ? 1 : 0));
-            up = ((rstate->door[4*(params->keys+params->levers+1)] == Open || (rstate->door[4*(params->keys+params->levers+1)] == Unset && binary(probdoor, rs))) ? 1 : 0);
+                      ((rstate->door[2] == Open || (rstate->door[2] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0));
+            up = ((rstate->door[4*(params->keys+params->levers+1)] == Open || (rstate->door[4*(params->keys+params->levers+1)] == Unset && bernoulli_flip(probdoor, rs))) ? 1 : 0);
             down = ((rstate->door[4*(params->keys+params->levers+1)+1] == Open || (rstate->door[4*(params->keys+params->levers+1)+1] == Unset && states[ind-size*size]->door[4*(params->keys+params->levers+1)] == Open)) ? 1 : 0);
             if (up || down)
               maze->roomvector[k] = up + 2*down;

@@ -39,7 +39,7 @@ sealed class BackendName(
      * Note that if a hardware D-pad or trackball is present, these are ignored.
      */
     val isArrowsVisibleByDefault by lazy {
-        this in setOf(BLACKBOX, FLOOD, INERTIA, MINES, PATTERN, SLANT, SOKOBAN, TRACKS)
+        this in setOf(BINARY, BLACKBOX, FLOOD, INERTIA, MINES, PATTERN, SLANT, SOKOBAN, TRACKS)
     }
 
     /**
@@ -60,8 +60,9 @@ sealed class BackendName(
             CUBE, FIFTEEN, FILLING, MOSAIC, NET, TWIDDLE -> UNMODIFIED
 
             // Extra puzzles (extras-*) where a touch of a part of the picture means a move, or a
-            // swipe over a square sets something (Mosco: the direction of the arrow).
-            MAZE3D, MOSCO -> UNMODIFIED
+            // swipe over a square sets something (Mosco: the direction of the arrow), or a swipe
+            // over the picture is the move (Binary: all the tiles slide that way).
+            BINARY, MAZE3D, MOSCO -> UNMODIFIED
 
             // For games where a drag can be canceled by going off-screen, do that.
             GALAXIES, MAP, MINES, PATTERN, PEGS, RECT, TENTS, TRACKS, UNTANGLE -> REVERT_OFF_SCREEN
@@ -91,7 +92,7 @@ sealed class BackendName(
     /** Games that can show one logically deducible next step (game->hint in C). */
     val supportsSolveStep by lazy {
         this in setOf(
-            ABCD, ALPHACRYPT, ASCENT, BLACKBOX, BOATS, BRICKS, BRIDGES, CLUSTERS, CROSSING, CUBE, DOMINOSA, FACTORCROSS, FIFTEEN, FILLING, FLIP, FLOOD, FLOW, GALAXIES, GROUP, GUESS, IDENTIFIER, INERTIA, KAKURO, KEEN, LIGHTUP, LOOPY, MAGNETS, MAP, MATHRAX, MAZE3D, MINES, MOSAIC, MOSCO, NET, NETSLIDE, PALISADE, PATTERN, PEARL, PEGS, RANGE, RECT, ROME, SALAD, SAMEGAME, SEISMIC, SEPARATE, SIGNPOST, SINGLES, SIXTEEN, SLANT, SLIDE, SOKOBAN, SOLO, SOLO_PLUS, SPOKES, STELLAR, STICKS, SUBSETS, SUPERMAZE, TENTS, TOWERS, TRACKS, TWIDDLE, UNDEAD, UNDEAD_PLUS, UNEQUAL, UNEQUAL_PLUS, UNRULY, UNTANGLE, WALLS
+            ABCD, ALPHACRYPT, ASCENT, BINARY, BLACKBOX, BOATS, BRICKS, BRIDGES, CLUSTERS, CROSSING, CUBE, DOMINOSA, FACTORCROSS, FIFTEEN, FILLING, FLIP, FLOOD, FLOW, GALAXIES, GROUP, GUESS, IDENTIFIER, INERTIA, KAKURO, KEEN, LIGHTUP, LOOPY, MAGNETS, MAP, MATHRAX, MAZE3D, MINES, MOSAIC, MOSCO, NET, NETSLIDE, PALISADE, PATTERN, PEARL, PEGS, RANGE, RECT, ROME, SALAD, SAMEGAME, SEISMIC, SEPARATE, SIGNPOST, SINGLES, SIXTEEN, SLANT, SLIDE, SOKOBAN, SOLO, SOLO_PLUS, SPOKES, STELLAR, STICKS, SUBSETS, SUPERMAZE, TENTS, TOWERS, TRACKS, TWIDDLE, UNDEAD, UNDEAD_PLUS, UNEQUAL, UNEQUAL_PLUS, UNRULY, UNTANGLE, WALLS
         )
     }
 
@@ -104,7 +105,7 @@ sealed class BackendName(
             ABCD, ALPHACRYPT, ASCENT, BOATS, BRICKS, CLUSTERS, CROSSING, FACTORCROSS, FLOW,
             IDENTIFIER, KAKURO, MATHRAX, ROME, SALAD, SEISMIC, SOLO_PLUS, SPOKES, STELLAR, STICKS,
             SUBSETS, SUPERMAZE, UNDEAD_PLUS, UNEQUAL_PLUS, WALLS, GROUP, SLIDE, SOKOBAN, SEPARATE,
-            MAZE3D, MOSCO
+            MAZE3D, MOSCO, BINARY
         )
     }
 
@@ -115,6 +116,7 @@ sealed class BackendName(
      */
     val nightKeepColours: Set<Int> by lazy {
         mapOf<BackendName, Set<Int>>(
+            BINARY to (6..22).toSet(),
             UNDEAD_PLUS to setOf(6, 7, 8, 10, 11),
             MAZE3D to setOf(3, 4, 5),
             STELLAR to setOf(3, 4, 5, 6),

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Binary</title>
+<link rel="ToC" href="index.html">
+<link rel="up" href="index.html">
+<style type="text/css">body { word-wrap: break-word; } img { max-width: 100%; } body.night { color: #dddddd; background: #000000; } body.night a:link { color: #8888ff; } body.night a:visited { color: #cc88ff; }</style></head>
+<body>
+<p><a href="index.html">Contents</a></p>
+<h1 id="binary">Binary</h1>
+<p>A sliding game with numbered tiles that is better known as
+&ldquo;2048&rdquo;. The board holds tiles that carry powers of two: 2, 4, 8,
+16 and so on. Every move slides <em>all</em> the tiles as far as they will go
+in one of the four directions. When two tiles with the same number run into
+each other they merge into one tile with the sum of the two (2 and 2 make 4,
+4 and 4 make 8, and so on), and after every move a new tile &ndash; a 2, and
+now and then a 4 &ndash; turns up on a random empty square.</p>
+<p>Your objective is to make a tile with the <em>goal</em> number, which is
+2048 unless you choose another goal. When you have done that you can go on
+playing to build even bigger tiles; the game is over when the board is full
+and no two neighbouring tiles are equal, so that no move is left.</p>
+<h2 id="binary-rules">The details of a move</h2>
+<ul>
+<li>A tile that has been made by a merge does not merge again in the same
+move: a row of 2 2 4 8 slid to the left gives 4 4 8, not 16.</li>
+<li>When there are three equal tiles in a row, the two that are nearest to the
+side you slide to merge: 2 2 2 slid to the left gives 4 2.</li>
+<li>A move that would not change anything (no tile can slide, no tiles can
+merge) is not a move, and no new tile turns up after it. You cannot make
+one.</li>
+<li>Undo cannot be used to roll the dice again: every game carries the random
+numbers it needs, so if you undo a move and play the same move again, the same
+tile turns up on the same square.</li>
+</ul>
+<h2 id="binary-picture">What you see</h2>
+<p>Every number has its own colour: pale tiles for 2 and 4, orange and red
+for 8 to 64, golden yellow for 128 to 2048, and green, teal, blue and purple
+for the tiles beyond that. Squares without a tile are shown as faint slots (or
+in the style that you choose under <em>Game background</em>, see below).</p>
+<p>The status bar shows the goal and your score. The score goes up by the
+number of every tile that a merge makes. <em>WON!</em> is added when the goal
+tile has been made and <em>NO MORE MOVES</em> when the game is over; the tiles
+of a game that is over turn grey.</p>
+<h2 id="binary-controls">Controls</h2>
+<p>There are two ways to move the tiles with your finger. You choose the one
+you prefer in the preferences (<em>Input method</em>):</p>
+<ul>
+<li><strong>Swipe</strong> (the default): drag your finger across the board,
+about half a tile or more, mainly up, down, left or right. All the tiles slide
+that way when you lift your finger. A short or diagonal drag does nothing,
+so you can change your mind by going back to where you started.</li>
+<li><strong>Tap</strong>: the two diagonals of the board divide it into four
+triangles, one at every side. A tap on the triangle that is at the top slides
+the tiles up; the triangles on the left, right and bottom work the same way.
+</li>
+</ul>
+<p>The arrow buttons of the app and the cursor keys of a keyboard slide the
+tiles, too.</p>
+<h2 id="binary-solve">Show next step</h2>
+<p>There is no way to &ldquo;solve&rdquo; a game of this kind, as nobody knows
+what tiles turn up. <em>Show next step</em> looks ahead instead: it works out
+the four moves, the new tiles that may turn up after each of them and the
+moves after that, rates the boards that can come out of that (by the number
+of free squares, the tiles that can merge and how orderly the rows and
+columns are) and plays the move that is best on average. The move is an
+ordinary one, so you can undo it. On the normal sizes the hint plays a game
+through to the goal; it tells you when there is no move left.</p>
+<h2 id="binary-parameters">Binary parameters</h2>
+<p>These parameters are available from the &lsquo;Custom&hellip;&rsquo;
+option on the &lsquo;Type&rsquo; menu.</p>
+<dl>
+    <dt>Width, Height</dt>
+    <dd>Size of the board in squares: from 2 to 9 in both directions. The
+        presets are 4x4 with the goal 512, 4x4, 5x5 and 6x6 with the goal 2048.</dd>
+    <dt>Goal</dt>
+    <dd>The number that you have to make: 32, 64, 128, 256, 512, 1024, 2048,
+        4096 or 8192. Choose a goal that suits the size of the board: on a very
+        small board a high goal cannot be reached, and the game ends with no
+        move left.</dd>
+</dl>
+<h2 id="binary-preferences">Binary preferences</h2>
+<dl>
+    <dt>Game background</dt>
+    <dd>How the squares without a tile look: faint slots (the default), plain
+        empty squares, a chessboard or a grid of lines.</dd>
+    <dt>Input method</dt>
+    <dd>Swipe or Tap, as described above.</dd>
+</dl>
+
+<h2 id="status">Status</h2>
+<p>This puzzle is playable. It is the game &ldquo;2048&rdquo; by Gabriele
+Cirulli; this implementation comes from the collection PocketPuzzles by Steffen
+Bauer. In this app the tiles merge once per move, as in the game that it is
+modelled on (the first version of the code let a merge go on in a chain), and
+there is a hint.</p>
+
+</body>
+</html>
