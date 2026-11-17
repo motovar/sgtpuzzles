@@ -12,5 +12,9 @@ with Pillow for the icons).
 * `tests/smoke.c` - plays each preset and a number of seeds with the hint until the game is solved, also tries Solve.
 * `tests/evfuzz.c` - random key/mouse/undo/redo/restart/serialise/new game events (use with ASAN; the leak in
   `newgame_undo_deserialise_check` of the midend is in `lsan.supp`).
+* `tests/bintest.c`, `tests/moscotest.c` (+ `moscosa*.c`, `moscoexp.c`), `tests/dectest.c` - white-box tests of Binary,
+  Mosco and Decanting: they `#include` the game source (build with `tests/empty.c` as the game file and
+  `-I<game directory>`). `dectest <scale> [mode]` compares the Decanting solver with an exhaustive search, replays
+  backward scrambles, fuzzes descriptions and moves, and checks generator and hint times.
 * `m3dtest/` - wall symmetry / reachability test for the Maze 3D generator.
 * `icons/icontool.c` + `icons/render.py` - records what a game draws and renders the day and night icons.

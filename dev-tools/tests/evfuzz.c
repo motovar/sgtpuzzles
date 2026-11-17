@@ -89,6 +89,7 @@ int main(int argc, char **argv)
                 else if (k < 95) {
                     struct buf bb = { NULL, 0, 0 };
                     struct rd r;
+                    midend_stop_anim(me);   /* midend_deserialise forgets a pending animation without freeing it */
                     midend_serialise(me, bwrite, &bb);
                     r.b = &bb; r.pos = 0;
                     { const char *er = midend_deserialise(me, bread, &r); if (er) { printf("%s: deserialise: %s\n", idbuf, er); } }
