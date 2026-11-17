@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decanting</title>
+<link rel="ToC" href="index.html">
+<link rel="up" href="index.html">
+<style type="text/css">body { word-wrap: break-word; } img { max-width: 100%; } body.night { color: #dddddd; background: #000000; } body.night a:link { color: #8888ff; } body.night a:visited { color: #cc88ff; }</style></head>
+<body>
+<p><a href="index.html">Contents</a></p>
+<h1 id="decanting">Decanting</h1>
+<p>A puzzle that is better known as &ldquo;water sort&rdquo;. Glass tubes hold
+layers of coloured liquid, and each tube has room for the same number of
+layers. Your objective is to sort the liquids so that every tube is either
+empty or full of a single colour: all the layers of one colour belong in one
+tube.</p>
+<h2 id="decanting-rules">How to pour</h2>
+<p>A move pours the liquid from the top of one tube into another tube. The
+liquid on top of a tube is the layers of the colour at the top: if a tube holds
+(from the bottom) red, blue, blue, then the top is the two blue layers. You may
+pour into a tube if</p>
+<ul>
+<li>it is empty, or its top layer has the same colour as the layers that you
+pour, <em>and</em></li>
+<li>it has room for at least one more layer.</li>
+</ul>
+<p>All the layers of the top colour move across if they fit; if the other tube
+has room for only some of them, as many as fit move across and the others stay
+where they are. A tube is never poured into itself, a tube that is empty cannot
+be poured from, and liquids of different colours do not mix: a layer can go
+only on to a layer of the same colour.</p>
+<p>You can undo every pour, so you can try things out. Some games have only one
+or two tubes more than there are colours, and then it is easy to pour yourself
+into a corner where no solution is left; <em>Show next step</em> (see below)
+tells you so, and then you have to undo some moves.</p>
+<h2 id="decanting-picture">What you see</h2>
+<p>The tubes stand in a row (or in two rows, when there are a lot of them), with
+the layers of each of them from the bottom up. The status bar counts your moves
+(&ldquo;Moves&rdquo;); when the puzzle is solved the tubes flash and the status
+bar says <em>COMPLETED!</em>. It also tells you if there is no pour possible at
+all.</p>
+<p>The colours are chosen to be easy to tell apart. If you find some of them
+hard to distinguish, switch on the labels in the preferences (<em>Labels on the
+layers</em>): every layer then carries the number or the letter of its
+colour.</p>
+<h3 id="decanting-hidden">Hidden layers</h3>
+<p>With the parameter <em>Hide the layers below the top</em> only the layers on
+top of a tube can be seen: of every tube you see the layers of the colour at
+the top, and a grey layer with a question mark for each of the others. When you
+pour and the layers below come to light, they are shown, and they stay shown
+even if you cover them again by pouring on top of them, so you can remember
+what you have found out; so it is a game of exploring as well as of sorting.
+(<em>Show next step</em> and <em>Solve</em> know all of the layers, hidden ones
+included, and use them.)</p>
+<h2 id="decanting-controls">Controls</h2>
+<p>You pour in two taps:</p>
+<ul>
+<li>Tap a tube to select it: it is lifted up and its glass turns blue. (An
+empty tube cannot be selected.)</li>
+<li>Tap another tube, and the liquid is poured into it if that is possible.
+If it is not possible, the tube that you tapped is the selected one now (unless
+it is empty), so you can pick another tube to pour from without an extra
+tap.</li>
+<li>Tap the selected tube again, tap outside the tubes or press and hold
+to let go of the selection.</li>
+</ul>
+<p>The arrow buttons of the app and the cursor keys of a keyboard move the
+cursor (a thin blue frame around a tube) from tube to tube: left and right go through the
+tubes one after the other, up and down go from one row to the other when there
+are two rows. The first press of a key only shows where the cursor is. The
+<em>Select</em> button (Enter on a keyboard) selects the tube that the cursor
+is on, or pours into it from the tube that is selected; Space on a keyboard
+lets go of the selection.</p>
+<h2 id="decanting-solve">Show next step, Solve</h2>
+<p><em>Show next step</em> works out a solution from the position that is on the
+screen and makes its first pour for you. It is an ordinary move, which you can
+undo, and it takes care not to lead you round in circles: it tries to avoid the
+positions that the game has been in before. <em>Solve</em> makes all the pours
+of a solution at once, starting from the position on the screen;
+<em>Undo</em> takes them all back in a single step.</p>
+<p>The solver looks for short solutions (they are not always the very
+shortest ones). When no solution can be found from the position you are in, you
+are told so, and you have to undo some moves yourself.</p>
+<h2 id="decanting-parameters">Decanting parameters</h2>
+<p>These parameters are available from the &lsquo;Custom&hellip;&rsquo;
+option on the &lsquo;Type&rsquo; menu.</p>
+<dl>
+    <dt>Colours</dt>
+    <dd>The number of colours: from 2 to 12.</dd>
+    <dt>Tubes</dt>
+    <dd>The number of tubes: at most 16, and more than there are colours. The
+        tubes that are not needed to hold the colours start empty: they are
+        the room that you have to work with. The fewer of them there are,
+        the harder the game is: with just one empty tube it is easy to make
+        a move after which the game cannot be finished any more.</dd>
+    <dt>Layers</dt>
+    <dd>How many layers a tube holds: from 2 to 8. Every colour has exactly as
+        many layers as that, so a colour fills a tube.</dd>
+    <dt>Hide the layers below the top</dt>
+    <dd>Switches on the hidden layers that are described above.</dd>
+</dl>
+<p>The presets are 4 colours in 6 tubes, 7 colours in 9 tubes and 10 colours in
+12 tubes (all of them with four layers per tube and two empty tubes), 12 colours
+in 14 tubes of 5 layers, a harder game with 7 colours in 8 tubes (a single empty
+tube), and 7 colours in 9 tubes with hidden layers.</p>
+<p>The layers are dealt out at random, and only games that can be finished are
+kept. Where it takes too long to find out whether a game that has been dealt out
+can be finished (few empty tubes, many layers), the game is made by scrambling a
+finished one with pours that run backwards. Such a game can always be finished,
+too; it tends to be a little shorter.</p>
+<h2 id="decanting-preferences">Decanting preferences</h2>
+<dl>
+    <dt>Labels on the layers</dt>
+    <dd>None (the default), numbers or letters: what is written on the layers
+        to help tell the colours apart.</dd>
+</dl>
+
+<h2 id="status">Status</h2>
+<p>This puzzle is playable. The idea and the first version of the game (the
+tubes, the selection and the pouring) are by Lalo Martins, from his fork of the
+puzzle collection. In this app there is also a game generator that makes sure
+that games can be finished, a solver for <em>Show next step</em> and
+<em>Solve</em>, hidden layers, a complete check of the game description and of
+every move, a count of the moves, labels on the layers, and the cursor keys.</p>
+
+</body>
+</html>
