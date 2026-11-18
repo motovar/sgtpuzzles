@@ -216,6 +216,7 @@ Version %s"</string>
     <string name="desc_decanting">Pour the layers of liquid from tube to tube until every colour is in a tube of its own.</string>
     <string name="desc_maze3d">Find your way through the three-dimensional maze to the target.</string>
     <string name="desc_mathrax">Place each number according to the arithmetic clues.</string>
+    <string name="desc_minorfinder">Reduce the big graph to the small one by contracting edges and deleting edges and points.</string>
     <string name="desc_mosco">Lay an arrow on every tile so that each clue says how many arrows point at it.</string>
     <string name="desc_rome">Fill the grid with arrows leading to a goal.</string>
     <string name="desc_salad">Place each character once in every row and column. Some squares remain empty.</string>
@@ -239,6 +240,7 @@ Version %s"</string>
     <string name="toast_binary">Swipe over the board (or use the arrows) to slide all the tiles; equal numbers that meet merge</string>
     <string name="toast_decanting">Tap a tube to lift it, then the tube to pour it into; a pour moves the top colour if it fits</string>
     <string name="toast_maze3d">Tap the middle to walk forward, the edges to turn and the corners to roll; long press to drop a marker</string>
+    <string name="toast_minorfinder">Drag a point onto a neighbour, or tap two neighbours, to contract the edge between them; long press a point or an edge to delete it</string>
     <string name="toast_mosco">Tap a tile to turn its arrow, or swipe over it to point the arrow that way; tap a clue to see which tiles point at it</string>
     <!-- Non-obvious aspects of controls when arrow keys disabled (specifically because left/right mouse buttons hidden), shown in a toast -->
     <string name="toast_no_arrows_dominosa">Long press to mark a divider</string>

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minor Finder</title>
+<link rel="ToC" href="index.html">
+<link rel="up" href="index.html">
+<style type="text/css">body { word-wrap: break-word; } img { max-width: 100%; } body.night { color: #dddddd; background: #000000; } body.night a:link { color: #8888ff; } body.night a:visited { color: #cc88ff; }</style></head>
+<body>
+<p><a href="index.html">Contents</a></p>
+<h1 id="minorfinder">Minor Finder</h1>
+<p>A puzzle about graphs. You are shown a big graph (blue points joined by
+lines) and a small one, the <em>minor</em> (red points). Your objective is to
+turn the big graph into the small one, using the three operations that
+mathematicians use to make a minor of a graph: you may contract an edge, delete
+an edge and delete a point. When the big graph has become the small one, with
+the same number of points joined in the same way, the puzzle is solved. (It does
+not matter where the points are on the screen, only which points are joined.)</p>
+<h2 id="minorfinder-rules">The three moves</h2>
+<ul>
+<li><b>Contract an edge:</b> the two points at the ends of the edge are merged
+into one point. The new point has all the edges that either of the two had
+(if both were joined to the same point, that is still a single edge), and the
+edge between them is gone.</li>
+<li><b>Delete an edge:</b> the edge is removed; its points stay.</li>
+<li><b>Delete a point:</b> the point is removed together with all the edges
+that end in it.</li>
+</ul>
+<p>Moving a point to another place is not a move in this sense: it changes
+nothing about the graph, and you can use it as often as you like to make the
+picture clearer (it can be undone, like everything else).</p>
+<p>Every game can be solved from the beginning. A way to think about it: every
+red point stands for a group of blue points that hang together. Contract the
+edges inside each group until the group is a single point; delete the points
+that belong to no group, and the edges that the small graph does not have. The
+groups have to be chosen so that two of them are joined by an edge whenever the
+two red points are.</p>
+<p>It is easy to get stuck by deleting something that was needed, or by
+contracting an edge that should not have been contracted. <em>Show next
+step</em> (see below) tells you if the position that you are in cannot be
+solved any more, and then you have to undo some moves.</p>
+<h2 id="minorfinder-picture">What you see</h2>
+<p>The small graph (the minor) is drawn in a square of its own, above the big
+graph or beside it, as you like (see the preferences). The big graph is
+the one that you play with. The status bar tells you how many points and edges
+the big graph has now and how many it has to get down to, for example
+&ldquo;Points: 9 (need 4)&nbsp;&nbsp;&nbsp;Edges: 14 (need 5)&rdquo;. (Both
+numbers being right does not mean that you have won: the points have to be
+joined in the right way, too.) When the puzzle is solved the board flashes and
+the status bar says <em>COMPLETED!</em>; if the game was solved for you, it says
+<em>Auto-solved</em>.</p>
+<p>While you are playing, some things are coloured:</p>
+<ul>
+<li>a <b>green</b> point is the one that you are holding or have tapped;</li>
+<li>when a point has been tapped, its neighbours are marked by a light blue
+halo: those are the points that it can be merged into;</li>
+<li>a point that you are dragging over one of its neighbours makes that
+neighbour bigger: let go, and the two are merged;</li>
+<li>a point or an edge that is going to be deleted when you let go is
+<b>orange</b> (with a point, all of its edges turn orange too).</li>
+</ul>
+<h2 id="minorfinder-controls">Controls</h2>
+<p>The puzzle is played with the finger or the mouse; there is no keyboard
+control.</p>
+<ul>
+<li><b>Move a point:</b> drag it where you want it. (A very short drag
+counts as a tap, below.) A point can not be put on top of another point or
+into the border of the board; if you let go there nothing happens.</li>
+<li><b>Contract an edge:</b> either drag one of its points on to the other one
+(the point that you drop on gets bigger to show that the two will be merged;
+the point that you drag goes into it), or tap one of the two points and then the
+other (the first one goes into the second one).</li>
+<li><b>Delete a point or an edge:</b> press and hold on it (with a mouse: press
+the right button). The point or edge turns orange; let go while the finger or
+the pointer is still on it to delete it, or slide away from it before you let
+go to leave it alone. If a point and an edge are both near, the point wins.</li>
+<li><b>Let go of a selection:</b> tap the point that you tapped before, or
+tap beside all the points. Tapping another point that is not a neighbour of
+the one that you tapped moves the selection to the new point.</li>
+<li>Dragging off the screen cancels the drag.</li>
+</ul>
+<p>The points are easy to hit with a finger: you do not have to be exactly on
+the point. Edges are not as easy, and a long press next to a crowd of lines
+may pick a different edge than the one that you meant: the orange edge shows
+which one it is before anything is deleted.</p>
+<h2 id="minorfinder-solve">Show next step, Solve</h2>
+<p><em>Show next step</em> works out a way to the small graph from the position
+on the screen and makes its first move for you: first it deletes the points that
+no group needs, then it contracts the edges inside the groups, then it deletes
+the edges that are too many. It is an ordinary move, which you can undo; you can
+press the button again and again to be led to the end. If you play a move of
+your own meanwhile, the next step is worked out for the new position.</p>
+<p><em>Solve</em> makes all of the moves at once and also puts the points that
+are left on the places of the points of the small graph; <em>Undo</em> takes it
+all back in one step.</p>
+<p>The solver is exact: if there is a way from the position on the screen it
+finds one (it does not take your own earlier choices into account, only the
+graph that you have now), and if there is none, it says so: &ldquo;This position
+cannot be solved; undo some moves&rdquo;. A search for a way is given a generous
+limit of effort; in a rare, very hard position it may run out of it and say
+&ldquo;No solution was found in time&rdquo;. Undoing a few moves, or making a few
+that you are sure about (contract an edge, delete a point that is no use),
+makes the search easier.</p>
+<h2 id="minorfinder-parameters">Minor Finder parameters</h2>
+<p>These parameters are available from the &lsquo;Custom&hellip;&rsquo;
+option on the &lsquo;Type&rsquo; menu.</p>
+<dl>
+    <dt>Minor</dt>
+    <dd>&ldquo;Random graph&rdquo; (the default): the small graph is a
+        connected graph chosen at random. &ldquo;K5 or K3,3&rdquo;: the small
+        graph is the complete graph on five points (K5) or the complete
+        bipartite graph on three plus three points (K3,3). A graph can be
+        drawn on a flat sheet without crossing lines exactly when it has
+        neither of these two as a minor (Wagner&rsquo;s theorem), so in these
+        games you are showing, move by move, that the big graph cannot be
+        drawn without crossings.</dd>
+    <dt>Points of the big graph</dt>
+    <dd>From 15 to 23 (from 19 to 23 for K5 and K3,3). More points, more
+        edges and more to choose from.</dd>
+    <dt>Points of the minor</dt>
+    <dd>From 4 to 6. With K5 or K3,3 it has to be 5 for the K5 and 6 for the
+        K3,3.</dd>
+</dl>
+<p>The presets are the big graph with 15 points and a minor with 4, 19 and 5,
+23 and 6, and the two with K5 (19 points) and K3,3 (23 points).</p>
+<p>The games are made by constructing the big graph around the small one, so
+that a way always exists; the generator also checks the finished game with the
+solver, to be sure.</p>
+<h2 id="minorfinder-preferences">Minor Finder preferences</h2>
+<dl>
+    <dt>Position of the minor</dt>
+    <dd>&ldquo;Above the big graph&rdquo; (the default, good for a phone held
+        upright) or &ldquo;Beside the big graph&rdquo; (good for a wide
+        screen). In both cases the big graph is as large as the screen
+        allows.</dd>
+</dl>
+
+<h2 id="status">Status</h2>
+<p>This puzzle is playable. The game, and the way that its games are
+generated, are by Samuel Holderbach (&ldquo;Minorensucher&rdquo;, from his
+bachelor thesis). In this app there is also an exact solver for <em>Show next
+step</em> and <em>Solve</em>, a generator that checks that every game can be
+solved (and that no longer fails for numbers of points that are a multiple of
+the size of the minor), a complete check of the game description and of every
+move, touch controls (tapping two points, long press to delete, big targets),
+a status line and the choice of where the minor is shown.</p>
+
+</body>
+</html>
