@@ -111,7 +111,7 @@ Seismic (`extras-unreleased/seismic.c`) keeps the generator of the original game
 
 ## Games that were looked at and not added
 
-The files of every branch (1354) of the 456 forks and ports of the puzzle collection that could be found on GitHub were searched for games that are neither in upstream nor in this app. What turned up:
+The files of every branch (1685 branches) of the 603 forks and ports of the puzzle collection that a GitHub search turned up (19 Nov 2026) were searched for games that are neither in upstream nor in this app. What turned up:
 
 | Game | Where | Why it is not in the app |
 |---|---|---|
