@@ -5,12 +5,12 @@
 #        compiles <src.c> (the game, with -DCOMBINED so that "thegame" is called <game>) and
 #        links it with <test.c> and the core into b/<out>
 # ASAN=1 uses the sanitizers (objects in o_asan/, binaries get the suffix _asan).
-J=${JNI:-/home/claude/sgtpuzzles/app/src/main/jni}
-H=/home/claude/work/scratch
-JV=/usr/lib/jvm/java-21-openjdk-amd64/include
+H=${H:-$(cd "$(dirname "$0")" && pwd)}
+J=${JNI:-$H/../app/src/main/jni}   # the checkout of the app (set JNI if this directory is somewhere else)
+JV=${JV:-/usr/lib/jvm/java-21-openjdk-amd64/include}   # jni.h, for android.c-free builds
 D="-DANDROID -DCOMBINED -DSMALL_SCREEN -DSTYLUS_BASED -DNO_PRINTING -DVIVID_COLOURS"
 if [ -n "$ASAN" ]; then OPT="-fsanitize=address,undefined -fno-omit-frame-pointer -g -O1"; OD=$H/o_asan; SUF=_asan; else OPT="-g -O2"; OD=$H/o; SUF=""; fi
-mkdir -p $OD
+mkdir -p $OD $H/b
 CORE="random malloc misc drawing tree234 sort midend dsf findloop combi"
 cmd=$1; shift
 case $cmd in

@@ -84,6 +84,7 @@ int main(int argc, char **argv)
                 t0 = now();
                 e = midend_solve(me);
                 tsolve += now() - t0;
+                midend_stop_anim(me);   /* midend_free does not free the old state of a pending animation */
                 if (e) { nsolvefail++; printf("%s: Solve: %s\n", idbuf, e); }
                 else if (midend_status(me) != 1) { nsolvefail++; printf("%s: Solve did not complete the game (status %d)\n", idbuf, midend_status(me)); }
             }
