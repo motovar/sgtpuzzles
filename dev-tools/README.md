@@ -12,6 +12,10 @@ with Pillow for the icons).
 * `tests/smoke.c` - plays each preset and a number of seeds with the hint until the game is solved, also tries Solve.
 * `tests/evfuzz.c` - random key/mouse/undo/redo/restart/serialise/new game events (use with ASAN; the leak in
   `newgame_undo_deserialise_check` of the midend is in `lsan.supp`).
+* `tests/orient.c` - does the parameter string of every preset survive the automatic orientation of the app
+  (`GamePlay.orientGameType` swaps `<number>x<number>` when the screen has the other orientation)? Build it as
+  the game file's test (`nb.sh prog <game> <game.c> tests/orient.c orient_<game>`, without `-include extras-quiet.h`,
+  which silences `printf`); `orient -x` is for the one game that is exempt (Decanting, `BackendName.isNotWidthByHeight`).
 * `tests/bintest.c`, `tests/moscotest.c` (+ `moscosa*.c`, `moscoexp.c`), `tests/dectest.c` - white-box tests of Binary,
   Mosco and Decanting: they `#include` the game source (build with `tests/empty.c` as the game file and
   `-I<game directory>`). `dectest <scale> [mode]` compares the Decanting solver with an exhaustive search, replays
