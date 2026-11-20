@@ -576,6 +576,7 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
     private fun orientGameType(backendName: BackendName?, type: String): String {
         if (!prefs.getBoolean(AUTO_ORIENT, AUTO_ORIENT_DEFAULT)
             || backendName === SOLO  // Solo is square whatever happens so no point
+            || backendName?.isNotWidthByHeight == true  // e.g. Decanting "9x4w7" is tubes x layers
         ) {
             return type
         }

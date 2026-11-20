@@ -43,6 +43,18 @@ sealed class BackendName(
     }
 
     /**
+     * Does the parameter string of this game only look like "WxH..." without being a width and a
+     * height? The automatic swap of the two numbers to fit the orientation of the screen
+     * (GamePlay.orientGameType) must leave such a game alone.
+     *
+     * Decanting is "<tubes>x<layers>w<colours>", for example 9x4w7: turned round in portrait it
+     * would be 4 tubes with 9 layers each, which is not allowed ("Layers must be at most 8"),
+     * and 14x5w12 would become 5 tubes for 12 colours. The tubes of Decanting wrap into several
+     * rows by themselves, so no turning is needed.
+     */
+    val isNotWidthByHeight by lazy { this == DECANTING }
+
+    /**
      * Is this a Latin-square puzzle? Currently only affects whether to offer
      * a preference that hides the "M" button that inserts all pencil marks.
      */
