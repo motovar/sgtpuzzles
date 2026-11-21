@@ -131,7 +131,7 @@ sealed class BackendName(
      */
     val nightKeepColours: Set<Int> by lazy {
         mapOf<BackendName, Set<Int>>(
-            BINARY to (6..22).toSet(),
+            BINARY to (4..67).toSet(),  // everything but the page, the board, the hollows and the text: numbers, tiles (those of Threes too), their veiled copies, the glow
             DECANTING to (3..17).toSet(),
             MINORFINDER to setOf(3, 4, 5, 6, 7, 10),
             UNDEAD_PLUS to setOf(6, 7, 8, 10, 11),

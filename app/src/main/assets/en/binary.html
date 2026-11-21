@@ -10,18 +10,30 @@
 <body>
 <p><a href="index.html">Contents</a></p>
 <h1 id="binary">Binary</h1>
-<p>A sliding game with numbered tiles that is better known as
-&ldquo;2048&rdquo;. The board holds tiles that carry powers of two: 2, 4, 8,
-16 and so on. Every move slides <em>all</em> the tiles as far as they will go
-in one of the four directions. When two tiles with the same number run into
-each other they merge into one tile with the sum of the two (2 and 2 make 4,
-4 and 4 make 8, and so on), and after every move a new tile &ndash; a 2, and
-now and then a 4 &ndash; turns up on a random empty square.</p>
+<p>Binary is a sliding game with numbered tiles. It has two sets of rules:
+&ldquo;2048&rdquo;, the game that it is best known as, and &ldquo;Threes&rdquo;,
+the game that 2048 was made after. You choose the rules, and for 2048 the goal,
+under <em>Type</em>; the presets are listed below.</p>
+<h2 id="binary-2048">2048</h2>
+<p>The board holds tiles that carry powers of two: 2, 4, 8, 16 and so on. Every
+move slides <em>all</em> the tiles as far as they will go in one of the four
+directions. When two tiles with the same number run into each other they merge
+into one tile with the sum of the two (2 and 2 make 4, 4 and 4 make 8, and so
+on), and after every move a new tile &ndash; a 2, and now and then a 4 &ndash;
+turns up on a random empty square. The numbers are generated as the original
+game does it: two tiles at the start, then after every move that changed the
+board one tile that is a 2 nine times in ten and a 4 the tenth time, on an empty
+square that is picked at random (every empty square is as likely as the
+others).</p>
 <p>Your objective is to make a tile with the <em>goal</em> number, which is
 2048 unless you choose another goal. When you have done that you can go on
 playing to build even bigger tiles; the game is over when the board is full
 and no two neighbouring tiles are equal, so that no move is left.</p>
-<h2 id="binary-rules">The details of a move</h2>
+<p>With the goal <em>Endless</em> there is nothing to win: you play for as long
+as you can and for as many points as you can, until no move is left. (The
+biggest tile there can be is 131072, and the game is over when one has been
+made.)</p>
+<h3 id="binary-details">The details of a move</h3>
 <ul>
 <li>A tile that has been made by a merge does not merge again in the same
 move: a row of 2 2 4 8 slid to the left gives 4 4 8, not 16.</li>
@@ -34,21 +46,72 @@ one.</li>
 numbers it needs, so if you undo a move and play the same move again, the same
 tile turns up on the same square.</li>
 </ul>
+<h2 id="binary-threes">Threes</h2>
+<p>The tiles are 1 (blue), 2 (red) and then the white ones: 3, 6, 12, 24 and so
+on, each one the double of the one before. A move does not send the tiles as
+far as they will go but pushes them <em>one square</em> in the direction that
+you slide. A tile moves into an empty square, or on to a tile that it can merge
+with:</p>
+<ul>
+<li>a 1 and a 2 merge into a 3, and</li>
+<li>two equal tiles of 3 or more merge into one with the double number (3 and 3
+make 6, 6 and 6 make 12 and so on).</li>
+</ul>
+<p>Two 1s or two 2s do not merge, and neither do tiles that are different
+otherwise. In a row (or column) that moves, the tiles that are behind the first
+tile that can move or merge all move one square together with it; a row where
+nothing can move or merge stays as it is. So a row 3 3 3 3 slid to the left
+gives 6 3 3 and an empty square at the end, and a row with a gap, such as
+&ndash; 3 3 &ndash;, only closes the gap (3 3 &ndash; &ndash;) and the two 3s
+merge with the next move.</p>
+<p>The game starts with nine tiles on the board. After every move that changes the board a new tile comes in at the far end
+of one of the rows (or columns) that have moved, a row picked at random. The strip above the board
+shows what the next tile will be: a blue 1, a red 2, a white 3, or a
+<em>+</em> for a bonus tile. The new tiles come out of a bag with four 1s, four
+2s and four 3s, so that you get as many of the three kinds as you need over a
+time; when the bag is empty it is filled again. When the biggest tile is 48 or
+more, now and then (one time in 21) the next tile is a bonus tile instead, a
+white tile with a number from 6 up to an eighth of the biggest tile.</p>
+<p>There is no goal in Threes: you play on until no move is left. The score is
+the one of the real game: a tile of 3 or more is worth 3 to the power of the
+number of times it has been doubled plus one, which is 3 points for a 3, 9 for a
+6, 27 for a 12, 81 for a 24 and so on; the 1s and 2s are worth nothing. The
+status bar shows the score and the biggest tile.</p>
 <h2 id="binary-picture">What you see</h2>
-<p>Every number has its own colour: pale tiles for 2 and 4, orange and red
-for 8 to 64, golden yellow for 128 to 2048, and green, teal, blue and purple
-for the tiles beyond that. Squares without a tile are shown as faint slots (or
-in the style that you choose under <em>Game background</em>, see below).</p>
-<p>The status bar shows the goal and your score. The score goes up by the
-number of every tile that a merge makes. <em>WON!</em> is added when the goal
-tile has been made and <em>NO MORE MOVES</em> when the game is over; the tiles
-of a game that is over turn grey.</p>
+<p>The two games look like the games that they are made after.</p>
+<p><strong>2048</strong> is on the cream page of the original, on a brown board
+with rounded corners and squares for the tiles. The tiles have the colours of
+the original: pale for 2 and 4, orange and red for 8 to 64, and yellow for 128 to
+2048, where the tiles from 128 on glow with a blue haze that gets stronger up to
+2048; all the tiles beyond 2048 are dark. A game that is over is covered by a
+milky veil, as in the original. Squares without a tile are shown as faint
+squares (or in the style that you choose under <em>Game background</em>, see
+below).</p>
+<p><strong>Threes</strong> has upright cards with round corners and a darker edge
+below, on a light blue screen: the 1 is blue, the 2 is red and all the other
+tiles are white. The empty places are darker hollows, and above the board a small
+card shows the tile that comes next (blue, red or white, with a <em>+</em> for a
+bonus tile). The cards of the real game also have faces, which are the artwork of
+that game and are not drawn here; the numbers tell the tiles apart.</p>
+<p>The status bar shows the goal (or <em>Endless</em>, or <em>Threes</em>), your
+score and, in the games without a goal, the biggest tile. The score of 2048 goes
+up by the number of every tile that a merge makes. <em>WON!</em> is added when
+the goal tile has been made and <em>NO MORE MOVES</em> when the game is over.</p>
+<h3 id="binary-animation">Animation</h3>
+<p>In 2048 the tiles slide to their new squares in a tenth of a second; then the
+tile that a merge has made pops up over the two that have merged, and the new tile
+grows where it turns up &ndash; the timing and the curves of the original page. In Threes all the
+tiles of the rows that move slide one square, and the new card slides in from
+beyond the edge, together, in a fifth of a second. Undo and redo run the
+same movement backwards and forwards. You can make it faster, or turn it off,
+with the preference <em>Animation</em>; a move that you make while the picture
+is still moving takes over at once.</p>
 <h2 id="binary-controls">Controls</h2>
 <p>There are two ways to move the tiles with your finger. You choose the one
 you prefer in the preferences (<em>Input method</em>):</p>
 <ul>
 <li><strong>Swipe</strong> (the default): drag your finger across the board,
-about half a tile or more, mainly up, down, left or right. All the tiles slide
+about half a tile or more, mainly up, down, left or right. All the tiles move
 that way when you lift your finger. A short or diagonal drag does nothing,
 so you can change your mind by going back to where you started.</li>
 <li><strong>Tap</strong>: the two diagonals of the board divide it into four
@@ -56,30 +119,44 @@ triangles, one at every side. A tap on the triangle that is at the top slides
 the tiles up; the triangles on the left, right and bottom work the same way.
 </li>
 </ul>
-<p>The arrow buttons of the app and the cursor keys of a keyboard slide the
+<p>The arrow buttons of the app and the cursor keys of a keyboard move the
 tiles, too.</p>
 <h2 id="binary-solve">Show next step</h2>
 <p>There is no way to &ldquo;solve&rdquo; a game of this kind, as nobody knows
 what tiles turn up. <em>Show next step</em> looks ahead instead: it works out
 the four moves, the new tiles that may turn up after each of them and the
-moves after that, rates the boards that can come out of that (by the number
-of free squares, the tiles that can merge and how orderly the rows and
-columns are) and plays the move that is best on average. The move is an
-ordinary one, so you can undo it. On the normal sizes the hint plays a game
-through to the goal; it tells you when there is no move left.</p>
+moves after that, rates the boards that can come out of that and plays the move
+that is best on average. The move is an ordinary one, so you can undo it. It
+tells you when there is no move left.</p>
+<ul>
+<li>In 2048 the boards are rated by the number of free squares, the tiles that
+can merge and how orderly the rows and columns are. On the normal sizes the hint
+plays a game through to the goal.</li>
+<li>In Threes it knows the tile that is shown as the next one, and takes the
+tiles after that to be a 1, a 2 or a 3 with the same chance. It rates the boards
+by the free squares, the pairs of neighbours that can merge, how orderly the
+lines are and the number of 1s and 2s, which are in the way until a 1 and a 2
+meet. Playing a 4x4 board on it, it lasts several hundred moves and makes
+tiles of 384 and more, where moves at random end after fewer than fifty.</li>
+</ul>
 <h2 id="binary-parameters">Binary parameters</h2>
 <p>These parameters are available from the &lsquo;Custom&hellip;&rsquo;
 option on the &lsquo;Type&rsquo; menu.</p>
 <dl>
     <dt>Width, Height</dt>
-    <dd>Size of the board in squares: from 2 to 9 in both directions. The
-        presets are 4x4 with the goal 512, 4x4, 5x5 and 6x6 with the goal 2048.</dd>
+    <dd>Size of the board in squares: from 2 to 9 in both directions.</dd>
+    <dt>Rules</dt>
+    <dd>2048 or Threes, as described above.</dd>
     <dt>Goal</dt>
-    <dd>The number that you have to make: 32, 64, 128, 256, 512, 1024, 2048,
-        4096 or 8192. Choose a goal that suits the size of the board: on a very
-        small board a high goal cannot be reached, and the game ends with no
-        move left.</dd>
+    <dd>For 2048, the number that you have to make: 32, 64, 128, 256, 512, 1024,
+        2048, 4096 or 8192, or <em>Endless</em> for no goal. Choose a goal that
+        suits the size of the board: on a very small board a high goal cannot be
+        reached, and the game ends with no move left. Threes has no goal, so
+        what you choose here does not matter for it.</dd>
 </dl>
+<p>The presets are 4x4 with the goal 512, and 4x4, 5x5 and 6x6 with the goal
+2048; 4x4 and 5x5 Endless; and Threes on a 4x4 and on a 5x5 board. (The real
+Threes is played on 4x4.)</p>
 <h2 id="binary-preferences">Binary preferences</h2>
 <dl>
     <dt>Game background</dt>
@@ -87,14 +164,20 @@ option on the &lsquo;Type&rsquo; menu.</p>
         empty squares, a chessboard or a grid of lines.</dd>
     <dt>Input method</dt>
     <dd>Swipe or Tap, as described above.</dd>
+    <dt>Animation</dt>
+    <dd>Normal (the default), Fast or Off.</dd>
 </dl>
 
 <h2 id="status">Status</h2>
-<p>This puzzle is playable. It is the game &ldquo;2048&rdquo; by Gabriele
-Cirulli; this implementation comes from the collection PocketPuzzles by Steffen
-Bauer. In this app the tiles merge once per move, as in the game that it is
-modelled on (the first version of the code let a merge go on in a chain), and
-there is a hint.</p>
+<p>This puzzle is playable. 2048 is the game by Gabriele Cirulli; this
+implementation comes from the collection PocketPuzzles by Steffen Bauer. In this
+app the tiles merge once per move, as in the game that it is modelled on (the
+first version of the code let a merge go on in a chain), the numbers are
+generated and the game looks and moves like the original, and there is a hint,
+the goal Endless and the rules of Threes (the game by Asher Vollmer, Greg
+Wohlwend and Jimmy Hinson; this is a version of its rules written for this app,
+with the bag, the bonus tiles and the score as players have worked them out of
+the real game, and its colours and shapes but not its artwork).</p>
 
 </body>
 </html>
