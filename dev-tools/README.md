@@ -18,10 +18,14 @@ with Pillow for the icons).
   which silences `printf`); `orient -x` is for the one game that is exempt (Decanting, `BackendName.isNotWidthByHeight`).
 * `tests/bintest.c`, `tests/moscotest.c` (+ `moscosa*.c`, `moscoexp.c`), `tests/dectest.c` - white-box tests of Binary,
   Mosco and Decanting: they `#include` the game source (build with `tests/empty.c` as the game file and
-  `-I<game directory>`). `dectest <scale> [mode]` compares the Decanting solver with an exhaustive search, replays
+  `-I<game directory>`). `bintest <n> unit` also checks the geometry of the picture at every tile size and, with a
+  drawing API that records what is drawn, that nothing is drawn beyond the picture (or beyond the clip) in any step
+  of any animation, forwards and backwards, for both sets of rules and all backgrounds. `dectest <scale> [mode]` compares the Decanting solver with an exhaustive search, replays
   backward scrambles, fuzzes descriptions and moves, and checks generator and hint times.
 * `m3dtest/` - wall symmetry / reachability test for the Maze 3D generator.
-* `icons/icontool.c` + `icons/render.py` - records what a game draws and renders the day and night icons.
+* `icons/icontool.c` + `icons/render.py` - records what a game draws and renders the day and night icons;
+  `icons/frame.py` renders the whole last frame (any shape, clips honoured, `--strip` puts several side by side,
+  `--night --keep <colour indices>`), to look at a game at a point of an animation (`... key:523 timer:0.1`).
 * Minor Finder (`tests/mf*.c`; they `#include` the game, so build them with `tests/empty.c` as the game file and
   `-I<app>/app/src/main/jni/extras-holderbach`; `JNI=<app>/app/src/main/jni` if this directory is not inside the app):
   - `mftest` - graph operations against a plain adjacency matrix, the solver against brute force over all
