@@ -53,8 +53,22 @@ int main(int argc, char **argv)
     long total = 0;
 
     flatten(midend_get_presets(me, &limit));
+    /* EVPARAMS="9x4w7,40x4w45h" fuzzes these parameters instead of the presets */
+    if (getenv("EVPARAMS")) {
+        char *copy = strdup(getenv("EVPARAMS")), *tok = copy, *comma;
+        nents = 0;
+        while (tok && *tok) {
+            comma = strchr(tok, ',');
+            if (comma) *comma = 0;
+            ents[nents].title = strdup(tok);
+            ents[nents].params = NULL;
+            nents++;
+            tok = comma ? comma + 1 : NULL;
+        }
+        free(copy);
+    }
     for (id = 0; id < nents; id++) {
-        char *pstr = g->encode_params(ents[id].params, true);
+        char *pstr = ents[id].params ? g->encode_params(ents[id].params, true) : dupstr(ents[id].title);
         int s;
         for (s = 0; s < nseeds; s++) {
             char idbuf[400];
