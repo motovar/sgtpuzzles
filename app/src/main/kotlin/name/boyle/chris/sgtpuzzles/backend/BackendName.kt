@@ -129,10 +129,14 @@ sealed class BackendName(
      * (monsters, ships, planets, balls...). These keep their own hues at night instead of being
      * inverted like the grid, lines and text.
      */
+    fun keepsNightColour(index: Int): Boolean =
+        // Decanting has as many colours of liquid as the game has colours, so it is "all of them from the
+        // third one on" (the hidden layer, the labels and the liquids), not a fixed list.
+        if (this == DECANTING) index >= 3 else index in nightKeepColours
+
     val nightKeepColours: Set<Int> by lazy {
         mapOf<BackendName, Set<Int>>(
             BINARY to (4..67).toSet(),  // everything but the page, the board, the hollows and the text: numbers, tiles (those of Threes too), their veiled copies, the glow
-            DECANTING to (3..17).toSet(),
             MINORFINDER to setOf(3, 4, 5, 6, 7, 10),
             UNDEAD_PLUS to setOf(6, 7, 8, 10, 11),
             MAZE3D to setOf(3, 4, 5),

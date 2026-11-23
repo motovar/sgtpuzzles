@@ -87,28 +87,57 @@ are told so, and you have to undo some moves yourself.</p>
 option on the &lsquo;Type&rsquo; menu.</p>
 <dl>
     <dt>Colours</dt>
-    <dd>The number of colours: from 2 to 12.</dd>
+    <dd>The number of colours: at least 2, and there is no upper limit in the
+        game. The first twelve colours are chosen to be easy to tell apart;
+        further colours are made up from their number (use the labels, see
+        below, in games with a lot of them).</dd>
     <dt>Tubes</dt>
-    <dd>The number of tubes: at most 16, and more than there are colours. The
-        tubes that are not needed to hold the colours start empty: they are
-        the room that you have to work with. The fewer of them there are,
-        the harder the game is: with just one empty tube it is easy to make
-        a move after which the game cannot be finished any more.</dd>
+    <dd>The number of tubes: more than there are colours. The tubes that are
+        not needed to hold the colours start empty: they are the room that you
+        have to work with. The fewer of them there are, the harder the game
+        is: with just one empty tube it is easy to make a move after which the
+        game cannot be finished any more. Up to 5 tubes stand in a row, up to
+        16 in two rows, and more of them in as many rows as make the picture
+        about as high as it is wide.</dd>
     <dt>Layers</dt>
-    <dd>How many layers a tube holds: from 2 to 8. Every colour has exactly as
+    <dd>How many layers a tube holds: at least 2. Every colour has exactly as
         many layers as that, so a colour fills a tube.</dd>
     <dt>Hide the layers below the top</dt>
     <dd>Switches on the hidden layers that are described above.</dd>
+    <dt>Difficulty</dt>
+    <dd>Easy, Normal or Hard; see below.</dd>
 </dl>
 <p>The presets are 4 colours in 6 tubes, 7 colours in 9 tubes and 10 colours in
-12 tubes (all of them with four layers per tube and two empty tubes), 12 colours
-in 14 tubes of 5 layers, a harder game with 7 colours in 8 tubes (a single empty
-tube), and 7 colours in 9 tubes with hidden layers.</p>
+12 tubes, each of them at the three levels of difficulty (with four layers per
+tube and two empty tubes), 12 colours in 14 tubes of 5 layers, a harder game
+with 7 colours in 8 tubes (a single empty tube), and 7 colours in 9 tubes with
+hidden layers.</p>
+<h3 id="decanting-levels">Levels of difficulty</h3>
+<p>A game is harder the more has to be poured, and the more of it is a detour
+that does not look like progress. The generator deals a number of games that
+the solver can finish (up to 48 of them, fewer in a game that is so big that
+the search takes long), measures how much work the solver had to do for each of
+them, and keeps one: the game that was the least work for <em>Easy</em>, one in
+the middle for <em>Normal</em> and the game that was the most work for
+<em>Hard</em>. An easy game can be played by always doing the obvious
+thing; in a hard one you have to plan, and some of the pours that look
+good lead into a corner. The levels are measured against the games of the same
+size: a small game is not very hard even at the Hard level, but it is
+harder than the same game at Easy.</p>
 <p>The layers are dealt out at random, and only games that can be finished are
-kept. Where it takes too long to find out whether a game that has been dealt out
-can be finished (few empty tubes, many layers), the game is made by scrambling a
-finished one with pours that run backwards. Such a game can always be finished,
-too; it tends to be a little shorter.</p>
+kept. Where the search cannot tell whether a game that has been dealt out can
+be finished (few empty tubes, many layers, or very many tubes), the game is made
+by scrambling a finished one with pours that run backwards (a little for Easy,
+more for the others, and the one with the most pours to do out of five for
+Hard). Such a game can always be finished, too, and the pours that undo the
+scrambling are what <em>Solve</em> shows if the solver cannot find a way of
+its own.</p>
+<p>There is no limit to the size of a game other than the memory and the time:
+the solver looks at as many positions as fit in a fixed amount of memory and
+time (fewer where each position is big), so in a game that is too big for that
+<em>Show next step</em> may say that no solution was found in time.
+Generating a big game takes longer (a few seconds for 40 colours; the search is
+there to find a game worth keeping).</p>
 <h2 id="decanting-preferences">Decanting preferences</h2>
 <dl>
     <dt>Labels on the layers</dt>
@@ -120,9 +149,10 @@ too; it tends to be a little shorter.</p>
 <p>This puzzle is playable. The idea and the first version of the game (the
 tubes, the selection and the pouring) are by Lalo Martins, from his fork of the
 puzzle collection. In this app there is also a game generator that makes sure
-that games can be finished, a solver for <em>Show next step</em> and
-<em>Solve</em>, hidden layers, a complete check of the game description and of
-every move, a count of the moves, labels on the layers, and the cursor keys.</p>
+that games can be finished, three levels of difficulty, any number of colours,
+tubes and layers, a solver for <em>Show next step</em> and <em>Solve</em>,
+hidden layers, a complete check of the game description and of every move, a
+count of the moves, labels on the layers, and the cursor keys.</p>
 
 </body>
 </html>
