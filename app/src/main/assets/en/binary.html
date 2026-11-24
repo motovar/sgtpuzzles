@@ -31,8 +31,9 @@ playing to build even bigger tiles; the game is over when the board is full
 and no two neighbouring tiles are equal, so that no move is left.</p>
 <p>With the goal <em>Endless</em> there is nothing to win: you play for as long
 as you can and for as many points as you can, until no move is left. (The
-biggest tile there can be is 131072, and the game is over when one has been
-made.)</p>
+biggest tile there can be is 1073741824, that is 2<sup>30</sup>, the greatest
+power of two that the numbers of the program hold; it takes nearly half a
+billion moves to make one, and the game is over when it has been made.)</p>
 <h3 id="binary-details">The details of a move</h3>
 <ul>
 <li>A tile that has been made by a merge does not merge again in the same
@@ -98,11 +99,15 @@ score and, in the games without a goal, the biggest tile. The score of 2048 goes
 up by the number of every tile that a merge makes. <em>WON!</em> is added when
 the goal tile has been made and <em>NO MORE MOVES</em> when the game is over.</p>
 <h3 id="binary-animation">Animation</h3>
-<p>In 2048 the tiles slide to their new squares in a tenth of a second; then the
+<p>In 2048 the tiles slide to their new squares in a seventh of a second (they
+start at once and slow down at the end, as a tile that you have swiped); then the
 tile that a merge has made pops up over the two that have merged, and the new tile
-grows where it turns up &ndash; the timing and the curves of the original page. In Threes all the
+grows where it turns up &ndash; as the original page does it, but a little slower
+in the slide, as the screen of a phone gets fewer pictures a second than a
+browser and a quick slide looks jerky there. In Threes all the
 tiles of the rows that move slide one square, and the new card slides in from
-beyond the edge, together, in a fifth of a second. Undo and redo run the
+beyond the edge, together, in a little over a fifth of a second; the two cards
+of a merge become one card shortly before they have met. Undo and redo run the
 same movement backwards and forwards. You can make it faster, or turn it off,
 with the preference <em>Animation</em>; a move that you make while the picture
 is still moving takes over at once.</p>
@@ -144,12 +149,17 @@ tiles of 384 and more, where moves at random end after fewer than fifty.</li>
 option on the &lsquo;Type&rsquo; menu.</p>
 <dl>
     <dt>Width, Height</dt>
-    <dd>Size of the board in squares: from 2 to 9 in both directions.</dd>
+    <dd>Size of the board in squares: from 2 upwards in both directions, with
+        no limit but the memory (4096 by 4096 is the biggest board, 16 million
+        squares). The squares of a big board are small on the screen, and a hint
+        on a very big board looks fewer moves ahead, so that you do not wait
+        for it.</dd>
     <dt>Rules</dt>
     <dd>2048 or Threes, as described above.</dd>
     <dt>Goal</dt>
-    <dd>For 2048, the number that you have to make: 32, 64, 128, 256, 512, 1024,
-        2048, 4096 or 8192, or <em>Endless</em> for no goal. Choose a goal that
+    <dd>For 2048, the number that you have to make: any power of two from 32
+        (32, 64, 128, ... 2048, 4096, 8192, 16384 and on) up to 1073741824, or
+        <em>Endless</em> for no goal. Choose a goal that
         suits the size of the board: on a very small board a high goal cannot be
         reached, and the game ends with no move left. Threes has no goal, so
         what you choose here does not matter for it.</dd>

@@ -80,15 +80,26 @@
 #include <string.h>
 #include <assert.h>
 #include <ctype.h>
+#include <limits.h>
 #include <math.h>
 
 #include "puzzles.h"
 
 #define PREFERRED_TILE_SIZE 48
 
-#define MAX_SIZE 9
-#define MAX_CELLS (MAX_SIZE * MAX_SIZE)
-#define MAXPOWER 17                    /* the biggest tile is 2^17 = 131072 */
+/*
+ * There is no limit to the size of the board other than the memory (a guard
+ * against sizes that could not be held at all), and the biggest tile is
+ * 2^30 = 1073741824, the greatest power of two that an int holds: to make
+ * one takes half a billion moves.  (The sketch had boards of at most 9 by 9
+ * and tiles up to 2^17, all that a board of 16 squares can hold.)
+ */
+#define SCORE_MAX 2000000000           /* the score stays here (it does not wrap round) */
+#define MAX_SQUARES (1 << 24)          /* the squares of the biggest board that can be held */
+#define MAXPOWER 30
+#define NTILECOL 17                    /* tiles of 2048 with a colour of their own: 2 to 131072, bigger ones are as dark */
+#define LINE_INLINE 32                 /* lines up to this long are worked on without allocating memory */
+#define CELLS_INLINE 256               /* so are boards up to this big */
 #define RS_DIGITS 122                  /* the length of an encoded random state */
 
 /*
@@ -137,8 +148,8 @@ enum {
     NCOLOURS = COL_GLOW + 10
 };
 
-/* the colour of a tile that carries 2^e (e = 1 ... MAXPOWER) */
-#define COL_TILE(e) (COL_TILE1 + (e) - 1)
+/* the colour of a tile that carries 2^e (e = 1 ... MAXPOWER; the ones over NTILECOL have the last colour) */
+#define COL_TILE(e) (COL_TILE1 + ((e) > NTILECOL ? NTILECOL : (e)) - 1)
 /* the veiled copy of a colour of a tile or of a number */
 #define COL_VEILED(c) ((c) - COL_NUM_DARK + COL_DEAD)
 /* the glow of the big tiles: strength 0 ... 4, ring 0 (inner) or 1 (outer) */
@@ -188,17 +199,40 @@ struct game_params {
     int rules;
 };
 
-#define GOALLIST(A)                             \
-    A(32,32,1)                                  \
-    A(64,64,2)                                  \
-    A(128,128,3)                                \
-    A(256,256,4)                                \
-    A(512,512,5)                                \
-    A(1024,1024,6)                              \
-    A(2048,2048,7)                              \
-    A(4096,4096,8)                              \
-    A(8192,8192,9)                              \
-    A(ENDLESS,Endless,e)                        \
+/*
+ * The goals are the powers of two from 32 to the biggest tile there can be
+ * (the sketch stopped at 8192), and Endless at the end of the list.  The
+ * letters are those of the game IDs: the digits and "e" are as they were,
+ * the new goals have the capital letters from A (16384) to Q (2^30).
+ */
+#define GOALLIST(ENTRY)                             \
+    ENTRY(32,32,1)                                  \
+    ENTRY(64,64,2)                                  \
+    ENTRY(128,128,3)                                \
+    ENTRY(256,256,4)                                \
+    ENTRY(512,512,5)                                \
+    ENTRY(1024,1024,6)                              \
+    ENTRY(2048,2048,7)                              \
+    ENTRY(4096,4096,8)                              \
+    ENTRY(8192,8192,9)                              \
+    ENTRY(16384,16384,A)                            \
+    ENTRY(32768,32768,B)                            \
+    ENTRY(65536,65536,C)                            \
+    ENTRY(131072,131072,D)                          \
+    ENTRY(262144,262144,E)                          \
+    ENTRY(524288,524288,F)                          \
+    ENTRY(1048576,1048576,G)                        \
+    ENTRY(2097152,2097152,H)                        \
+    ENTRY(4194304,4194304,I)                        \
+    ENTRY(8388608,8388608,J)                        \
+    ENTRY(16777216,16777216,K)                      \
+    ENTRY(33554432,33554432,L)                      \
+    ENTRY(67108864,67108864,M)                      \
+    ENTRY(134217728,134217728,N)                    \
+    ENTRY(268435456,268435456,O)                    \
+    ENTRY(536870912,536870912,P)                    \
+    ENTRY(1073741824,1073741824,Q)                  \
+    ENTRY(ENDLESS,Endless,e)                        \
 
 #define MODELIST(A)                             \
     A(RECT,Rectangular, R)                      \
@@ -223,7 +257,10 @@ static const int POWER[MAXPOWER + 1] = {
     16, 32, 64, 128,
     256, 512, 1024, 2048,
     4096, 8192, 16384, 32768,
-    65536, 131072
+    65536, 131072, 262144, 524288,
+    1048576, 2097152, 4194304, 8388608,
+    16777216, 33554432, 67108864, 134217728,
+    268435456, 536870912, 1073741824
 };
 
 /* the exponent that a tile has to reach for a goal (never for "Endless") */
@@ -413,8 +450,8 @@ static game_params *custom_params(const config_item *cfg) {
 static const char *validate_params(const game_params *params, bool full) {
     if (params->w < 2 || params->h < 2)
         return "Width and height must both be at least two";
-    if (params->w > MAX_SIZE || params->h > MAX_SIZE)
-        return "Width and height must both be at most 9";
+    if ((double)params->w * (double)params->h > (double)MAX_SQUARES)
+        return "The board would have more than 16 million squares (the memory)";
     if (params->goal < 0 || params->goal >= GOALCOUNT)
         return "Invalid goal number";
     if (params->rules < 0 || params->rules >= RULESCOUNT)
@@ -449,8 +486,8 @@ static int dir_from_char(char c) {
  * whether it merged there with another tile.
  */
 struct trace {
-    signed char dst[MAX_CELLS];
-    unsigned char join[MAX_CELLS];
+    int *dst;
+    unsigned char *join;
 };
 
 /* the i'th square of line k, counted from the side that the tiles move to */
@@ -465,10 +502,24 @@ static int line_pos(int w, int h, int d, int k, int i) {
 
 static void trace_init(struct trace *tr, int n) {
     int i;
+    tr->dst = snewn(n, int);
+    tr->join = snewn(n, unsigned char);
     for (i = 0; i < n; i++) {
         tr->dst[i] = -1;
         tr->join[i] = 0;
     }
+}
+
+static void trace_free(struct trace *tr) {
+    sfree(tr->dst);
+    sfree(tr->join);
+    tr->dst = NULL;
+    tr->join = NULL;
+}
+
+static int score_add(int score, long long gain) {
+    long long s = (long long)score + gain;
+    return s > SCORE_MAX ? SCORE_MAX : (int)s;
 }
 
 /*
@@ -485,14 +536,20 @@ static bool slide_classic(unsigned char *tiles, int w, int h, int d, int *score,
     int len = horizontal ? w : h;
     bool changed = false;
     int k, i;
+    unsigned char out_s[LINE_INLINE], *out = out_s;
+    bool merged_s[LINE_INLINE], *merged = merged_s;
+    int first_s[LINE_INLINE], *first = first_s;   /* the square that the tile in out[] came from */
+    int pos_s[LINE_INLINE], *pos = pos_s;
 
     if (tr) trace_init(tr, w * h);
+    if (len > LINE_INLINE) {
+        out = snewn(len, unsigned char);
+        merged = snewn(len, bool);
+        first = snewn(len, int);
+        pos = snewn(len, int);
+    }
 
     for (k = 0; k < nlines; k++) {
-        unsigned char out[MAX_SIZE];
-        bool merged[MAX_SIZE];
-        int first[MAX_SIZE];           /* the square that the tile in out[] came from */
-        int pos[MAX_SIZE];
         int n = 0;
 
         for (i = 0; i < len; i++)
@@ -504,7 +561,7 @@ static bool slide_classic(unsigned char *tiles, int w, int h, int d, int *score,
             if (n > 0 && !merged[n-1] && out[n-1] == v && v < MAXPOWER) {
                 out[n-1] = v + 1;
                 merged[n-1] = true;
-                if (score) *score += POWER[v + 1];
+                if (score) *score = score_add(*score, POWER[v + 1]);
                 if (tr) {
                     tr->dst[pos[i]] = pos[n-1];
                     tr->join[pos[i]] = 1;
@@ -526,6 +583,12 @@ static bool slide_classic(unsigned char *tiles, int w, int h, int d, int *score,
                 changed = true;
             }
         }
+    }
+    if (len > LINE_INLINE) {
+        sfree(out);
+        sfree(merged);
+        sfree(first);
+        sfree(pos);
     }
     return changed;
 }
@@ -552,18 +615,22 @@ static int threes_value(int c) {
 }
 
 /* what a tile is worth in the score: 3 to the power of the number of doublings plus one */
-static int threes_points(int c) {
-    int p = 3, i;
+static long long threes_points(int c) {
+    long long p = 3;
+    int i;
     if (c < 3) return 0;
     for (i = 3; i < c; i++) p *= 3;
     return p;
 }
 
 static int threes_score(const unsigned char *tiles, int n) {
-    long s = 0;
+    long long s = 0;
     int i;
-    for (i = 0; i < n; i++) s += threes_points(tiles[i]);
-    return s > 2000000000L ? 2000000000 : (int)s;
+    for (i = 0; i < n; i++) {
+        s += threes_points(tiles[i]);
+        if (s > SCORE_MAX) return SCORE_MAX;
+    }
+    return (int)s;
 }
 
 /*
@@ -582,12 +649,16 @@ static bool slide_threes(unsigned char *tiles, int w, int h, int d, bool *moved,
     int len = horizontal ? w : h;
     bool changed = false;
     int k, i;
+    unsigned char src_s[LINE_INLINE], *src = src_s;
+    int pos_s[LINE_INLINE], *pos = pos_s;
 
     if (tr) trace_init(tr, w * h);
+    if (len > LINE_INLINE) {
+        src = snewn(len, unsigned char);
+        pos = snewn(len, int);
+    }
 
     for (k = 0; k < nlines; k++) {
-        unsigned char src[MAX_SIZE];
-        int pos[MAX_SIZE];
         int trig = -1;
 
         if (moved) moved[k] = false;
@@ -622,6 +693,10 @@ static bool slide_threes(unsigned char *tiles, int w, int h, int d, bool *moved,
         }
         tiles[pos[len-1]] = 0;
     }
+    if (len > LINE_INLINE) {
+        sfree(src);
+        sfree(pos);
+    }
     return changed;
 }
 
@@ -633,9 +708,15 @@ static bool slide_any(int rules, unsigned char *tiles, int w, int h, int d, int 
 }
 
 static bool move_possible(const unsigned char *tiles, int w, int h, int rules, int d) {
-    unsigned char copy[MAX_CELLS];
+    unsigned char copy_s[CELLS_INLINE], *copy = copy_s;
+    bool possible;
+    if (w * h > CELLS_INLINE)
+        copy = snewn(w * h, unsigned char);
     memcpy(copy, tiles, w * h);
-    return slide_any(rules, copy, w, h, d, NULL, NULL, NULL);
+    possible = slide_any(rules, copy, w, h, d, NULL, NULL, NULL);
+    if (copy != copy_s)
+        sfree(copy);
+    return possible;
 }
 
 static bool moves_possible(const unsigned char *tiles, int w, int h, int rules) {
@@ -647,15 +728,18 @@ static bool moves_possible(const unsigned char *tiles, int w, int h, int rules) 
 
 /* a random empty square, or -1 if the board is full */
 static int random_empty(random_state *rs, const unsigned char *grid, int size) {
-    int freecells[MAX_CELLS];
-    int i, c = 0;
+    int i, c = 0, r;
 
     for (i = 0; i < size; i++)
         if (grid[i] == 0)
-            freecells[c++] = i;
+            c++;
     if (c == 0)
         return -1;
-    return freecells[random_upto(rs, c)];
+    r = (int)random_upto(rs, c);       /* the r'th empty square, counted from 0 */
+    for (i = 0; i < size; i++)
+        if (grid[i] == 0 && r-- == 0)
+            return i;
+    return -1;
 }
 
 /* 2048: a tile with 2 (mostly) or 4 at a random empty square; its index, or -1 if the board is full */
@@ -742,24 +826,38 @@ static char *new_game_desc(const game_params *params, random_state *rs,
     char *p;
     char *desc;
     int i;
-    unsigned char grid[MAX_CELLS];
+    unsigned char *grid = snewn(n, unsigned char);
     char *rsdesc;
     int next = 0, bag[3];
 
-    memset(grid, 0, sizeof(grid));
+    memset(grid, 0, n);
 
     if (params->rules == RULES_THREES) {
         /* about nine tenths... no: nine sixteenths of the board, as nine of the sixteen squares of Threes */
         int ntiles = n * 9 / 16;
         if (ntiles < 2) ntiles = 2;
         do {
-            memset(grid, 0, sizeof(grid));
+            memset(grid, 0, n);
             bag[0] = bag[1] = bag[2] = 4;
-            for (i = 0; i < ntiles; i++) {
-                int cell = random_empty(rs, grid, n);
-                grid[cell] = threes_draw(rs, bag, grid, n);
+            if (n <= 4096) {
+                for (i = 0; i < ntiles; i++) {
+                    int cell = random_empty(rs, grid, n);
+                    grid[cell] = threes_draw(rs, bag, grid, 0);
+                }
+            } else {
+                /* the squares of a big board: the first ntiles of a shuffle (looking for an empty square each time would take too long) */
+                int *order = snewn(n, int), j;
+                for (i = 0; i < n; i++) order[i] = i;
+                for (i = 0; i < ntiles; i++) {
+                    int pick = i + (int)random_upto(rs, n - i), t = order[pick];
+                    order[pick] = order[i];
+                    order[i] = t;
+                    grid[t] = threes_draw(rs, bag, grid, 0);
+                }
+                sfree(order);
+                (void)j;
             }
-            next = threes_draw(rs, bag, grid, n);
+            next = threes_draw(rs, bag, grid, 0);
         } while (!moves_possible(grid, w, h, RULES_THREES));
     } else {
         add_new_number(rs, grid, n);
@@ -783,6 +881,7 @@ static char *new_game_desc(const game_params *params, random_state *rs,
     *p++ = '\0';
 
     sfree(rsdesc);
+    sfree(grid);
     return desc;
 }
 
@@ -932,24 +1031,59 @@ static void free_game(game_state *state) {
 #define HINT_CPROB_MIN 0.0001
 #define HINT_LOST (-1.0e9)
 
+#define HINT_LEVELS (2 * HINT_MAX_DEPTH + 4)
+#define HINT_REFERENCE_SQUARES 81
+
 struct hint_search {
-    int w, h;
+    int w, h, n;
     long nodes, budget;
     bool aborted;
     double pmono[MAXPOWER + 1], psum[MAXPOWER + 1];
+    unsigned char *pool[HINT_LEVELS];  /* a board for every level of the search, made when it is first needed */
+    int top;
 };
+
+/*
+ * How many positions a search may look at: that many on the boards up to 9 by
+ * 9, and fewer on bigger boards (every position takes longer there), so that
+ * a hint does not take longer to get.
+ */
+static long hint_budget(int n) {
+    long b = HINT_BUDGET;
+    if (n > HINT_REFERENCE_SQUARES)
+        b = (long)((double)HINT_BUDGET * HINT_REFERENCE_SQUARES / n);
+    return b < 2 ? 2 : b;
+}
 
 static void hint_init(struct hint_search *hs, int w, int h) {
     int e;
     hs->w = w;
     hs->h = h;
+    hs->n = w * h;
     hs->nodes = 0;
-    hs->budget = HINT_BUDGET;
+    hs->budget = hint_budget(hs->n);
     hs->aborted = false;
     for (e = 0; e <= MAXPOWER; e++) {
         hs->pmono[e] = e ? pow((double)e, 4.0) : 0.0;
         hs->psum[e] = e ? pow((double)e, 3.5) : 0.0;
     }
+    memset(hs->pool, 0, sizeof(hs->pool));
+    hs->top = 0;
+}
+
+static void hint_finish(struct hint_search *hs) {
+    int i;
+    for (i = 0; i < HINT_LEVELS; i++) {
+        sfree(hs->pool[i]);
+        hs->pool[i] = NULL;
+    }
+}
+
+static unsigned char *hint_push(struct hint_search *hs) {
+    assert(hs->top < HINT_LEVELS);
+    if (!hs->pool[hs->top])
+        hs->pool[hs->top] = snewn(hs->n, unsigned char);
+    return hs->pool[hs->top++];
 }
 
 /* the rating of one row or column of len tiles that are stride apart */
@@ -1008,8 +1142,8 @@ static double hint_leaf(struct hint_search *hs, const unsigned char *board) {
 /* board: after a move; the value of what comes next, with depth moves to go */
 static double hint_chance_node(struct hint_search *hs, const unsigned char *board,
                                int depth, double cprob) {
-    int n = hs->w * hs->h, i, empty = 0;
-    unsigned char copy[MAX_CELLS];
+    int n = hs->n, i, empty = 0;
+    unsigned char *copy;
     double total = 0;
 
     if (depth <= 0 || cprob < HINT_CPROB_MIN || hs->aborted)
@@ -1020,6 +1154,7 @@ static double hint_chance_node(struct hint_search *hs, const unsigned char *boar
     if (!empty)
         return hint_leaf(hs, board);
 
+    copy = hint_push(hs);
     memcpy(copy, board, n);
     cprob /= empty;
     for (i = 0; i < n; i++) {
@@ -1029,29 +1164,38 @@ static double hint_chance_node(struct hint_search *hs, const unsigned char *boar
         copy[i] = 2;
         total += 0.1 * hint_move_node(hs, copy, depth, cprob * 0.1);
         copy[i] = 0;
-        if (hs->aborted) return 0;
+        if (hs->aborted) {
+            hs->top--;
+            return 0;
+        }
     }
+    hs->top--;
     return total / empty;
 }
 
 /* board: a new tile has turned up; the best of our moves, with depth to go */
 static double hint_move_node(struct hint_search *hs, const unsigned char *board,
                              int depth, double cprob) {
-    int n = hs->w * hs->h, d;
+    int n = hs->n, d;
     double best = HINT_LOST;
-    unsigned char copy[MAX_CELLS];
+    unsigned char *copy;
 
     if (++hs->nodes > hs->budget) hs->aborted = true;
     if (hs->aborted) return 0;
 
+    copy = hint_push(hs);
     for (d = 0; d < NDIRS; d++) {
         memcpy(copy, board, n);
         if (slide_board(copy, hs->w, hs->h, d, NULL)) {
             double v = hint_chance_node(hs, copy, depth - 1, cprob);
-            if (hs->aborted) return 0;
+            if (hs->aborted) {
+                hs->top--;
+                return 0;
+            }
             if (v > best) best = v;
         }
     }
+    hs->top--;
     return best;
 }
 
@@ -1064,23 +1208,27 @@ static double hint_move_node(struct hint_search *hs, const unsigned char *board,
 static int hint_best_direction(const unsigned char *board, int w, int h) {
     struct hint_search hs;
     int chosen = -1, depth, ndirs = 0, d;
-    long prev_nodes = 0;
+    long prev_nodes = 0, budget;
     double ratio = 8.0;
+    unsigned char *copy;
 
-    hint_init(&hs, w, h);
     for (d = 0; d < NDIRS; d++)
         if (move_possible(board, w, h, RULES_2048, d)) { ndirs++; chosen = d; }
     if (ndirs <= 1)
         return chosen;                 /* no choice */
 
+    hint_init(&hs, w, h);
+    budget = hs.budget;
+    copy = hint_push(&hs);
     chosen = -1;
     for (depth = 1; depth <= HINT_MAX_DEPTH; depth++) {
         int best = -1;
         double bestv = 0;
-        unsigned char copy[MAX_CELLS];
 
         hs.nodes = 0;
         hs.aborted = false;
+        /* the first ply is always finished (a hint is always found, on a board of any size) */
+        hs.budget = depth == 1 ? LONG_MAX : budget;
         for (d = 0; d < NDIRS && !hs.aborted; d++) {
             memcpy(copy, board, w * h);
             if (slide_board(copy, w, h, d, NULL)) {
@@ -1098,10 +1246,11 @@ static int hint_best_direction(const unsigned char *board, int w, int h) {
             double r = (double)hs.nodes / prev_nodes;
             if (r > ratio) ratio = r;
         }
-        if ((double)hs.nodes * ratio > (double)hs.budget)
+        if ((double)hs.nodes * ratio > (double)budget)
             break;
         prev_nodes = hs.nodes;
     }
+    hint_finish(&hs);
     return chosen;
 }
 
@@ -1123,11 +1272,16 @@ static int hint_best_direction(const unsigned char *board, int w, int h) {
 #define THR_W_SUM 11.0                 /* the sum of the tiles (by rank) */
 #define THR_W_SMALL 200.0              /* every 1 and 2: they only merge with each other */
 
+#define THR_SAMPLE_WORK 2000000L       /* squares to look at for the first ply: more lines than this get a sample */
+
 struct thr_search {
-    int w, h;
-    long nodes, budget;
+    int w, h, n, lines;
+    long nodes, budget, leafcap;
     bool aborted;
     double pmono[MAXPOWER + 1], psum[MAXPOWER + 1];
+    unsigned char *pool[HINT_LEVELS];  /* a board and a list of lines for every level of the search, */
+    bool *mpool[HINT_LEVELS];          /* made when they are first needed */
+    int top, mtop;
 };
 
 static int thr_rank(int c) {
@@ -1138,13 +1292,44 @@ static void thr_init(struct thr_search *hs, int w, int h) {
     int e;
     hs->w = w;
     hs->h = h;
+    hs->n = w * h;
+    hs->lines = w > h ? w : h;
     hs->nodes = 0;
-    hs->budget = HINT_BUDGET;
+    hs->budget = hint_budget(hs->n);
+    hs->leafcap = THR_SAMPLE_WORK / (hs->n < 4 * hs->lines ? 4 * hs->lines : hs->n);
+    if (hs->leafcap < 1) hs->leafcap = 1;
     hs->aborted = false;
     for (e = 0; e <= MAXPOWER; e++) {
         hs->pmono[e] = e ? pow((double)e, 4.0) : 0.0;
         hs->psum[e] = e ? pow((double)e, 3.5) : 0.0;
     }
+    memset(hs->pool, 0, sizeof(hs->pool));
+    memset(hs->mpool, 0, sizeof(hs->mpool));
+    hs->top = hs->mtop = 0;
+}
+
+static void thr_finish(struct thr_search *hs) {
+    int i;
+    for (i = 0; i < HINT_LEVELS; i++) {
+        sfree(hs->pool[i]);
+        sfree(hs->mpool[i]);
+        hs->pool[i] = NULL;
+        hs->mpool[i] = NULL;
+    }
+}
+
+static unsigned char *thr_push_board(struct thr_search *hs) {
+    assert(hs->top < HINT_LEVELS);
+    if (!hs->pool[hs->top])
+        hs->pool[hs->top] = snewn(hs->n, unsigned char);
+    return hs->pool[hs->top++];
+}
+
+static bool *thr_push_moved(struct thr_search *hs) {
+    assert(hs->mtop < HINT_LEVELS);
+    if (!hs->mpool[hs->mtop])
+        hs->mpool[hs->mtop] = snewn(hs->lines, bool);
+    return hs->mpool[hs->mtop++];
 }
 
 static double thr_rate_line(const struct thr_search *hs, const unsigned char *t,
@@ -1195,50 +1380,77 @@ static double thr_move_node(struct thr_search *hs, const unsigned char *board, i
  */
 static double thr_after_move(struct thr_search *hs, const unsigned char *board,
                              const bool *moved, int d, int next, int depth) {
-    int w = hs->w, h = hs->h, n = w * h;
+    int w = hs->w, h = hs->h, n = hs->n;
     bool horizontal = (d == DIR_L || d == DIR_R);
     int nlines = horizontal ? h : w, len = horizontal ? w : h;
-    int k, t, nm = 0, ntiles = next ? 1 : 3;
-    unsigned char copy[MAX_CELLS];
+    int k, t, nm = 0, ntiles = next ? 1 : 3, q = 0, want, taken = 0;
+    unsigned char *copy;
     double total = 0;
 
     for (k = 0; k < nlines; k++)
         if (moved[k]) nm++;
     if (!nm)
         return thr_leaf(hs, board);
+    /*
+     * The tile that comes in turns up at the end of any of the lines that have moved; all of them
+     * are looked at, unless there are so many that rating them would take long (a very big board,
+     * at the leaves of the first ply): then a sample of them, evenly spread.
+     */
+    want = nm;
+    if (depth <= 1 && (long)nm * ntiles > hs->leafcap) {
+        want = (int)(hs->leafcap / ntiles);
+        if (want < 1) want = 1;
+    }
+    copy = thr_push_board(hs);
     memcpy(copy, board, n);
     for (k = 0; k < nlines; k++) {
         int cell;
         if (!moved[k]) continue;
+        /* the q'th of the moved lines is taken if the want/nm steps cross a whole number there */
+        if ((long)(q + 1) * want / nm == (long)q * want / nm) { q++; continue; }
+        q++;
+        taken++;
         cell = line_pos(w, h, d, k, len - 1);
         for (t = 0; t < ntiles; t++) {
             copy[cell] = next ? next : t + 1;
             total += depth <= 1 ? thr_leaf(hs, copy) : thr_move_node(hs, copy, depth - 1);
-            if (hs->aborted) return 0;
+            if (hs->aborted) {
+                hs->top--;
+                return 0;
+            }
         }
         copy[cell] = 0;
     }
-    return total / (nm * ntiles);
+    hs->top--;
+    return total / (taken * ntiles);
 }
 
 /* board: a new tile has come in; the best of our moves, with depth to go */
 static double thr_move_node(struct thr_search *hs, const unsigned char *board, int depth) {
-    int n = hs->w * hs->h, d;
+    int n = hs->n, d;
     double best = HINT_LOST;
-    unsigned char copy[MAX_CELLS];
-    bool moved[MAX_SIZE];
+    unsigned char *copy;
+    bool *moved;
 
     if (++hs->nodes > hs->budget) hs->aborted = true;
     if (hs->aborted) return 0;
 
+    copy = thr_push_board(hs);
+    moved = thr_push_moved(hs);
     for (d = 0; d < NDIRS; d++) {
         memcpy(copy, board, n);
         if (slide_threes(copy, hs->w, hs->h, d, moved, NULL)) {
             double v = thr_after_move(hs, copy, moved, d, 0, depth);
-            if (hs->aborted) return 0;
+            if (hs->aborted) {
+                hs->top--;
+                hs->mtop--;
+                return 0;
+            }
             if (v > best) best = v;
         }
     }
+    hs->top--;
+    hs->mtop--;
     return best;
 }
 
@@ -1246,24 +1458,28 @@ static int thr_best_direction(const game_state *s) {
     struct thr_search hs;
     int w = s->w, h = s->h;
     int chosen = -1, depth, ndirs = 0, d;
-    long prev_nodes = 0;
+    long prev_nodes = 0, budget;
     double ratio = 8.0;
+    unsigned char *copy;
+    bool *moved;
 
-    thr_init(&hs, w, h);
     for (d = 0; d < NDIRS; d++)
         if (move_possible(s->tiles, w, h, RULES_THREES, d)) { ndirs++; chosen = d; }
     if (ndirs <= 1)
         return chosen;
 
+    thr_init(&hs, w, h);
+    budget = hs.budget;
+    copy = thr_push_board(&hs);
+    moved = thr_push_moved(&hs);
     chosen = -1;
     for (depth = 1; depth <= HINT_MAX_DEPTH; depth++) {
         int best = -1;
         double bestv = 0;
-        unsigned char copy[MAX_CELLS];
-        bool moved[MAX_SIZE];
 
         hs.nodes = 0;
         hs.aborted = false;
+        hs.budget = depth == 1 ? LONG_MAX : budget;       /* the first ply is always finished */
         for (d = 0; d < NDIRS && !hs.aborted; d++) {
             memcpy(copy, s->tiles, w * h);
             if (slide_threes(copy, w, h, d, moved, NULL)) {
@@ -1280,10 +1496,11 @@ static int thr_best_direction(const game_state *s) {
             double r = (double)hs.nodes / prev_nodes;
             if (r > ratio) ratio = r;
         }
-        if ((double)hs.nodes * ratio > (double)hs.budget)
+        if ((double)hs.nodes * ratio > (double)budget)
             break;
         prev_nodes = hs.nodes;
     }
+    thr_finish(&hs);
     return chosen;
 }
 
@@ -1552,12 +1769,15 @@ static game_state *execute_move(const game_state *state, const char *move) {
     ret->lastdir = d;
     ret->spawn = -1;
     if (state->rules == RULES_THREES) {
-        bool moved[MAX_SIZE];
         int nlines = (d == DIR_L || d == DIR_R) ? h : w;
         int len = (d == DIR_L || d == DIR_R) ? w : h;
+        bool moved_s[LINE_INLINE], *moved = moved_s;
         int k, nm = 0, pick;
 
+        if (nlines > LINE_INLINE)
+            moved = snewn(nlines, bool);
         if (!slide_threes(ret->tiles, w, h, d, moved, NULL)) {
+            if (moved != moved_s) sfree(moved);
             free_game(ret);
             return NULL;
         }
@@ -1571,6 +1791,7 @@ static game_state *execute_move(const game_state *state, const char *move) {
                 break;
             }
         }
+        if (moved != moved_s) sfree(moved);
         ret->tiles[ret->spawn] = ret->next;
         ret->next = threes_draw(ret->rs, ret->bag, ret->tiles, w * h);
         ret->score = threes_score(ret->tiles, w * h);
@@ -1579,7 +1800,7 @@ static game_state *execute_move(const game_state *state, const char *move) {
             free_game(ret);
             return NULL;
         }
-        ret->score += score;
+        ret->score = score_add(ret->score, score);
         ret->spawn = add_new_number(ret->rs, ret->tiles, w * h);
     }
     for (i = 0; i < w * h; i++) {
@@ -1624,7 +1845,7 @@ static void mix_rgb(float *ret, int colour, const float *from, const float *to, 
 static float *game_colours(frontend *fe, int *ncolours) {
     float *ret = snewn(3 * NCOLOURS, float);
     /* the tiles of 2048, from 2 to 131072: the colours of the original, all that are over 2048 dark */
-    static const int tile_rgb[MAXPOWER] = {
+    static const int tile_rgb[NTILECOL] = {
         0xeee4da, 0xede0c8, 0xf2b179, 0xf59563, 0xf67c5f, 0xf65e3b, 0xedcf72, 0xedcc61,
         0xedc850, 0xedc53f, 0xedc22e, 0x3c3a32, 0x3c3a32, 0x3c3a32, 0x3c3a32, 0x3c3a32,
         0x3c3a32
@@ -1655,7 +1876,7 @@ static float *game_colours(frontend *fe, int *ncolours) {
     }
     set_rgb(ret, COL_NUM_DARK, 0x776e65);
     set_rgb(ret, COL_NUM_LIGHT, 0xf9f6f2);
-    for (i = 1; i <= MAXPOWER; i++)
+    for (i = 1; i <= NTILECOL; i++)
         set_rgb(ret, COL_TILE(i), tile_rgb[i - 1]);
     /* Threes: blue 1, red 2, white cards for the rest, each with a darker lower edge */
     set_rgb(ret, COL_BLUE, 0x66ccff);
@@ -1789,7 +2010,9 @@ static int number_size(int rules, const struct geom *G, int nd, int c, float f) 
         ratio = nd <= 2 ? 0.514F :         /* 55 of 107 pixels */
                 nd == 3 ? 0.42F :          /* 45 */
                 nd == 4 ? (c > 11 ? 0.28F : 0.327F) :   /* 35, and 30 for the tiles over 2048 */
-                nd == 5 ? 0.28F : 0.23F;
+                nd == 5 ? 0.28F : nd <= 6 ? 0.23F : 0.23F * 6.0F / (float)nd;
+    if (rules == RULES_THREES && nd > 5)
+        ratio = 0.25F * 5.0F / (float)nd;
     size = G->tw * ratio * f;
     return (int)(size + 0.5F);
 }
@@ -1937,21 +2160,31 @@ static void draw_next(drawing *dr, game_drawstate *ds, const game_state *state)
 }
 
 /*
- * The animation of a move, with the timing of the original games.
+ * The animation of a move, in the manner of the original games.
  *
- * 2048 (as the page does it): all the tiles slide to where they end up in a
- * third of the time (100 ms of 300, "ease-in-out"), the two tiles that
- * merge on top of each other; then the tile that is made by a merge pops up
- * from nothing over them (0, 1.2, 1) and the tile that turned up grows from
- * nothing (200 ms, "ease").
+ * 2048 (as the page does it): all the tiles slide to where they end up, the
+ * two tiles that merge on top of each other; then the tile that is made by a
+ * merge pops up from nothing over them (0, 1.2, 1) and the tile that turned
+ * up grows from nothing.
  *
  * Threes: the tiles of the lines that move all slide one square, and the
  * card that turns up slides in from beyond the edge, all at the same time.
  *
+ * The page of 2048 slides for 100 ms and pops for 200 ms, but a browser
+ * draws sixty frames a second and the screen of a phone gets fewer (every
+ * frame is drawn tile by tile through the front end), and a slide of six
+ * frames at best, that starts slowly ("ease-in-out"), looks jerky there.  So
+ * the slide is half as long again, it starts at once and slows down at the end
+ * ("ease-out", as a finger that has swiped), and the pop is a little shorter.
+ *
  * from: the state before the move, to: the state after it, t: how far it is
  * (0 to 1; an undo runs it backwards).
  */
-#define SLIDE_PART (1.0F / 3.0F)
+#define SLIDE_2048   0.15F             /* seconds, at normal speed */
+#define POP_2048     0.15F
+#define SLIDE_THREES 0.22F
+#define THREES_MERGE_AT 0.8F           /* the two cards of a merge of Threes are one card from here on (of the slide) */
+#define SLIDE_PART   (SLIDE_2048 / (SLIDE_2048 + POP_2048))
 
 /* the timing functions of CSS: cubic-bezier(x1, y1, x2, y2) at x (0 to 1) */
 static float bezier(float x1, float y1, float x2, float y2, float x) {
@@ -1974,16 +2207,16 @@ static float bezier(float x1, float y1, float x2, float y2, float x) {
 }
 
 #define EASE(x)        bezier(0.25F, 0.1F, 0.25F, 1.0F, (x))
-#define EASE_IN_OUT(x) bezier(0.42F, 0.0F, 0.58F, 1.0F, (x))
+#define EASE_OUT(x)    bezier(0.25F, 0.46F, 0.45F, 0.94F, (x))
 
 /* how big a merged tile is u of the way through its pop (0 to 1.2 to 1) */
 static float pop_scale(float u) {
     return u < 0.5F ? 1.2F * EASE(u * 2.0F) : 1.2F - 0.2F * EASE(u * 2.0F - 1.0F);
 }
 
-/* the length of an animation in seconds: that of the original, half of it, or none */
+/* the length of an animation in seconds: at normal speed, half of that, or none */
 static float anim_duration(const game_ui *ui, int rules) {
-    float full = rules == RULES_THREES ? 0.20F : 0.30F;
+    float full = rules == RULES_THREES ? SLIDE_THREES : SLIDE_2048 + POP_2048;
     return ui->anim == ANIM_OFF ? 0.0F : ui->anim == ANIM_FAST ? full / 2.0F : full;
 }
 
@@ -1995,11 +2228,12 @@ static void draw_animation(drawing *dr, game_drawstate *ds, const game_ui *ui,
     const int rules = to->rules;
     const bool threes = rules == RULES_THREES;
     struct trace tr;
-    unsigned char tmp[MAX_CELLS];
-    bool popped[MAX_CELLS];
+    unsigned char *tmp = snewn(n, unsigned char);
+    bool *popped = snewn(n, bool);
 
     memcpy(tmp, from->tiles, n);
     slide_any(rules, tmp, w, h, to->lastdir, NULL, NULL, &tr);
+    memset(popped, 0, n);
 
     draw_rect(dr, 0, G->top, G->width, G->height - G->top, COL_BACKGROUND);
     if (!threes)
@@ -2010,17 +2244,28 @@ static void draw_animation(drawing *dr, game_drawstate *ds, const game_ui *ui,
 
     clip(dr, G->m, G->top + G->m, G->bw, G->bh);
     if (threes || t < SLIDE_PART) {
-        float s = EASE_IN_OUT(threes ? t : t / SLIDE_PART);
+        float s = EASE_OUT(threes ? t : t / SLIDE_PART);
+        /* Threes: where the cards of a merge meet they are one card (so that the last picture of the slide is the still one) */
+        bool joined = threes && s >= THREES_MERGE_AT;
         /* the ones that do not merge, then those that stay and merge, then those that move and merge */
         for (pass = 0; pass < 3; pass++) {
             for (i = 0; i < n; i++) {
                 int v = from->tiles[i], k = tr.dst[i], x0, y0, x1, y1;
                 if (!v || k < 0) continue;
                 if ((!tr.join[i] ? 0 : k == i ? 1 : 2) != pass) continue;
+                if (joined && tr.join[i]) continue;
                 x0 = TILE_X(G, i % w); y0 = TILE_Y(G, i / w);
                 x1 = TILE_X(G, k % w); y1 = TILE_Y(G, k / w);
                 draw_tile(dr, G, rules, x0 + (int)floorf((x1 - x0) * s + 0.5F),
                           y0 + (int)floorf((y1 - y0) * s + 0.5F), v, false, NULL, 1.0F);
+            }
+        }
+        if (joined) {
+            for (i = 0; i < n; i++) {
+                int k = tr.dst[i];
+                if (!tr.join[i] || k < 0 || popped[k] || !to->tiles[k]) continue;
+                popped[k] = true;
+                draw_tile(dr, G, rules, TILE_X(G, k % w), TILE_Y(G, k / w), to->tiles[k], false, NULL, 1.0F);
             }
         }
         if (threes && to->spawn >= 0 && to->tiles[to->spawn]) {
@@ -2063,6 +2308,9 @@ static void draw_animation(drawing *dr, game_drawstate *ds, const game_ui *ui,
     }
     unclip(dr);
     draw_update(dr, 0, G->top, G->width, G->height - G->top);
+    trace_free(&tr);
+    sfree(tmp);
+    sfree(popped);
 }
 
 static void game_redraw(drawing *dr, game_drawstate *ds,
