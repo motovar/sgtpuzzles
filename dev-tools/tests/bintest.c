@@ -21,6 +21,10 @@
 #include <math.h>
 #include "binary.c"
 
+#define TEST_MAX 9                      /* the boards of the old tests: up to 9 by 9 */
+#define BIGN 20000                      /* the squares of the biggest board of the tests that mix in big ones */
+#define RLEN 4096                       /* the longest line that the references handle */
+
 extern const drawing_api null_drawing_api;
 
 #define CHECK(c) do { if (!(c)) { printf("CHECK FAILED line %d: %s\n", __LINE__, #c); fails++; } } while (0)
@@ -32,9 +36,10 @@ static unsigned rnd(void) { rng_s ^= rng_s << 13; rng_s ^= rng_s >> 7; rng_s ^= 
 static double now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec * 1e-9; }
 
 /* reference: one line, tiles move to index 0 */
-static int ref_line(const unsigned char *in, unsigned char *out, int len)
+static long long ref_line(const unsigned char *in, unsigned char *out, int len)
 {
-    int tmp[16], n = 0, i, o = 0, score = 0;
+    int tmp[RLEN], n = 0, i, o = 0;
+    long long score = 0;
     for (i = 0; i < len; i++) if (in[i]) tmp[n++] = in[i];
     for (i = 0; i < n; i++) {
         if (i + 1 < n && tmp[i] == tmp[i+1] && tmp[i] < MAXPOWER) {
@@ -54,12 +59,13 @@ static int ref_xy(int w, int h, int d, int k, int i)
     return y * w + x;
 }
 
-static int ref_slide(unsigned char *t, int w, int h, int d)
+static long long ref_slide(unsigned char *t, int w, int h, int d)
 {
-    int k, i, score = 0;
+    int k, i;
+    long long score = 0;
     int nl = (d == DIR_L || d == DIR_R) ? h : w, len = (d == DIR_L || d == DIR_R) ? w : h;
     for (k = 0; k < nl; k++) {
-        unsigned char in[16], out[16];
+        unsigned char in[RLEN], out[RLEN];
         for (i = 0; i < len; i++) in[i] = t[ref_xy(w, h, d, k, i)];
         score += ref_line(in, out, len);
         for (i = 0; i < len; i++) t[ref_xy(w, h, d, k, i)] = out[i];
@@ -93,7 +99,7 @@ static bool ref_threes_slide(unsigned char *t, int w, int h, int d, bool *movedl
     bool any = false;
     int nl = (d == DIR_L || d == DIR_R) ? h : w, len = (d == DIR_L || d == DIR_R) ? w : h;
     for (k = 0; k < nl; k++) {
-        unsigned char in[16], out[16];
+        unsigned char in[RLEN], out[RLEN];
         bool mv;
         for (i = 0; i < len; i++) in[i] = t[ref_xy(w, h, d, k, i)];
         ref_threes_line(in, out, len, &mv);
@@ -102,6 +108,22 @@ static bool ref_threes_slide(unsigned char *t, int w, int h, int d, bool *movedl
         if (mv) any = true;
     }
     return any;
+}
+
+/*
+ * The shape of a board of a test: the sizes of the sketch (2 to 9) most of the time, else long
+ * and thin (lines over the 32 that are worked on without allocating memory, up to 150) or
+ * big (up to about 140 by 140).
+ */
+static void pick_shape(int *w, int *h)
+{
+    switch (rnd() % 6) {
+      case 0: *w = 2 + rnd() % 149; *h = 2 + rnd() % 4; break;
+      case 1: *w = 2 + rnd() % 4; *h = 2 + rnd() % 149; break;
+      case 2: *w = 30 + rnd() % 8; *h = 30 + rnd() % 8; break;        /* round LINE_INLINE */
+      case 3: *w = 2 + rnd() % 140; *h = 2 + rnd() % 140; break;
+      default: *w = 2 + rnd() % 8; *h = 2 + rnd() % 8; break;
+    }
 }
 
 static long tilesum_rules(int rules, const unsigned char *t, int n)
@@ -119,10 +141,13 @@ static long tilesum(const unsigned char *t, int n)
 static void test_slide(int rounds)
 {
     int r;
-    unsigned char a[81], b[81], orig[81];
+    static unsigned char a[BIGN], b[BIGN], orig[BIGN];
     for (r = 0; r < rounds; r++) {
-        int w = 2 + rnd() % 8, h = 2 + rnd() % 8, n = w * h, i, d, sa = 0, sb;
+        int w, h, n, i, d, sa = 0;
+        long long sb;
         int maxe = 1 + rnd() % MAXPOWER, fill = rnd() % 100;
+        pick_shape(&w, &h);
+        n = w * h;
         bool ch, rch;
         for (i = 0; i < n; i++) a[i] = (int)(rnd() % 100) < fill ? 1 + rnd() % maxe : 0;
         memcpy(orig, a, n); memcpy(b, a, n);
@@ -131,7 +156,7 @@ static void test_slide(int rounds)
         sb = ref_slide(b, w, h, d);
         rch = memcmp(orig, b, n) != 0;
         CHECK(memcmp(a, b, n) == 0);
-        CHECK(sa == sb);
+        CHECK(sa == (sb > SCORE_MAX ? SCORE_MAX : sb));
         CHECK(ch == rch);
         CHECK(tilesum(a, n) == tilesum(orig, n) || maxe >= MAXPOWER);
     }
@@ -191,10 +216,13 @@ static void test_threes_slide(int rounds)
 {
     int r;
     for (r = 0; r < rounds; r++) {
-        int w = 2 + rnd() % 8, h = 2 + rnd() % 8, n = w * h, i, d, k;
+        int w, h, n, i, d, k;
         int maxc = 1 + rnd() % MAXPOWER, fill = rnd() % 100;
-        unsigned char a[81], b[81], orig[81];
-        bool ma[MAX_SIZE], mb[MAX_SIZE], cha, chb;
+        static unsigned char a[BIGN], b[BIGN], orig[BIGN];
+        static bool ma[BIGN], mb[BIGN];
+        bool cha, chb;
+        pick_shape(&w, &h);
+        n = w * h;
         for (i = 0; i < n; i++) {
             int c = 0;
             if ((int)(rnd() % 100) < fill) {
@@ -229,13 +257,15 @@ static void test_trace(int rounds)
     int r;
     for (r = 0; r < rounds; r++) {
         int rules = rnd() % 2;
-        int w = 2 + rnd() % 8, h = 2 + rnd() % 8, n = w * h, i, j, d, fill = rnd() % 100;
+        int w, h, n, i, j, d, fill = rnd() % 100;
         int maxc = 1 + rnd() % 12;
-        unsigned char a[81], orig[81];
+        static unsigned char a[BIGN], orig[BIGN];
         struct trace tr;
-        long sum[81];
-        int cnt[81];
+        static long sum[BIGN];
+        static int cnt[BIGN];
         bool ch;
+        pick_shape(&w, &h);
+        n = w * h;
         for (i = 0; i < n; i++)
             a[i] = (int)(rnd() % 100) < fill ? 1 + rnd() % (rules == RULES_THREES && rnd() % 2 ? 3 : maxc) : 0;
         memcpy(orig, a, n);
@@ -268,11 +298,12 @@ static void test_trace(int rounds)
         (void)ch;
         /* the trace changes nothing about the move itself */
         {
-            unsigned char b[81];
+            static unsigned char b[BIGN];
             memcpy(b, orig, n);
             slide_any(rules, b, w, h, d, NULL, NULL, NULL);
             CHECK(memcmp(a, b, n) == 0);
         }
+        trace_free(&tr);
     }
 }
 
@@ -382,6 +413,23 @@ static void test_params(void)
     CHECK(q.rules == RULES_2048 && q.goal == GOAL_ENDLESS);
     decode_params(&q, "4x4gemRvt");
     CHECK(q.rules == RULES_THREES && q.goal == GOAL_ENDLESS);
+    /* the goals go up to the biggest tile now (they stopped at 8192): the old letters mean what they meant */
+    decode_params(&q, "4x4g9mR");
+    CHECK(q.goal == GOAL_8192);
+    decode_params(&q, "6x6gAmR");
+    CHECK(q.goal == GOAL_16384 && GOAL_EXP(q.goal) == 14);
+    decode_params(&q, "9x9gQmR");
+    CHECK(q.goal == GOAL_1073741824 && GOAL_EXP(q.goal) == MAXPOWER);
+    CHECK(GOAL_EXP(GOAL_2048) == 11 && GOAL_EXP(GOAL_32) == 5 && GOAL_EXP(GOAL_8192) == 13 && GOAL_EXP(GOAL_131072) == 17);
+    CHECK(GOALCOUNT == MAXPOWER - 5 + 2);                  /* 2^5 ... 2^MAXPOWER and Endless */
+    enc = encode_params(&(game_params){6, 6, GOAL_16384, MODE_RECT, RULES_2048}, true);
+    CHECK(strcmp(enc, "6x6gAmR") == 0);
+    sfree(enc);
+    {
+        int goal;
+        for (goal = 0; goal < GOALCOUNT; goal++)
+            if (goal != GOAL_ENDLESS) CHECK(atoi(binary_goalnames[goal]) == POWER[goal + 5]);
+    }
     /* validation */
     p.w = p.h = 4; p.goal = GOAL_512; p.mode = MODE_RECT; p.rules = RULES_THREES;
     CHECK(validate_params(&p, true) != NULL);
@@ -391,8 +439,24 @@ static void test_params(void)
     CHECK(validate_params(&p, true) != NULL);
     p.rules = RULES_2048; p.w = 1;
     CHECK(validate_params(&p, true) != NULL);
+    /* no limit to the size but the memory: boards of any shape are fine, up to 16 million squares */
     p.w = 10;
+    CHECK(validate_params(&p, true) == NULL);
+    p.w = 100; p.h = 100;
+    CHECK(validate_params(&p, true) == NULL);
+    p.w = 2; p.h = 8388608;
+    CHECK(validate_params(&p, true) == NULL);
+    p.w = 4096; p.h = 4096;
+    CHECK(validate_params(&p, true) == NULL);
+    p.w = 4097; p.h = 4096;
     CHECK(validate_params(&p, true) != NULL);
+    p.w = 100000; p.h = 100000;                /* no overflow in the product */
+    CHECK(validate_params(&p, true) != NULL);
+    p.w = 2147483647; p.h = 2147483647;
+    CHECK(validate_params(&p, true) != NULL);
+    p.w = 4; p.h = 0;
+    CHECK(validate_params(&p, true) != NULL);
+    p.w = 4; p.h = 4;
     /* the presets: valid, and their names */
     {
         int i;
@@ -433,6 +497,7 @@ static void test_random_play(int games)
         char sb[32];
         int moves = 0, nfinish = 0;
         p.w = 2 + rnd() % 8; p.h = 2 + rnd() % 8; p.goal = rnd() % GOALCOUNT; p.mode = MODE_RECT;
+        if (g % 3 == 2) pick_shape(&p.w, &p.h);          /* boards beyond 9 by 9, long lines and big boards */
         p.rules = g % 2 ? RULES_THREES : RULES_2048;
         if (p.rules == RULES_THREES) p.goal = GOAL_ENDLESS;
         CHECK(validate_params(&p, true) == NULL);
@@ -531,6 +596,7 @@ static void test_desc(int n)
         game_state *s;
         size_t len, k;
         p.w = 2 + rnd() % 8; p.h = 2 + rnd() % 8; p.goal = rnd() % GOALCOUNT; p.mode = MODE_RECT;
+        if (i % 3 == 2) pick_shape(&p.w, &p.h);
         p.rules = i % 2 ? RULES_THREES : RULES_2048;
         if (p.rules == RULES_THREES) p.goal = GOAL_ENDLESS;
         sprintf(sb, "d%d", i);
@@ -693,8 +759,8 @@ static void test_geometry(void)
 {
     int rules, p, w, h;
     for (rules = 0; rules < RULESCOUNT; rules++) {
-        for (w = 1; w <= MAX_SIZE; w++) {
-            for (h = 1; h <= MAX_SIZE; h++) {
+        for (w = 1; w <= TEST_MAX; w++) {
+            for (h = 1; h <= TEST_MAX; h++) {
                 int lastx = 0, lasty = 0;
                 for (p = 6; p <= 240; p++) {
                     struct geom G;
@@ -866,6 +932,7 @@ static void test_drawing(int games)
         int tilesize = 6 + (g * 37) % 150, i, step, nmoves = 0;
 
         p.w = 2 + rnd() % 8; p.h = 2 + rnd() % 8;
+        if (g % 5 == 4) pick_shape(&p.w, &p.h);
         p.goal = GOAL_ENDLESS; p.mode = MODE_RECT;
         p.rules = g % 2 ? RULES_THREES : RULES_2048;
         if (g % 7 == 0) { p.w = 4; p.h = 4; }
@@ -928,6 +995,500 @@ static void test_drawing(int games)
         midend_free(me);
     }
     CHECK(rec_ops > 1000 && rec_texts > 100);
+}
+
+
+/*
+ * ---- the animation, pixel by pixel ----
+ *
+ * A drawing API that rasterises what is drawn (no anti-aliasing: the same call always gives the
+ * same pixels; text is a box that tells where the text is and what it says), to compare the
+ * pictures of the animation with the pictures that are not animated.  A jump at the start or the
+ * end of an animation, or a tile that is drawn a little differently while it moves, is what a
+ * player sees as a jerk.
+ */
+static int *ras_img, ras_w, ras_h;
+static bool ras_clipped;
+static int ras_x0, ras_y0, ras_x1, ras_y1;
+static long ras_calls;
+
+static void ras_plot(int x, int y, int v)
+{
+    if (x < 0 || y < 0 || x >= ras_w || y >= ras_h) return;
+    if (ras_clipped && (x < ras_x0 || x >= ras_x1 || y < ras_y0 || y >= ras_y1)) return;
+    ras_img[y * ras_w + x] = v;
+}
+static void ras_rect(drawing *dr, int x, int y, int w, int h, int col)
+{
+    int i, j;
+    ras_calls++;
+    for (j = y; j < y + h; j++) for (i = x; i < x + w; i++) ras_plot(i, j, col);
+}
+static void ras_line(drawing *dr, int x1, int y1, int x2, int y2, int col)
+{
+    int dx = abs(x2 - x1), dy = -abs(y2 - y1), sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1, err = dx + dy;
+    ras_calls++;
+    for (;;) {
+        int e2;
+        ras_plot(x1, y1, col);
+        if (x1 == x2 && y1 == y2) break;
+        e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x1 += sx; }
+        if (e2 <= dx) { err += dx; y1 += sy; }
+    }
+}
+static void ras_poly(drawing *dr, const int *c, int n, int f, int o)
+{
+    int i, j, y, ymin = c[1], ymax = c[1];
+    ras_calls++;
+    if (f >= 0) {
+        for (i = 1; i < n; i++) { if (c[2*i+1] < ymin) ymin = c[2*i+1]; if (c[2*i+1] > ymax) ymax = c[2*i+1]; }
+        for (y = ymin; y <= ymax; y++) {
+            double yc = y + 0.5, xs[64];
+            int nx = 0, k;
+            for (i = 0; i < n; i++) {
+                int x0 = c[2*i], y0 = c[2*i+1], x1 = c[2*((i+1)%n)], y1 = c[2*((i+1)%n)+1];
+                if ((y0 <= yc) != (y1 <= yc) && nx < 64)
+                    xs[nx++] = x0 + (yc - y0) * (double)(x1 - x0) / (y1 - y0);
+            }
+            for (i = 1; i < nx; i++) { double t = xs[i]; for (j = i - 1; j >= 0 && xs[j] > t; j--) xs[j+1] = xs[j]; xs[j+1] = t; }
+            for (k = 0; k + 1 < nx; k += 2) {
+                int xa = (int)ceil(xs[k] - 0.5), xb = (int)ceil(xs[k+1] - 0.5);
+                for (i = xa; i < xb; i++) ras_plot(i, y, f);
+            }
+        }
+    }
+    if (o >= 0)
+        for (i = 0; i < n; i++)
+            ras_line(dr, c[2*i], c[2*i+1], c[2*((i+1)%n)], c[2*((i+1)%n)+1], o);
+}
+static void ras_tpoly(drawing *dr, float th, const int *c, int n, int f, int o) { ras_poly(dr, c, n, f, o); }
+static void ras_circle(drawing *dr, int cx, int cy, int r, int f, int o)
+{
+    int i, j;
+    ras_calls++;
+    for (j = cy - r; j <= cy + r; j++)
+        for (i = cx - r; i <= cx + r; i++) {
+            double dx = i + 0.5 - cx, dy = j + 0.5 - cy;
+            if (dx * dx + dy * dy <= (double)r * r) ras_plot(i, j, f >= 0 ? f : o);
+        }
+}
+static void ras_tcircle(drawing *dr, float th, float cx, float cy, float r, int f, int o)
+{ ras_circle(dr, (int)cx, (int)cy, (int)r, f, o); }
+static unsigned ras_texthash(const char *t)
+{
+    unsigned h = 2166136261u;
+    for (; *t; t++) h = (h ^ (unsigned char)*t) * 16777619u;
+    return h;
+}
+#define RAS_TEXT(t) (100000 + (int)(ras_texthash(t) & 0xffff))
+static void ras_text(drawing *dr, int x, int y, int ft, int fs, int al, int col, const char *t)
+{
+    int wpx = (int)strlen(t) * fs * 5 / 9, hpx = fs, x0, y0, i, j;
+    ras_calls++;
+    x0 = (al & ALIGN_HCENTRE) ? x - wpx / 2 : (al & ALIGN_HRIGHT) ? x - wpx : x;
+    y0 = (al & ALIGN_VCENTRE) ? y - hpx / 2 : y - hpx;
+    for (j = 0; j < hpx; j++) for (i = 0; i < wpx; i++) ras_plot(x0 + i, y0 + j, RAS_TEXT(t));
+}
+static void ras_clip(drawing *dr, int x, int y, int w, int h)
+{ ras_clipped = true; ras_x0 = x; ras_y0 = y; ras_x1 = x + w; ras_y1 = y + h; }
+static void ras_unclip(drawing *dr) { ras_clipped = false; }
+
+static const drawing_api ras_api = {
+    1, ras_text, ras_rect, ras_line, ras_poly, ras_tpoly, ras_circle, ras_tcircle, rec_update,
+    ras_clip, ras_unclip, rec_start, rec_end, rec_status, rec_bnew, rec_bfree, rec_bsave, rec_bload,
+    NULL, NULL, NULL, NULL, NULL, NULL,
+    rec_lw, rec_ld, rec_fallback, rec_changed, rec_purging, rec_tline, rec_inertia, NULL
+};
+
+struct rig { midend *me; drawing *dr; game_ui *ui; game_drawstate *ds; };
+static struct geom ras_G;
+
+static void rig_open(struct rig *r, const game_params *p, const game_state *st, int bg, int tilesize, int anim)
+{
+    int x, y, i;
+    r->me = midend_new(NULL, &thegame, &ras_api, NULL);
+    r->dr = drawing_new(&ras_api, r->me, NULL);
+    r->ui = new_ui(st);
+    r->ui->background = bg;
+    r->ui->anim = anim;
+    r->ds = game_new_drawstate(r->dr, st);
+    game_set_size(r->dr, r->ds, p, tilesize);
+    game_compute_size(p, tilesize, r->ui, &x, &y);
+    ras_w = x; ras_h = y;
+    ras_img = snewn(x * y, int);
+    for (i = 0; i < x * y; i++) ras_img[i] = -1;
+    ras_clipped = false;
+    rec_w = x; rec_h = y;
+    ras_G = r->ds->g;
+}
+static int *rig_grab(void)
+{
+    int *c = snewn(ras_w * ras_h, int);
+    memcpy(c, ras_img, sizeof(int) * ras_w * ras_h);
+    return c;
+}
+static void rig_close(struct rig *r)
+{
+    game_free_drawstate(r->dr, r->ds);
+    free_ui(r->ui);
+    drawing_free(r->dr);
+    midend_free(r->me);
+    sfree(ras_img);
+    ras_img = NULL;
+}
+
+/* the pictures a and b of ras_w by ras_h are the same from row y0 on? (the top strip of Threes may differ) */
+static bool ras_same(const int *a, const int *b, int y0, const char *what, const game_params *p, int tilesize, int bg)
+{
+    int i, bad = 0, first = -1;
+    for (i = y0 * ras_w; i < ras_w * ras_h; i++)
+        if (a[i] != b[i]) { if (!bad) first = i; bad++; }
+    if (bad) {
+        int cells[64][3], nc = 0, k;
+        printf("  %s: %d pixels differ, first at %d,%d (rules %d, %dx%d, tile size %d, background %d)\n", what, bad,
+               first % ras_w, first / ras_w, p->rules, p->w, p->h, tilesize, bg);
+        for (i = y0 * ras_w; i < ras_w * ras_h; i++)
+            if (a[i] != b[i]) {
+                int x = i % ras_w, y = i / ras_w, cx = (x - ras_G.m) / ras_G.p, cy = (y - ras_G.top - ras_G.m) / ras_G.py;
+                for (k = 0; k < nc && (cells[k][0] != cx || cells[k][1] != cy); k++) ;
+                if (k == nc && nc < 64) { cells[nc][0] = cx; cells[nc][1] = cy; cells[nc][2] = 0; nc++; }
+                if (k < nc) cells[k][2]++;
+            }
+        for (k = 0; k < nc && k < 8; k++)
+            printf("     cell %d,%d: %d pixels (a=%d b=%d at its first)\n", cells[k][0], cells[k][1], cells[k][2], 0, 0);
+    }
+    return bad == 0;
+}
+
+/*
+ * The first picture of the animation of a move is the picture before it, the last one the picture
+ * after it, and so for the undo of the move backwards: there is no jump when it starts and when
+ * the still picture takes over.
+ */
+static void test_anim_pixels(int games)
+{
+    int g;
+    for (g = 0; g < games; g++) {
+        game_params p;
+        game_state *s0, *s1;
+        int tilesize = 14 + (g * 29) % 120, bg = g % 4, step, d, tries;
+        char sb[32];
+        p.w = 2 + rnd() % 7; p.h = 2 + rnd() % 7; p.goal = GOAL_ENDLESS; p.mode = MODE_RECT;
+        p.rules = g % 2 ? RULES_THREES : RULES_2048;
+        sprintf(sb, "ap%d", g);
+        s0 = make(&p, sb, NULL);
+        for (step = 0; step < 8 && !s0->finished; step++) {
+            char mv[2];
+            struct rig r;
+            int *ref0, *ref1, *a, top;
+            float dur = anim_duration(&(game_ui){ .anim = ANIM_NORMAL }, p.rules);
+            d = rnd() % 4;
+            for (tries = 0; tries < 4 && !move_possible(s0->tiles, s0->w, s0->h, s0->rules, d); tries++) d = (d + 1) % 4;
+            if (!move_possible(s0->tiles, s0->w, s0->h, s0->rules, d)) break;
+            mv[0] = dir_chars[d]; mv[1] = 0;
+            s1 = execute_move(s0, mv);
+            CHECK(s1 != NULL);
+            if (!s1) break;
+
+            rig_open(&r, &p, s0, bg, tilesize, ANIM_NORMAL);
+            top = r.ds->g.top;
+            game_redraw(r.dr, r.ds, NULL, s0, 0, r.ui, 0.0F, 0.0F);
+            ref0 = rig_grab();
+            rig_close(&r);
+            rig_open(&r, &p, s1, bg, tilesize, ANIM_NORMAL);
+            game_redraw(r.dr, r.ds, NULL, s1, 0, r.ui, 0.0F, 0.0F);
+            ref1 = rig_grab();
+            rig_close(&r);
+
+            /* forwards: the first picture of the animation is the board before the move ... */
+            rig_open(&r, &p, s0, bg, tilesize, ANIM_NORMAL);
+            game_redraw(r.dr, r.ds, NULL, s0, 0, r.ui, 0.0F, 0.0F);
+            game_redraw(r.dr, r.ds, s0, s1, +1, r.ui, 0.0F, 0.0F);
+            a = rig_grab();
+            CHECK(ras_same(a, ref0, top, "first picture", &p, tilesize, bg));
+            sfree(a);
+            /* ... the last one, and the one before it, the board after it (a game that is over is
+             * veiled when the still picture takes over, on purpose, so that is not compared) */
+            game_redraw(r.dr, r.ds, s0, s1, +1, r.ui, dur * 0.999F, 0.0F);
+            a = rig_grab();
+            if (!s1->finished) CHECK(ras_same(a, ref1, 0, "picture just before the end", &p, tilesize, bg));
+            sfree(a);
+            game_redraw(r.dr, r.ds, s0, s1, +1, r.ui, dur, 0.0F);
+            a = rig_grab();
+            if (!s1->finished) CHECK(ras_same(a, ref1, 0, "last picture", &p, tilesize, bg));
+            sfree(a);
+            /* and then the still picture, as the midend draws it when the animation is over */
+            game_redraw(r.dr, r.ds, NULL, s1, 0, r.ui, 0.0F, 0.0F);
+            a = rig_grab();
+            CHECK(ras_same(a, ref1, 0, "picture after the animation", &p, tilesize, bg));
+            sfree(a);
+            rig_close(&r);
+
+            /* backwards (undo): from the board after the move to the one before it */
+            rig_open(&r, &p, s1, bg, tilesize, ANIM_NORMAL);
+            game_redraw(r.dr, r.ds, NULL, s1, 0, r.ui, 0.0F, 0.0F);
+            game_redraw(r.dr, r.ds, s1, s0, -1, r.ui, 0.0F, 0.0F);
+            a = rig_grab();
+            if (!s1->finished) CHECK(ras_same(a, ref1, top, "undo: first picture", &p, tilesize, bg));     /* (the strip of the next card shows the older state) */
+            sfree(a);
+            game_redraw(r.dr, r.ds, s1, s0, -1, r.ui, dur, 0.0F);
+            a = rig_grab();
+            CHECK(ras_same(a, ref0, top, "undo: last picture", &p, tilesize, bg));
+            sfree(a);
+            rig_close(&r);
+
+            sfree(ref0);
+            sfree(ref1);
+            free_game(s0);
+            s0 = s1;
+        }
+        free_game(s0);
+    }
+}
+
+/*
+ * How a tile moves: from a still start to its place in steps that never get bigger than a part of
+ * the way, with enough pictures in the time of the slide, on a display that draws 60 pictures a
+ * second (the display's own clock, as the app now has it) and on a slower one (30).
+ */
+static void test_anim_smooth(void)
+{
+    int rules, fps, anim;
+    for (rules = 0; rules < RULESCOUNT; rules++) {
+        for (anim = ANIM_NORMAL; anim <= ANIM_FAST; anim++) {
+            for (fps = 30; fps <= 60; fps += 30) {
+                game_params p;
+                game_state *s0, *s1;
+                struct rig r;
+                game_ui u;
+                float dur, slide;
+                int code = rules == RULES_THREES ? 5 : 3, k, nframes, xs[64], nx = 0, dist, maxstep = 0, distinct = 0, tilesize = 100;
+                int marker = RAS_TEXT(rules == RULES_THREES ? "12" : "8");
+                char *desc;
+                p.w = p.h = 4; p.goal = GOAL_ENDLESS; p.mode = MODE_RECT; p.rules = rules;
+                s0 = make(&p, "smooth", &desc);
+                sfree(desc);
+                memset(s0->tiles, 0, 16);
+                s0->tiles[1 * 4 + 3] = code;
+                s1 = execute_move(s0, "L");
+                CHECK(s1 != NULL);
+                if (!s1) { free_game(s0); continue; }
+                u.anim = anim;
+                dur = anim_duration(&u, rules);
+                slide = rules == RULES_THREES ? dur : dur * SLIDE_PART;
+                rig_open(&r, &p, s0, BACKGROUND_SLOTS, tilesize, anim);
+                game_redraw(r.dr, r.ds, NULL, s0, 0, r.ui, 0.0F, 0.0F);
+                nframes = (int)(dur * fps) + 1;
+                for (k = 0; k <= nframes && nx < 64; k++) {
+                    float t = (float)k / fps;
+                    int i, x = 1 << 30;
+                    if (t > dur) t = dur;
+                    game_redraw(r.dr, r.ds, s0, s1, +1, r.ui, t, 0.0F);
+                    for (i = 0; i < ras_w * ras_h; i++)
+                        if (ras_img[i] == marker && i % ras_w < x) x = i % ras_w;
+                    xs[nx++] = x;
+                }
+                rig_close(&r);
+                dist = xs[0] - xs[nx - 1];
+                CHECK(dist >= tilesize * (rules == RULES_THREES ? 1 : 3) - 2);   /* 2048: three squares, Threes: one */
+                for (k = 1; k < nx; k++) {
+                    int step = xs[k - 1] - xs[k];
+                    CHECK(step >= 0);                        /* never back */
+                    if (step > maxstep) maxstep = step;
+                    if (step > 0 && (k <= (int)(slide * fps) + 1)) distinct++;
+                }
+                {
+                    int slideframes = (int)(slide * fps);
+                    /* the biggest step is a part of the way; the speed is the same at 60 and 30 only in the sense of time */
+                    double frac = (double)maxstep / dist;
+                    double limit = anim == ANIM_FAST ? 0.45 : fps >= 60 ? 0.27 : 0.50;
+                    if (anim == ANIM_FAST && fps < 60) { free_game(s0); free_game(s1); continue; }   /* too short to move smoothly at 30 */
+                    if (frac > limit || (slideframes >= 2 && distinct < (slideframes < 3 ? 1 : slideframes - 1))) {
+                        printf("  rules %d anim %d at %d fps: dist %d, biggest step %.0f%%, %d moving pictures in %d slide frames (limit %.0f%%)\n",
+                               rules, anim, fps, dist, frac * 100, distinct, slideframes, limit * 100);
+                    }
+                    CHECK(frac <= limit);
+                    if (slideframes >= 2) CHECK(distinct >= (slideframes < 3 ? 1 : slideframes - 1));
+                    /* it starts at once: the first picture after the start has moved a good part of the way */
+                    if (fps >= 60 && anim == ANIM_NORMAL)
+                        CHECK(xs[0] - xs[1] >= dist / 10);
+                }
+                free_game(s0);
+                free_game(s1);
+            }
+        }
+    }
+}
+
+
+/*
+ * Boards far bigger than the sketch's 9 by 9: whole games on them (a move, a hint, text, undo
+ * and the midend), the biggest tiles (2^30) and the biggest board that is allowed.
+ */
+static void test_big_games(void)
+{
+    static const int sizes[][2] = { {10,10}, {16,16}, {33,33}, {64,64}, {100,100}, {2,500}, {500,2}, {1000,3}, {300,300}, {33,1}, {1,33}, {2,2000} };
+    int i, rules;
+    for (rules = 0; rules < RULESCOUNT; rules++) {
+        for (i = 0; i < (int)lenof(sizes); i++) {
+            game_params p;
+            game_state *s, *n;
+            char sb[32];
+            int w = sizes[i][0], h = sizes[i][1], mv, hints = 0;
+            double t0;
+            p.w = w; p.h = h; p.goal = GOAL_ENDLESS; p.mode = MODE_RECT; p.rules = rules;
+            if (w < 2 || h < 2) {
+                CHECK(validate_params(&p, true) != NULL);       /* at least two each way */
+                continue;
+            }
+            CHECK(validate_params(&p, true) == NULL);
+            sprintf(sb, "big%d-%d", rules, i);
+            s = make(&p, sb, NULL);
+            for (mv = 0; mv < 40 && !s->finished; mv++) {
+                char m[2], *hint;
+                const char *err = NULL;
+                int d, tries;
+                if (mv % 10 == 0) {
+                    t0 = now();
+                    hint = hint_game(s, s, &err);
+                    t0 = now() - t0;
+                    if (!hint && !s->finished) printf("  no hint on %dx%d (rules %d) at move %d: %s; possible dirs %d%d%d%d\n", w, h, rules, mv, err ? err : "(no message)",
+                                                      move_possible(s->tiles, w, h, rules, 0), move_possible(s->tiles, w, h, rules, 1), move_possible(s->tiles, w, h, rules, 2), move_possible(s->tiles, w, h, rules, 3));
+                    CHECK(hint != NULL || s->finished);
+                    if (hint) {
+                        hints++;
+                        d = dir_from_char(hint[0]);
+                        CHECK(d >= 0 && move_possible(s->tiles, w, h, rules, d));
+                        if (t0 > 3.0) { printf("  hint on %dx%d (rules %d) took %.1f s\n", w, h, rules, t0); CHECK(0); }
+                        sfree(hint);
+                    }
+                }
+                d = rnd() % 4;
+                for (tries = 0; tries < 4 && !move_possible(s->tiles, w, h, rules, d); tries++) d = (d + 1) % 4;
+                if (!move_possible(s->tiles, w, h, rules, d)) break;
+                m[0] = dir_chars[d]; m[1] = 0;
+                n = execute_move(s, m);
+                CHECK(n != NULL);
+                if (!n) break;
+                free_game(s);
+                s = n;
+            }
+            CHECK(hints > 0 || s->finished);
+            free_game(s);
+        }
+    }
+}
+
+/* the biggest tiles that fit an int: 2^30 for 2048 (and the card of 3 times 2^28 for Threes), drawn and merged */
+static void test_high_tiles(void)
+{
+    int rules, e;
+    for (rules = 0; rules < RULESCOUNT; rules++) {
+        game_params p;
+        game_state *s;
+        game_ui *ui;
+        game_drawstate *ds;
+        midend *me = midend_new(NULL, &thegame, &rec_api, NULL);
+        drawing *dr = drawing_new(&rec_api, me, NULL);
+        int x, y, ts = 70;
+        p.w = 6; p.h = 6; p.goal = GOAL_ENDLESS; p.mode = MODE_RECT; p.rules = rules;
+        s = make(&p, "high", NULL);
+        memset(s->tiles, 0, 36);
+        for (e = 1; e <= MAXPOWER; e++) s->tiles[e - 1] = e;
+        ui = new_ui(s);
+        ds = game_new_drawstate(dr, s);
+        game_set_size(dr, ds, &p, ts);
+        game_compute_size(&p, ts, ui, &x, &y);
+        rec_w = x; rec_h = y; rec_clip_depth = 0; rec_bad = 0; rec_maxcol = 0;
+        game_redraw(dr, ds, NULL, s, 0, ui, 0.0F, 0.0F);
+        CHECK(rec_bad == 0);
+        CHECK(rec_maxcol < NCOLOURS);
+        /* the numbers: 2^30 has ten digits */
+        CHECK(tile_number(RULES_2048, MAXPOWER) == 1073741824);
+        CHECK(tile_number(RULES_2048, 1) == 2 && tile_number(RULES_2048, 11) == 2048);
+        if (rules == RULES_THREES)
+            CHECK(tile_number(RULES_THREES, MAXPOWER) == 3 * (1 << (MAXPOWER - 3)));
+        game_free_drawstate(dr, ds);
+        free_ui(ui);
+        free_game(s);
+        drawing_free(dr);
+        midend_free(me);
+    }
+    /* a goal beyond the old 8192 is won by making the tile, and the biggest tile ends the game */
+    {
+        game_params p;
+        game_state *s0, *s1;
+        p.w = p.h = 4; p.mode = MODE_RECT; p.rules = RULES_2048;
+        p.goal = GOAL_16384;
+        s0 = make(&p, "goal", NULL);
+        memset(s0->tiles, 0, 16);
+        s0->tiles[0] = s0->tiles[1] = 13;
+        s1 = execute_move(s0, "L");
+        CHECK(s1 && s1->tiles[0] == 14 && s1->won && !s1->finished);
+        if (s1) free_game(s1);
+        free_game(s0);
+        p.goal = GOAL_1073741824;
+        s0 = make(&p, "goal2", NULL);
+        memset(s0->tiles, 0, 16);
+        s0->tiles[0] = s0->tiles[1] = MAXPOWER - 1;
+        s1 = execute_move(s0, "L");
+        CHECK(s1 && s1->tiles[0] == MAXPOWER && s1->won && s1->finished);
+        if (s1) free_game(s1);
+        free_game(s0);
+    }
+    /* tiles of 2^29 merge into 2^30, and two of 2^30 stay as they are */
+    {
+        unsigned char l[4] = { MAXPOWER - 1, MAXPOWER - 1, MAXPOWER, MAXPOWER };
+        int sc = 0;
+        CHECK(slide_board(l, 4, 1, DIR_L, &sc));
+        CHECK(l[0] == MAXPOWER && l[1] == MAXPOWER && l[2] == MAXPOWER && l[3] == 0);
+        CHECK(sc == POWER[MAXPOWER]);
+    }
+    /* the score stays below its cap (an int that never wraps round) */
+    {
+        int sc = SCORE_MAX - 5;
+        unsigned char l[2] = { 10, 10 };
+        slide_board(l, 2, 1, DIR_L, &sc);
+        CHECK(sc == SCORE_MAX);
+    }
+}
+
+/* the biggest board that is allowed (16 million squares): made, moved, hinted and text-formatted in good time and little memory */
+static void test_biggest_board(void)
+{
+    game_params p;
+    game_state *s, *n;
+    random_state *rs = random_new("biggest", 7);
+    char *aux = NULL, *desc, *hint;
+    const char *err = NULL;
+    double t0 = now();
+    int rules;
+    p.w = 4096; p.h = 4096; p.goal = GOAL_ENDLESS; p.mode = MODE_RECT;
+    for (rules = 0; rules < RULESCOUNT; rules++) {
+        p.rules = rules;
+        CHECK(validate_params(&p, true) == NULL);
+        desc = new_game_desc(&p, rs, &aux, false);
+        CHECK(validate_desc(&p, desc) == NULL);
+        s = new_game(NULL, &p, desc);
+        n = execute_move(s, "L");
+        if (!n) n = execute_move(s, "R");
+        if (!n) n = execute_move(s, "U");
+        if (!n) n = execute_move(s, "D");
+        CHECK(n != NULL);
+        hint = hint_game(s, s, &err);
+        CHECK(hint != NULL);
+        sfree(hint);
+        if (n) free_game(n);
+        free_game(s);
+        sfree(desc);
+        sfree(aux);
+        aux = NULL;
+    }
+    random_free(rs);
+    t0 = now() - t0;
+    printf("biggest board (4096 x 4096): both rules made, moved and hinted in %.1f s\n", t0);
+    CHECK(t0 < 60.0);
 }
 
 static void test_midend(int games)
@@ -1015,6 +1576,16 @@ int main(int argc, char **argv)
         printf("drawing stays in the picture ok (%d failures so far)\n", fails);
         test_midend(24);
         printf("midend and animation ok (%d failures so far)\n", fails);
+        test_anim_pixels(240);
+        printf("animation pictures: first, last and the still ones are the same ok (%d failures so far)\n", fails);
+        test_anim_smooth();
+        printf("animation: smooth motion ok (%d failures so far)\n", fails);
+        test_high_tiles();
+        printf("the biggest tiles ok (%d failures so far)\n", fails);
+        test_big_games();
+        printf("big boards ok (%d failures so far)\n", fails);
+        test_biggest_board();
+        printf("the biggest board ok (%d failures so far)\n", fails);
         fflush(stdout);
     }
     if (!strcmp(what, "one")) {
