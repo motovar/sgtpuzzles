@@ -26,6 +26,7 @@ import android.os.Looper
 import android.os.Message
 import android.provider.OpenableColumns
 import android.util.Log
+import android.view.Choreographer
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.KeyEvent.KEYCODE_MENU
@@ -201,7 +202,7 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
     }
 
     private enum class MsgType {
-        TIMER, COMPLETED, BACK_TIME_ELAPSED
+        COMPLETED, BACK_TIME_ELAPSED
     }
 
     private val onBackPressedCallback = object : OnBackPressedCallback(false) {
@@ -223,23 +224,42 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
 
     val handler: Handler = PuzzlesHandler(this)
 
-    private fun handleMessage(msg: Message) {
-        when (MsgType.entries[msg.what]) {
-            MsgType.TIMER -> {
-                if (progress == null) {
-                    gameEngine.timerTick()
-                    if (currentBackend === INERTIA) {
-                        gameView.ensureCursorVisible(gameEngine.cursorLocation)
-                    }
-                }
-                if (gameWantsTimer) {
-                    handler.sendMessageDelayed(
-                        handler.obtainMessage(MsgType.TIMER.ordinal),
-                        TIMER_INTERVAL.toLong()
-                    )
+    /**
+     * The timer that runs the animations (and the clock of Mines) goes by the frame clock of the
+     * display. It used to be a message that was sent 20 ms after each tick had finished, so that
+     * delay came on top of the time that the drawing took: a slide of 100 ms got only three or
+     * four frames, at uneven distances from the refresh of the display, and that looks jerky.
+     * The game is still told how much real time has gone by ([GameEngine.timerTick]), so nothing
+     * runs faster or slower than before.
+     */
+    private val timerFrame = Choreographer.FrameCallback {
+        timerFramePending = false
+        if (gameWantsTimer) {
+            if (progress == null) {
+                gameEngine.timerTick()
+                if (currentBackend === INERTIA) {
+                    gameView.ensureCursorVisible(gameEngine.cursorLocation)
                 }
             }
+            // the tick may have switched the timer off (the animation has finished)
+            if (gameWantsTimer) scheduleTimerFrame()
+        }
+    }
+    private var timerFramePending = false
 
+    private fun scheduleTimerFrame() {
+        if (timerFramePending) return
+        timerFramePending = true
+        Choreographer.getInstance().postFrameCallback(timerFrame)
+    }
+
+    private fun cancelTimerFrame() {
+        Choreographer.getInstance().removeFrameCallback(timerFrame)
+        timerFramePending = false
+    }
+
+    private fun handleMessage(msg: Message) {
+        when (MsgType.entries[msg.what]) {
             MsgType.COMPLETED -> {
                 try {
                     completedInternal()
@@ -1038,7 +1058,7 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
     }
 
     override fun onPause() {
-        handler.removeMessages(MsgType.TIMER.ordinal)
+        cancelTimerFrame()
         if (progress == null) save()
         super.onPause()
     }
@@ -1059,9 +1079,9 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
     }
 
     override fun onWindowFocusChanged(f: Boolean) {
-        if (f && gameWantsTimer && currentBackend != null && !handler.hasMessages(MsgType.TIMER.ordinal)) {
+        if (f && gameWantsTimer && currentBackend != null && !timerFramePending) {
             gameEngine.resetTimerBaseline()
-            handler.sendMessageDelayed(handler.obtainMessage(MsgType.TIMER.ordinal), TIMER_INTERVAL.toLong())
+            scheduleTimerFrame()
         }
     }
 
@@ -1334,10 +1354,14 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
 
     @UsedByJNI
     override fun requestTimer(on: Boolean) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            // the frame clock belongs to the main thread
+            handler.post { requestTimer(on) }
+            return
+        }
         if (gameWantsTimer && on) return
         gameWantsTimer = on
-        if (on) handler.sendMessageDelayed(handler.obtainMessage(MsgType.TIMER.ordinal), TIMER_INTERVAL.toLong())
-        else handler.removeMessages(MsgType.TIMER.ordinal)
+        if (on) scheduleTimerFrame() else cancelTimerFrame()
     }
 
     override fun customDialogError(error: String?) {
@@ -1511,7 +1535,6 @@ class GamePlay : ActivityWithLoadButton(), OnSharedPreferenceChangeListener, Gam
         const val MIME_TYPE = "text/prs.sgtatham.puzzles"
         private val DIMENSIONS = Pattern.compile("(\\d+)( ?)x\\2(\\d+)(.*)")
         const val MAX_SAVE_SIZE: Long = 1000000 // 1MB; we only have 16MB of heap
-        private const val TIMER_INTERVAL = 20
         private const val PREVENT_BACK_AFTER_KEY_PRESS_MILLIS = 600
 
         /** Whether to show data-entry keys, as opposed to undo/redo/swap-L-R which are always shown.
