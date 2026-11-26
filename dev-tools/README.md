@@ -16,12 +16,19 @@ with Pillow for the icons).
   (`GamePlay.orientGameType` swaps `<number>x<number>` when the screen has the other orientation)? Build it as
   the game file's test (`nb.sh prog <game> <game.c> tests/orient.c orient_<game>`, without `-include extras-quiet.h`,
   which silences `printf`); `orient -x` is for the one game that is exempt (Decanting, `BackendName.isNotWidthByHeight`).
-* `tests/bintest.c`, `tests/moscotest.c` (+ `moscosa*.c`, `moscoexp.c`), `tests/dectest.c` - white-box tests of Binary,
+* `tests/bintest.c`, `tests/moscotest.c`, `tests/dectest.c` - white-box tests of Binary,
   Mosco and Decanting: they `#include` the game source (build with `tests/empty.c` as the game file and
   `-I<game directory>`). `bintest <n> unit` also checks the geometry of the picture at every tile size and, with a
   drawing API that records what is drawn, that nothing is drawn beyond the picture (or beyond the clip) in any step
   of any animation, forwards and backwards, for both sets of rules and all backgrounds. `dectest <scale> [mode]` compares the Decanting solver with an exhaustive search, replays
   backward scrambles, fuzzes descriptions and moves, and checks generator and hint times.
+* `tests/moscotest.c [seeds]` checks every level on 19 shapes (2x4 ... 32x32): the reasoning of the level solves the puzzle,
+  the one of the level below does not, the same seed gives the same puzzle, exactly one solution (plain backtracking up to
+  24 tiles, the search up to 40), hints are right and finish a game, boards with wrong arrows are called wrong, Solve,
+  descriptions typed in, parameters (sides below 2, overflow, garbage) and the numbers of the clues from 1024 up (2x8192).
+  `tests/moscogen.c <w> <h> <level 0|1|2> <seeds> [count]` times the generator and checks each puzzle with a solver of its
+  own (env `CORE_HARD`, `CORE_EASY`, `CORE_ITERS`, `CORE_GOES` tune the cores); `tests/moscobench.c` times one annealing
+  step. Build them with `tests/empty.c` as the game file.
 * `m3dtest/` - wall symmetry / reachability test for the Maze 3D generator.
 * `icons/icontool.c` + `icons/render.py` - records what a game draws and renders the day and night icons;
   `icons/frame.py` renders the whole last frame (any shape, clips honoured, `--strip` puts several side by side,
