@@ -22,8 +22,12 @@ eight kinds of arrow (up, up-left, left, down-left, down, down-right, right
 and up-right) is used exactly <em>area / 8</em> times &ndash; two of each
 kind on a 4 x 4 arena, eight of each on 8 x 8. This is why the area of the
 arena has to be a multiple of eight.</p>
-<p>There are usually several arrangements that fit the numbers, and any of
-them completes the puzzle.</p>
+<p>Every puzzle that the program makes has <strong>exactly one</strong>
+arrangement that fits, and you can always get to it by reasoning &ndash; no
+guessing is needed. How much reasoning it takes is what the three levels of
+difficulty are about (see below). When you type in a game description of your
+own, it may have more than one solution; any arrangement that fits the numbers
+and the set of tiles completes the puzzle then.</p>
 <h2 id="mosco-picture">What you see</h2>
 <p>The numbers around the arena are black while they are still to be
 fulfilled, <span style="color:#008c00">green</span> when exactly that many
@@ -66,36 +70,77 @@ points that way (8 is up, 6 is right, 7 is up-left and so on); 5, 0,
 Backspace and the second select key clear the tile.</p>
 <p>When every number is right and every kind of arrow has been laid the
 right number of times, the puzzle is complete.</p>
+<h2 id="mosco-levels">Difficulty levels</h2>
+<p>The levels differ in the reasoning that is needed to solve the puzzle (and
+in how flat the numbers are: the harder the level, the fewer big numbers).
+Every tile is to be told from the numbers; at no level is a guess needed.</p>
+<dl>
+    <dt>Easy</dt>
+    <dd>Every tile starts with all eight arrows possible. A number that has all
+        its arrows already rules out every other tile for that square, and a
+        kind of arrow that has been used up rules out that arrow for all the
+        other tiles; a tile that has just one possible arrow left has it, and a
+        number that wants as many arrows as there are tiles that can still
+        point at it gets them all.</dd>
+    <dt>Normal</dt>
+    <dd>As Easy, and a kind of arrow that wants as many tiles as can still
+        have that arrow gets all of them &ndash; the count of the kinds (area
+        / 8 of each) has to be used as well. Easy is not enough for a Normal
+        puzzle.</dd>
+    <dt>Hard</dt>
+    <dd>As Normal, and where that stops you have to ask &ldquo;what if&rdquo;:
+        a tile of which all but one of the possible arrows lead to a
+        contradiction (by the rules above) has the one that is left. Normal is
+        not enough for a Hard puzzle.</dd>
+</dl>
+<p>Not all of a big board is hard: a board of more than 72 tiles is made from
+a long chain of Easy steps and one small patch &ndash; about 24 tiles for
+Normal and Hard &ndash; that needs the reasoning of its level. Up to 72 tiles
+the whole board is a puzzle of its level. (A board that is just two tiles wide,
+or high, and a hundred tiles or more in size cannot be made harder than Easy by
+this: the program then makes the next easier level that works, and you will
+notice that the puzzle goes quickly.)</p>
+
 <h2 id="mosco-solve">Solve and Show next step</h2>
 <ul>
-<li><em>Solve</em> lays an arrangement that fits all the numbers on every
-tile of the arena, replacing the arrows that you have laid. It is the
-arrangement that the puzzle was made from or, for a game that was typed in,
-one that the program finds.</li>
-<li><em>Show next step</em> works out whether the arrows that you have laid
-can still be completed to a solution. If they can, it lays one more arrow
-for you &ndash; one that has to be there, when the numbers leave no
-choice, or otherwise one that goes with a way of completing the puzzle.
-If they cannot, it tells you which tile the mistake is on (it shows the row
-and the column of the arrow that stands in the way). The step is a move like
-any other, so you can undo it.</li>
+<li><em>Solve</em> lays the solution on every tile of the arena, replacing
+the arrows that you have laid. It is the one arrangement that fits (for a
+game that was typed in, an arrangement that the program finds).</li>
+<li><em>Show next step</em> checks the arrows that you have laid against the
+solution. If one of them is wrong it tells you: either that too many arrows
+point at a number (or that too many tiles have one kind of arrow), which you
+can see yourself, or which tile the mistake is on (it shows the row and the
+column of the arrow that stands in the way). If everything laid is right, it
+lays one more arrow for you &ndash; one that follows from the numbers and the
+arrows that are laid already (a tile that has just one possible arrow left)
+or, where that doesn't go any further, the one that a &ldquo;what if&rdquo;
+shows to be the only one. The step is a move like any other, so you can undo
+it.</li>
 </ul>
 <h2 id="mosco-parameters">Mosco parameters</h2>
 <p>These parameters are available from the ‘Custom…’ option on the
 ‘Type’ menu.</p>
 <dl>
     <dt>Width, Height</dt>
-    <dd>Size of the arena in tiles. Both have to be at least 4 and at most
-        255 and the area (width times height) has to be a multiple of eight.
-        The presets are 4x4, 6x4, 8x4, 8x8 and 16x16.</dd>
+    <dd>Size of the arena in tiles. Both have to be at least 2 and the area
+        (width times height) has to be a multiple of eight. (A single row or
+        column can't make a puzzle with just one solution: the arrows that
+        point up and those that point down, or left and right, could always be
+        changed round without any number noticing.) There is no other limit
+        than the memory: up to a million tiles are allowed. The numbers
+        around the arena get bigger with the size of it, and the game writes
+        them smaller as they get more digits. The presets are 4x4, 6x4, 8x4 and
+        8x8, each in the three levels.</dd>
+    <dt>Difficulty</dt>
+    <dd>Easy, Normal or Hard; see above. A big board takes longer to make
+        than a small one, the more so the harder the level; it is a matter
+        of seconds, not minutes.</dd>
 </dl>
 
 <h2 id="status">Status</h2>
-<p>This puzzle is playable. There are no difficulty settings: the size of the
-arena is the way to make the puzzle harder or easier. The numbers do not
-always pin down a single arrangement &ndash; that is how the puzzle is
-designed &ndash; so on the larger sizes the hint may have to choose one of
-several arrows that all lead to a solution.</p>
+<p>This puzzle is playable, with three levels of difficulty, a puzzle that has
+just one solution at every size and a hint that follows the reasoning of the
+levels.</p>
 <p>The puzzle is from Ivan Moscovich's books &ldquo;Magic Arrow Tile
 Puzzles&rdquo;; Mosco is part of the collection of puzzles for handhelds by
 Lee Dowling (<a href="https://github.com/ledow/stppc2x">stppc2x</a>).</p>

@@ -16,9 +16,10 @@
  * therefore points at exactly one clue square, which makes the sum of all
  * the clues equal to the number of tiles.
  *
- * Most puzzles have more than one solution, and any arrangement that meets
- * all the clues and the tile counts is a win; it need not be the one the
- * puzzle was made from.
+ * A puzzle that is made here has just one solution, and one that can be
+ * reached from the clues by reasoning alone (see the levels below).  For a
+ * description that was typed in that need not be so, and then any arrangement
+ * that meets all the clues and the tile counts is a win.
  *
  * What is new compared to the original:
  *
@@ -26,13 +27,14 @@
  *    whole arrangement it had made the clues from into the description
  *    (and cleared the tiles again when it set the game up), so reading a
  *    game ID gave the answer away.  The arrangement is the "aux" data now.
+ *  - The puzzles have just one solution that the reasoning of their level
+ *    (Easy, Normal, Hard) gets to without a guess: the original's hardly ever
+ *    did.  A board of any size from 2 x 4 up is made (see "The generator").
  *  - There is a solver.  It narrows the kinds of arrow each tile can be
  *    from the clues, the counts of the tiles and the arrows already laid,
- *    and searches where that isn't enough.  "Show next step" uses it to
- *    tell a mistake from a good start, to give a tile that has to be
- *    like it is or, failing that, a tile of a solution that still fits
- *    the arrows laid so far.  A description typed in by hand is checked
- *    with it, and Solve works for those too.
+ *    with "what if" at the level Hard, and searches where that isn't enough
+ *    (a description that was typed in).  "Show next step" uses it to tell a
+ *    mistake from a good start and to give a tile that has to be like it is.
  *  - Tap a tile to turn the arrow it has, swipe over a tile to lay the
  *    arrow of that direction, long press (or right click) to mark the
  *    kinds of arrow a tile might have, long press without moving to clear
@@ -57,7 +59,9 @@
 #include "puzzles.h"
 
 #define PREFERRED_TILE_SIZE 40
-#define MAX_SIZE 255
+/* The memory is what limits the size of the board (a few dozen bytes for
+ * every tile of the arena, while a puzzle is made); there is nothing else */
+#define MAX_TILES 1048576
 #define FLASH_TIME 0.5F
 #define FLASH_FRAME 0.1F
 
@@ -113,8 +117,28 @@ static int dir_of(int dx, int dy)
     return -1;
 }
 
+/*
+ * The levels differ in what it takes to solve a puzzle (and in how flat the
+ * clues are: the harder the level, the fewer big numbers).  Every puzzle has
+ * just one solution that can be reached from the clues by reasoning alone:
+ *
+ *  Easy    the arrows that a tile can still have are told by the clues that
+ *          have all their arrows and by the kinds that are used up; a tile
+ *          with a single arrow left has it, and a clue that wants as many
+ *          arrows as there are tiles that can still point at it gets them
+ *          all.
+ *  Normal  as Easy, and a kind that wants as many tiles as can still be of
+ *          that kind gets them all.
+ *  Hard    as Normal, and where that stops: a tile of which all but one of
+ *          the arrows that it can still have are found to lead to a
+ *          contradiction (by the rules above) has the one that is left.
+ */
+enum { DIFF_EASY, DIFF_NORMAL, DIFF_HARD, DIFFCOUNT };
+static const char *const diff_names[DIFFCOUNT] = { "Easy", "Normal", "Hard" };
+static const char diff_chars[DIFFCOUNT + 1] = "enh";
+
 struct game_params {
-    int w, h;
+    int w, h, diff;
 };
 
 /*
@@ -131,6 +155,8 @@ struct mosco_clues {
     int *clue;          /* k: the numbers */
     int *target;        /* n * NDIR: the clue that tile t points at when
                            it has the arrow d is target[t * NDIR + d] */
+    int kcount[NDIR];   /* how many tiles have each kind of arrow: n / 8 on
+                           a board (see "The chain" for when it isn't) */
 };
 
 struct game_state {
@@ -140,32 +166,48 @@ struct game_state {
     bool completed, used_solve;
 };
 
+/* A number (of digits) at *p, which is moved past it; more than MAX_TILES
+ * is MAX_TILES + 1 (and validate_params says what is wrong with it) */
+static int parse_number(const char **p)
+{
+    long long v = 0;
+
+    while (isdigit((unsigned char)**p)) {
+        if (v <= MAX_TILES) v = v * 10 + (**p - '0');
+        (*p)++;
+    }
+    return v > MAX_TILES ? MAX_TILES + 1 : (int)v;
+}
+
 static game_params *default_params(void)
 {
     game_params *ret = snew(game_params);
     ret->w = ret->h = 4;
+    ret->diff = DIFF_NORMAL;
     return ret;
 }
 
 /* Any size that gives an area that is a multiple of 8 is a valid grid */
-static const game_params mosco_presets[] = {
+static const struct { int w, h; } mosco_sizes[] = {
     { 4, 4 },
     { 6, 4 },
     { 8, 4 },
     { 8, 8 },
-    { 16, 16 },
 };
+#define NPRESETS (lenof(mosco_sizes) * DIFFCOUNT)
 
 static bool game_fetch_preset(int i, char **name, game_params **params)
 {
     char str[32];
     game_params *ret;
 
-    if (i < 0 || i >= (int)lenof(mosco_presets)) return false;
+    if (i < 0 || i >= (int)NPRESETS) return false;
 
     ret = snew(game_params);
-    *ret = mosco_presets[i];
-    sprintf(str, "%dx%d", ret->w, ret->h);
+    ret->w = mosco_sizes[i / DIFFCOUNT].w;
+    ret->h = mosco_sizes[i / DIFFCOUNT].h;
+    ret->diff = i % DIFFCOUNT;
+    sprintf(str, "%dx%d %s", ret->w, ret->h, diff_names[ret->diff]);
     *name = dupstr(str);
     *params = ret;
     return true;
@@ -187,15 +229,21 @@ static void decode_params(game_params *params, char const *string)
 {
     const char *p = string;
 
+    params->diff = DIFF_NORMAL;
     if (isdigit((unsigned char)*p)) {
-        params->w = atoi(p);
-        while (isdigit((unsigned char)*p)) p++;
+        params->w = parse_number(&p);
         if (*p == 'x') {
             p++;
-            params->h = atoi(p);
+            params->h = parse_number(&p);
         } else {
             params->h = params->w;
         }
+    }
+    if (*p == 'd') {
+        int i;
+        p++;
+        for (i = 0; i < DIFFCOUNT; i++)
+            if (*p == diff_chars[i]) params->diff = i;
     }
 }
 
@@ -203,15 +251,16 @@ static char *encode_params(const game_params *params, bool full)
 {
     char buf[32];
     sprintf(buf, "%dx%d", params->w, params->h);
+    if (full) sprintf(buf + strlen(buf), "d%c", diff_chars[params->diff]);
     return dupstr(buf);
 }
 
 static config_item *game_configure(const game_params *params)
 {
-    config_item *ret = snewn(3, config_item);
+    config_item *ret = snewn(4, config_item);
     char buf[32];
 
-    memset(ret, 0, 3 * sizeof(config_item));
+    memset(ret, 0, 4 * sizeof(config_item));
 
     ret[0].name = "Width";
     ret[0].type = C_STRING;
@@ -223,8 +272,13 @@ static config_item *game_configure(const game_params *params)
     sprintf(buf, "%d", params->h);
     ret[1].u.string.sval = dupstr(buf);
 
-    ret[2].name = NULL;
-    ret[2].type = C_END;
+    ret[2].name = "Difficulty";
+    ret[2].type = C_CHOICES;
+    ret[2].u.choices.choicenames = ":Easy:Normal:Hard";
+    ret[2].u.choices.selected = params->diff;
+
+    ret[3].name = NULL;
+    ret[3].type = C_END;
 
     return ret;
 }
@@ -232,19 +286,29 @@ static config_item *game_configure(const game_params *params)
 static game_params *custom_params(const config_item *cfg)
 {
     game_params *ret = snew(game_params);
+    const char *p = cfg[0].u.string.sval;
 
-    ret->w = atoi(cfg[0].u.string.sval);
-    ret->h = atoi(cfg[1].u.string.sval);
+    ret->w = parse_number(&p);
+    p = cfg[1].u.string.sval;
+    ret->h = parse_number(&p);
+    ret->diff = cfg[2].u.choices.selected;
 
     return ret;
 }
 
 static const char *validate_params(const game_params *params, bool full)
 {
-    if (params->w < 4 || params->h < 4)
-        return "Width and height must both be at least four";
-    if (params->w > MAX_SIZE || params->h > MAX_SIZE)
-        return "Width and height must both be at most " STR(MAX_SIZE);
+    /* (in a single row or column the arrows that point up and those that
+     * point down, or those that point left and those that point right, can
+     * be changed round without any clue seeing it, so there is never just
+     * one solution) */
+    if (params->w < 2 || params->h < 2)
+        return "Width and height must both be at least two";
+    if (params->w > MAX_TILES || params->h > MAX_TILES ||
+        (long long)params->w * params->h > MAX_TILES)
+        return "The arena may have at most " STR(MAX_TILES) " tiles";
+    if (params->diff < 0 || params->diff >= DIFFCOUNT)
+        return "Unknown difficulty level";
     if ((params->w * params->h) % NDIR != 0)
         return "Width times height must be a multiple of 8";
     return NULL;
@@ -327,6 +391,31 @@ static struct mosco_clues *clues_new(int w, int h, const int *values)
         for (x = 0; x < w; x++)
             for (d = 0; d < NDIR; d++)
                 cl->target[(y * w + x) * NDIR + d] = target_clue(w, h, x, y, d);
+    for (d = 0; d < NDIR; d++) cl->kcount[d] = cl->n / NDIR;
+    return cl;
+}
+
+/*
+ * Not a board but a puzzle of the same kind that is a part of one (the core
+ * of a big board, see the generator): n tiles, k clue squares, the clue that
+ * the arrow d of tile t points at is target[t * NDIR + d], and kcount[d]
+ * tiles are to have the arrow d.  The clues are all 0 to begin with.
+ */
+static struct mosco_clues *clues_new_core(int n, int k, const int *target,
+                                          const int *kcount)
+{
+    struct mosco_clues *cl = snew(struct mosco_clues);
+    int i;
+
+    cl->refcount = 1;
+    cl->w = cl->h = 0;
+    cl->n = n;
+    cl->k = k;
+    cl->clue = snewn(k, int);
+    for (i = 0; i < k; i++) cl->clue[i] = 0;
+    cl->target = snewn(n * NDIR, int);
+    memcpy(cl->target, target, n * NDIR * sizeof(int));
+    memcpy(cl->kcount, kcount, sizeof(cl->kcount));
     return cl;
 }
 
@@ -404,43 +493,6 @@ done:
     return err;
 }
 
-static char *new_game_desc(const game_params *params, random_state *rs,
-                           char **aux, bool interactive)
-{
-    /*
-     * As in the original: lay one of each kind of tile for every set of
-     * eight, shuffle them and take the clues of the result.  (Whether the
-     * puzzle comes out with one solution or with a good many is left to
-     * chance: the number of arrangements is far greater than the number of
-     * different sets of clues for any but the smallest sizes.)
-     */
-    int w = params->w, h = params->h, n = w * h, k = 2 * w + 2 * h + 4;
-    int i, x, y;
-    int *cnt = snewn(k, int);
-    signed char *sol = snewn(n, signed char);
-    char *desc = snewn(k * 7 + 1, char), *p = desc;
-    char *auxs = snewn(n + 1, char);
-
-    for (i = 0; i < n; i++) sol[i] = i % NDIR;
-    shuffle(sol, n, sizeof(*sol), rs);
-
-    for (i = 0; i < k; i++) cnt[i] = 0;
-    for (y = 0; y < h; y++)
-        for (x = 0; x < w; x++)
-            cnt[target_clue(w, h, x, y, sol[y * w + x])]++;
-
-    for (i = 0; i < k; i++)
-        p += sprintf(p, i ? ",%d" : "%d", cnt[i]);
-
-    for (i = 0; i < n; i++) auxs[i] = '0' + sol[i];
-    auxs[n] = '\0';
-    *aux = auxs;
-
-    sfree(cnt);
-    sfree(sol);
-    return desc;
-}
-
 /* ----------------------------------------------------------------------
  * The solver.
  *
@@ -456,9 +508,10 @@ static char *new_game_desc(const game_params *params, random_state *rs,
  */
 
 struct msolver {
-    int w, h, n, k;
+    int n, k;
     const int *clue;
     const int *target;
+    int kcount[NDIR];           /* how many tiles each kind of arrow is to have */
     /* for each clue, the tiles that can point at it, and with which arrow */
     int *lstart;                /* k + 1 */
     int *lcell;                 /* n * NDIR */
@@ -467,6 +520,12 @@ struct msolver {
     int *queue;
     unsigned char *inq;
     int qsize, qhead, qlen;
+    /* may a kind that wants as many tiles as can still be of that kind
+     * settle them all?  (Not on level Easy.) */
+    bool kindforce;
+    /* what the "what if" may still take (about the number of bytes it
+     * copies); when that is used up it finds nothing more */
+    double work;
 };
 
 struct sstate {
@@ -477,9 +536,8 @@ struct sstate {
 
 static int popcnt8(unsigned v)
 {
-    int c = 0;
-    while (v) { v &= v - 1; c++; }
-    return c;
+    static const unsigned char pop4[16] = { 0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4 };
+    return pop4[v & 15] + pop4[(v >> 4) & 15];
 }
 
 static int lowbit(unsigned v)
@@ -494,12 +552,11 @@ static struct msolver *msolver_new(const struct mosco_clues *cl)
     struct msolver *sv = snew(struct msolver);
     int i, t, d, *fill;
 
-    sv->w = cl->w;
-    sv->h = cl->h;
     sv->n = cl->n;
     sv->k = cl->k;
     sv->clue = cl->clue;
     sv->target = cl->target;
+    memcpy(sv->kcount, cl->kcount, sizeof(sv->kcount));
 
     sv->lstart = snewn(sv->k + 1, int);
     for (i = 0; i <= sv->k; i++) sv->lstart[i] = 0;
@@ -523,6 +580,8 @@ static struct msolver *msolver_new(const struct mosco_clues *cl)
     sv->inq = snewn(sv->qsize, unsigned char);
     memset(sv->inq, 0, sv->qsize);
     sv->qhead = sv->qlen = 0;
+    sv->kindforce = true;
+    sv->work = 1e30;
     return sv;
 }
 
@@ -601,6 +660,42 @@ static void ss_free(struct sstate *ss)
     sfree(ss);
 }
 
+/* Back to the start, without allocating anything */
+static void ss_reset(struct msolver *sv, struct sstate *ss)
+{
+    int i;
+
+    memset(ss->dom, (1 << NDIR) - 1, sv->n);
+    for (i = 0; i < sv->k; i++) {
+        ss->cmin[i] = 0;
+        ss->cmax[i] = sv->lstart[i + 1] - sv->lstart[i];
+    }
+    for (i = 0; i < NDIR; i++) {
+        ss->dmin[i] = 0;
+        ss->dmax[i] = sv->n;
+    }
+    sv_drain(sv);
+    for (i = 0; i < sv->k + NDIR; i++) sv_push(sv, i);
+}
+
+static void ss_copy(const struct msolver *sv, struct sstate *dst,
+                    const struct sstate *src)
+{
+    memcpy(dst->dom, src->dom, sv->n);
+    memcpy(dst->cmin, src->cmin, 2 * sv->k * sizeof(int));
+    memcpy(dst->dmin, src->dmin, sizeof(dst->dmin));
+    memcpy(dst->dmax, src->dmax, sizeof(dst->dmax));
+}
+
+/* How many arrows are still open: 0 when every tile is settled */
+static int ss_open(const struct msolver *sv, const struct sstate *ss)
+{
+    int t, c = 0;
+
+    for (t = 0; t < sv->n; t++) c += popcnt8(ss->dom[t]) - 1;
+    return c;
+}
+
 /* Take the arrow d away from tile t: false if that is all that was left */
 static bool ss_remove(struct msolver *sv, struct sstate *ss, int t, int d)
 {
@@ -668,7 +763,7 @@ static bool ss_propagate(struct msolver *sv, struct sstate *ss)
                 }
             }
         } else {
-            int d = id - sv->k, v = sv->n / NDIR, t;
+            int d = id - sv->k, v = sv->kcount[d], t;
 
             if (ss->dmin[d] > v || ss->dmax[d] < v) goto fail;
             if (ss->dmin[d] == v && ss->dmax[d] > v) {
@@ -677,7 +772,7 @@ static bool ss_propagate(struct msolver *sv, struct sstate *ss)
                     if ((dom & (1u << d)) && (dom & (dom - 1)))
                         if (!ss_remove(sv, ss, t, d)) goto fail;
                 }
-            } else if (ss->dmax[d] == v && ss->dmin[d] < v) {
+            } else if (sv->kindforce && ss->dmax[d] == v && ss->dmin[d] < v) {
                 for (t = 0; t < sv->n; t++) {
                     unsigned dom = ss->dom[t];
                     if ((dom & (1u << d)) && (dom & (dom - 1)))
@@ -707,6 +802,111 @@ static bool ss_apply_grid(struct msolver *sv, struct sstate *ss,
                 return false;
             }
     return ss_propagate(sv, ss);
+}
+
+/*
+ * What the level Hard adds: "what if".  A tile that can still have several
+ * arrows is tried with each of them in turn (and the clues and counts are
+ * followed up as usual); if all but one of them end in a contradiction, the
+ * tile has the one that is left.  Returns 1 if there is such a tile (it is
+ * settled in ss, and what follows from that is not followed up), 0 if there
+ * is none and -1 if some tile has no arrow that doesn't end in a
+ * contradiction (then the position is no good).  scratch is a state of the
+ * same solver, used for the tries.  The tile with the fewest arrows to try
+ * comes first, and the tile and its arrow are given if the pointers aren't
+ * NULL.
+ */
+static int ss_whatif(struct msolver *sv, struct sstate *ss,
+                     struct sstate *scratch, int *tile, int *dir)
+{
+    int pass, t, e;
+
+    for (pass = 2; pass <= NDIR; pass++) {
+        for (t = 0; t < sv->n; t++) {
+            unsigned dom = ss->dom[t], refuted = 0, rest;
+
+            if (!(dom & (dom - 1)) || popcnt8(dom) != pass) continue;
+            for (e = 0; e < NDIR; e++) {
+                if (!(dom & (1u << e))) continue;
+                sv->work -= (double)sv->n + 2.0 * sv->k;
+                if (sv->work < 0) return 0;
+                ss_copy(sv, scratch, ss);
+                if (!ss_assign(sv, scratch, t, e) ||
+                    !ss_propagate(sv, scratch)) {
+                    sv_drain(sv);
+                    refuted |= 1u << e;
+                }
+            }
+            if (refuted == dom) return -1;
+            rest = dom & ~refuted;
+            if (!(rest & (rest - 1))) {
+                if (tile) *tile = t;
+                if (dir) *dir = lowbit(rest);
+                if (!ss_assign(sv, ss, t, lowbit(rest))) {
+                    sv_drain(sv);
+                    return -1;
+                }
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+/*
+ * Follow up the clues as far as the level lets one: 1 if every tile is
+ * settled (that is the one solution), 0 if not, -1 if it comes to a
+ * contradiction.  ss must be at the start or on its way (what has been laid
+ * is in it); the state is changed.
+ */
+static int solve_level(struct msolver *sv, struct sstate *ss,
+                       struct sstate *scratch, int level)
+{
+    sv->kindforce = level >= DIFF_NORMAL;
+    for (;;) {
+        int r;
+
+        if (!ss_propagate(sv, ss)) return -1;
+        if (ss_open(sv, ss) == 0) return 1;
+        if (level < DIFF_HARD) return 0;
+        r = ss_whatif(sv, ss, scratch, NULL, NULL);
+        if (r <= 0) return r;
+    }
+}
+
+/*
+ * How much work the reasoning may take where a person is waiting for it (a
+ * hint, Solve): far more than any puzzle that is made here needs.
+ */
+#define LOGIC_WORK 2e9
+
+/*
+ * The arrangement that the clues lead to by reasoning alone, as far as the
+ * level Hard goes, with the arrows of grid (if it isn't NULL) laid: 1 and the
+ * arrangement in sol if that is the end of it, 0 if the reasoning stops short
+ * (or has used up its work), -1 if the clues and the arrows can't be met.
+ */
+static int logical_solution(const struct mosco_clues *cl,
+                            const signed char *grid, signed char *sol)
+{
+    struct msolver *sv = msolver_new(cl);
+    struct sstate *ss = ss_new(sv), *scratch;
+    int r, t;
+
+    sv->work = LOGIC_WORK;
+    if (grid && !ss_apply_grid(sv, ss, grid, -1)) {
+        r = -1;
+    } else {
+        scratch = ss_dup(sv, ss);
+        r = solve_level(sv, ss, scratch, DIFF_HARD);
+        ss_free(scratch);
+    }
+    if (r == 1 && sol)
+        for (t = 0; t < cl->n; t++) sol[t] = lowbit(ss->dom[t]);
+    sv_drain(sv);
+    ss_free(ss);
+    msolver_free(sv);
+    return r;
 }
 
 #define MAX_SEARCH_DEPTH 3000
@@ -823,7 +1023,7 @@ static bool anneal(const struct mosco_clues *cl, const signed char *grid,
     signed char *pool = snewn(n, signed char);
     bool found = false;
 
-    for (d = 0; d < NDIR; d++) rem[d] = n / NDIR;
+    for (d = 0; d < NDIR; d++) rem[d] = cl->kcount[d];
     for (i = 0; i < n; i++) {
         if (grid && grid[i] >= 0) {
             out[i] = grid[i];
@@ -954,6 +1154,941 @@ static int find_solution(const struct mosco_clues *cl, const signed char *grid,
         return res;
     }
     return -1;
+}
+
+/* ----------------------------------------------------------------------
+ * The generator
+ *
+ * A puzzle is the clues of an arrangement, and the arrangement has to be the
+ * only one that comes to these clues, and one that the reasoning of the level
+ * gets to without a guess.  An arrangement that is made at random is hardly
+ * ever that (the clues are far too few to say where the arrows of a big arena
+ * are), so there are two ways of looking for one.
+ *
+ * The search.  Start with a random arrangement that has the right number of
+ * every kind, swap the arrows of two tiles (that keeps the number of every
+ * kind right) and keep the swap if the number of arrows that are still open
+ * after the reasoning of the level isn't any bigger - or, now and then, if it
+ * is a little bigger, less so as it goes (that is simulated annealing); and
+ * go on until nothing is open.  Every swap takes a round of reasoning over
+ * the whole board, so this is for boards of a few dozen tiles.
+ *
+ * The chain.  Put the clue squares in a random order and let every tile point
+ * at the first of them that it can.  The first square then has all the tiles
+ * that can point at it pointing at it, the second all but those that went to
+ * the first, and so on: every clue is as big as it can be once those before
+ * it are out of the way, and that is just what the reasoning of Easy sees,
+ * one clue after the other, so nothing but the one arrangement comes to these
+ * clues.  That costs next to nothing, whatever the size of the arena (the
+ * kinds of arrow have to come out right, and the order is shuffled until they
+ * do).  A big board is made with it, but for a patch of it - the core: the
+ * tiles all of whose squares are left out of the chain - which is a small
+ * puzzle of its own, with the clue squares that its tiles can point at and
+ * the kinds of arrow that the chain leaves over.  The search is done on that,
+ * for the level that is wanted.  (The chain can't see the core and the core
+ * can't see the chain: the core's squares are pointed at by the core's tiles
+ * only, and the squares of the chain by the tiles of the chain only.  So the
+ * whole puzzle takes the reasoning that the core takes, besides the Easy one
+ * of the chain.)
+ *
+ * Levels (see the comment at the top for what each of them may use):
+ *   Easy:   nothing is open after the reasoning of Easy
+ *   Normal: nothing is open after that of Normal, but there is after Easy's
+ *   Hard:   some arrows are open after that of Normal, but with a "what if"
+ *           here and there all of them can be told
+ */
+
+/* Boards with up to this many tiles are done by the search alone */
+#define SEARCH_TILES 72
+/* The core of a bigger board has about this many tiles (and at most
+ * SEARCH_TILES).  A small core is found as easily as a big one, and a
+ * puzzle that is no good as a core is soon given up: so many short goes, at
+ * other places of the board, are better than a few long ones. */
+#define CORE_TILES_EASY 32
+#define CORE_TILES 24
+#define CORE_ITERS 300
+/* The core of a puzzle that is not Easy has at least about this many tiles
+ * (a smaller one is hardly a puzzle of the level) */
+#define MIN_CORE 6
+/* Boards up to this size that have no chain are left to the search too */
+#define SEARCH_MAX_TILES 256
+/*
+ * How much work a level may take at most, before the one below is looked at
+ * (Easy has the last say and doesn't stop at the first limit).  The unit of
+ * it is about what a step of the annealing takes for a tile: some tens of
+ * nanoseconds.  It is a number of steps and not a time so that the same
+ * seed makes the same puzzle on any machine, fast or slow.
+ */
+#define LEVEL_WORK 1.5e8
+#define EASY_WORK 2e9
+
+struct mrand {
+    unsigned long long s;
+};
+
+static unsigned mrand_next(struct mrand *r)
+{
+    r->s ^= r->s >> 12;
+    r->s ^= r->s << 25;
+    r->s ^= r->s >> 27;
+    return (unsigned)((r->s * 0x2545F4914F6CDD1DULL) >> 32);
+}
+
+static unsigned mrand_below(struct mrand *r, unsigned n)
+{
+    return mrand_next(r) % n;
+}
+
+struct gen {
+    struct msolver *sv;
+    struct sstate *ss, *scratch, *check;
+    struct mosco_clues *cl;     /* the clues of sol (changed with it) */
+    signed char *sol;
+    int n, k, level, theta;
+    int *und[2];                /* the tiles that are open, of the kept position and of the try */
+    int nund[2];
+    long spent;                 /* the swaps that the last go has looked at */
+    struct mrand rng;
+};
+
+#define gen_rand(g) mrand_next(&(g)->rng)
+
+/* A generator for puzzles of the shape of shape (the clues of it are not used) */
+static struct gen *gen_new(const struct mosco_clues *shape, int level,
+                           unsigned long long seed)
+{
+    struct gen *g = snew(struct gen);
+    int i;
+
+    g->n = shape->n;
+    g->k = shape->k;
+    g->level = level;
+    g->theta = 4 + g->n / 8;
+    g->cl = clues_new_core(shape->n, shape->k, shape->target, shape->kcount);
+    g->sv = msolver_new(g->cl);
+    g->ss = ss_new(g->sv);
+    sv_drain(g->sv);
+    g->scratch = ss_new(g->sv);
+    sv_drain(g->sv);
+    g->check = ss_new(g->sv);
+    sv_drain(g->sv);
+    g->sol = snewn(g->n, signed char);
+    for (i = 0; i < 2; i++) {
+        g->und[i] = snewn(g->n, int);
+        g->nund[i] = 0;
+    }
+    g->spent = 0;
+    g->rng.s = seed | 1;
+    return g;
+}
+
+static void gen_free(struct gen *g)
+{
+    ss_free(g->ss);
+    ss_free(g->scratch);
+    ss_free(g->check);
+    msolver_free(g->sv);
+    clues_free(g->cl);
+    sfree(g->sol);
+    sfree(g->und[0]);
+    sfree(g->und[1]);
+    sfree(g);
+}
+
+/* The clues that an arrangement comes to */
+static void arrangement_clues(const struct mosco_clues *cl,
+                              const signed char *sol, int *clue)
+{
+    int i;
+
+    for (i = 0; i < cl->k; i++) clue[i] = 0;
+    for (i = 0; i < cl->n; i++)
+        clue[cl->target[i * NDIR + sol[i]]]++;
+}
+
+static void gen_make_clues(struct gen *g)
+{
+    arrangement_clues(g->cl, g->sol, g->cl->clue);
+}
+
+/* Swap the arrows of two tiles (and the clues with it); doing it again
+ * takes it back */
+static void gen_swap(struct gen *g, int a, int b)
+{
+    int da = g->sol[a], db = g->sol[b];
+    int *clue = g->cl->clue;
+    const int *target = g->cl->target;
+
+    clue[target[a * NDIR + da]]--;
+    clue[target[b * NDIR + db]]--;
+    clue[target[a * NDIR + db]]++;
+    clue[target[b * NDIR + da]]++;
+    g->sol[a] = db;
+    g->sol[b] = da;
+}
+
+/*
+ * The position that the clues of sol come to, after what the level can
+ * reason out (Hard starts with what Normal can): the number of arrows
+ * that are open.  The state is left in g->ss and the tiles that are open in
+ * g->und[which].
+ */
+static int gen_cost(struct gen *g, int which)
+{
+    int t, cost = 0;
+    bool ok;
+
+    g->sv->kindforce = g->level >= DIFF_NORMAL;
+    ss_reset(g->sv, g->ss);
+    ok = ss_propagate(g->sv, g->ss);
+    assert(ok);                 /* an arrangement meets its own clues */
+    (void)ok;
+    g->nund[which] = 0;
+    for (t = 0; t < g->n; t++) {
+        int pc = popcnt8(g->ss->dom[t]);
+        if (pc > 1) {
+            cost += pc - 1;
+            g->und[which][g->nund[which]++] = t;
+        }
+    }
+    return cost;
+}
+
+/*
+ * Is the position in g->ss (with the cost) a puzzle of the level?  1 if it
+ * is; 2 if it is just short of that - the reasoning of the level gets to the
+ * end but so does that of the level below (or, for Hard, that of Normal),
+ * which is where the search for one that does need the more sets out from;
+ * and 0 if it is none of that.
+ */
+static int gen_done(struct gen *g, int cost)
+{
+    if (g->level == DIFF_EASY)
+        return cost == 0;
+    if (g->level == DIFF_NORMAL) {
+        if (cost > 0) return 0;
+        /* does Easy get to the end as well? */
+        g->sv->kindforce = false;
+        ss_reset(g->sv, g->check);
+        if (!ss_propagate(g->sv, g->check)) { sv_drain(g->sv); return 0; }
+        return ss_open(g->sv, g->check) > 0 ? 1 : 2;
+    }
+    if (cost == 0) return 2;
+    if (cost > g->theta) return 0;
+    ss_copy(g->sv, g->check, g->ss);
+    return solve_level(g->sv, g->check, g->scratch, DIFF_HARD) == 1;
+}
+
+/*
+ * What the chance is (of 65536) of keeping a swap that makes it worse by one
+ * open arrow, for the sixteen steps of the cooling: e^(-1/T) for T that goes
+ * from 3 down to 0.3.  (Done with whole numbers so that the same seed makes
+ * the same puzzle on any machine.)  With d open arrows more it is that to
+ * the power d.
+ */
+static const unsigned short sa_keep[16] = {
+    46959, 44432, 41657, 38641, 35398, 31959, 28369, 24690,
+    20998, 17384, 13949, 10791, 8000, 5643, 3757, 2338
+};
+
+/* A random arrangement with the right number of every kind of arrow */
+static void random_arrangement(const struct mosco_clues *cl, signed char *sol,
+                               struct mrand *rng)
+{
+    int n = cl->n, pos = 0, d, c, i;
+
+    for (d = 0; d < NDIR; d++)
+        for (c = 0; c < cl->kcount[d]; c++) sol[pos++] = d;
+    assert(pos == n);
+    for (i = n - 1; i > 0; i--) {
+        int j = mrand_below(rng, i + 1);
+        signed char t = sol[i];
+        sol[i] = sol[j];
+        sol[j] = t;
+    }
+}
+
+/*
+ * One go: a random arrangement and iters swaps.  True if a puzzle of the
+ * level has come out (the arrangement is g->sol, and its clues are in g->cl).
+ *
+ * For Normal and Hard the first part may get to an arrangement that is just
+ * short of one (see gen_done), and then the swaps go on among those: a swap
+ * is kept as long as the reasoning of the level still gets to the end, and
+ * for Hard every swap that is not kept is looked at as well - if the basic
+ * reasoning stops short but a "what if" gets to the end, that is the puzzle.
+ */
+static bool gen_attempt(struct gen *g, long iters)
+{
+    int n = g->n, kept = 0, cost, cur, r;
+    long it;
+
+    g->spent = 0;
+    random_arrangement(g->cl, g->sol, &g->rng);
+    gen_make_clues(g);
+    cost = gen_cost(g, kept);
+    cur = cost;
+    r = gen_done(g, cost);
+    if (r == 1) return true;
+
+    for (it = 0; r == 0 && it < iters; it++) {
+        int a, b, c2, d;
+
+        g->spent = it + 1;
+
+        if (g->nund[kept] > 0 && (gen_rand(g) & 3))
+            a = g->und[kept][gen_rand(g) % g->nund[kept]];
+        else
+            a = gen_rand(g) % n;
+        b = gen_rand(g) % n;
+        if (g->sol[a] == g->sol[b]) continue;
+
+        gen_swap(g, a, b);
+        c2 = gen_cost(g, 1 - kept);
+        d = c2 - cur;
+        if (d > 0) {
+            unsigned keep = sa_keep[it * 16 / iters], chance = 65536;
+            int j;
+            for (j = 0; j < d && chance; j++) chance = (chance * keep) >> 16;
+            if ((gen_rand(g) & 0xffff) >= chance) {
+                gen_swap(g, a, b);
+                continue;
+            }
+        }
+        cur = cost = c2;
+        kept = 1 - kept;
+        r = gen_done(g, cost);
+        if (r == 1) return true;
+    }
+    if (r != 2) return false;
+
+    /* on from there, among the arrangements that are just short */
+    for (it = 0; it < iters / 2; it++) {
+        int a = gen_rand(g) % n, b = gen_rand(g) % n, c2;
+
+        g->spent = iters + it + 1;
+        if (g->sol[a] == g->sol[b]) continue;
+        gen_swap(g, a, b);
+        c2 = gen_cost(g, 1 - kept);
+        if (c2 == 0 || g->level == DIFF_HARD) {
+            r = gen_done(g, c2);
+            if (r == 1) return true;
+            if (r == 2) continue;       /* it is still just short: keep it */
+        }
+        gen_swap(g, a, b);
+    }
+    return false;
+}
+
+/* The number of swaps that a go takes, by the size of the arena */
+static long gen_iters(int n)
+{
+    return 4500L * n;
+}
+
+/*
+ * The clues of the board cl are set to those of sol: does the reasoning of
+ * the level bring them to sol, and does that of the level below not?  (sv is
+ * the solver of cl.  The one that checks has nothing to do with how the
+ * puzzle was made.)
+ */
+static bool verify_puzzle(struct msolver *sv, const signed char *sol, int level)
+{
+    struct sstate *s1 = ss_new(sv), *s2 = ss_new(sv);
+    bool ok = false;
+    int i;
+
+    ss_reset(sv, s1);           /* every constraint is to be looked at */
+    if (solve_level(sv, s1, s2, level) == 1) {
+        ok = true;
+        for (i = 0; i < sv->n; i++)
+            if (lowbit(s1->dom[i]) != sol[i]) ok = false;
+        if (ok && level > DIFF_EASY) {
+            ss_reset(sv, s1);
+            if (solve_level(sv, s1, s2, level - 1) == 1) ok = false;
+        }
+    }
+    sv_drain(sv);
+    sv->kindforce = true;
+    ss_free(s1);
+    ss_free(s2);
+    return ok;
+}
+
+#ifdef MOSCO_DEBUG
+static int dbg_core_easy = -1, dbg_core_hard = -1, dbg_core_iters = -1, dbg_core_goes = -1;
+#endif
+#ifdef MOSCO_DEBUG
+struct mosco_stats { long blocks, toobig, infeasible, nobalance, coresearch, corefail, verifyfail, found; long coresum; };
+static struct mosco_stats mstats;
+#define STAT(x) (mstats.x++)
+#else
+#define STAT(x) ((void)0)
+#endif
+
+/* How many goes of the search at most for the same core or board */
+#define SEARCH_GOES 100
+#define CORE_GOES 12
+/* How many cores and chains at most */
+#define CHAIN_GOES 200
+/* The chain needs this many clue squares to come out right with the kinds of arrow */
+#define CHAIN_SQUARES 24
+
+/* The search on a board with few tiles (work: how much of it is left, see
+ * LEVEL_WORK) */
+static bool gen_search(struct mosco_clues *cl, struct msolver *sv, int level,
+                       struct mrand *rng, signed char *sol, double *work)
+{
+    struct gen *g;
+    long iters = gen_iters(cl->n);
+    int attempt;
+    bool found = false;
+
+    g = gen_new(cl, level, ((unsigned long long)mrand_next(rng) << 32) | mrand_next(rng));
+    for (attempt = 0; attempt < SEARCH_GOES && !found && *work > 0; attempt++) {
+        bool ok = gen_attempt(g, iters);
+
+        *work -= (double)g->spent * cl->n;
+        if (!ok) continue;
+        memcpy(sol, g->sol, cl->n);
+        arrangement_clues(cl, sol, cl->clue);
+        found = verify_puzzle(sv, sol, level);
+        *work -= 20.0 * cl->n;
+    }
+    gen_free(g);
+    return found;
+}
+
+/*
+ * The chain: what the tiles of a board are made to point at by the clue
+ * squares that are in it.  Every square of the chain has a key, and the
+ * order of the chain is that of the keys (the same key: the number of the
+ * square first).
+ */
+struct chain {
+    const struct mosco_clues *cl;       /* the board */
+    const struct msolver *sv;           /* the tiles that can point at each clue */
+    long long *key;                     /* k: the place of a clue square in the order,
+                                         * KEY_NONE if it is not in the chain */
+    signed char *claim;                 /* n: the arrow a tile gets, -1 if none does */
+    int count[NDIR];                    /* how many tiles have each arrow */
+    long spent;                         /* the work that the last balance has taken */
+};
+
+#define KEY_NONE LLONG_MAX
+
+/* Is the square c1 of the chain before the square c2 of it? */
+static bool chain_before(const struct chain *ch, int c1, int c2)
+{
+    return ch->key[c1] < ch->key[c2] ||
+           (ch->key[c1] == ch->key[c2] && c1 < c2);
+}
+
+/* The arrow of tile t that points at the first square of the chain that it can
+ * point at, leaving out the arrow skip (-1: none): -1 if there is none */
+static int chain_arrow_but(const struct chain *ch, int t, int skip)
+{
+    const int *tg = ch->cl->target + t * NDIR;
+    int d, ad = -1;
+
+    for (d = 0; d < NDIR; d++) {
+        if (d == skip || ch->key[tg[d]] == KEY_NONE) continue;
+        if (ad < 0 || chain_before(ch, tg[d], tg[ad])) ad = d;
+    }
+    return ad;
+}
+
+static void chain_refresh(struct chain *ch, int t)
+{
+    int a = chain_arrow_but(ch, t, -1), old = ch->claim[t];
+
+    if (a != old) {
+        if (old >= 0) ch->count[old]--;
+        if (a >= 0) ch->count[a]++;
+        ch->claim[t] = a;
+    }
+}
+
+/* The clue square c has a new place in the order: look at the tiles that can point at it */
+static void chain_refresh_square(struct chain *ch, int c)
+{
+    int i;
+
+    for (i = ch->sv->lstart[c]; i < ch->sv->lstart[c + 1]; i++)
+        chain_refresh(ch, ch->sv->lcell[i]);
+}
+
+/* How far the numbers of the arrows that are left over (what the board has of
+ * each kind, less what the chain has given) are from lo to hi */
+static int chain_penalty(const struct chain *ch, int lo, int hi)
+{
+    int d, pen = 0;
+
+    for (d = 0; d < NDIR; d++) {
+        int left = ch->cl->kcount[d] - ch->count[d];
+        if (left < lo) pen += lo - left;
+        else if (left > hi) pen += left - hi;
+    }
+    return pen;
+}
+
+/*
+ * Change the places of squares of the chain now and then (sq has the nq
+ * squares of it) until the arrows that are left over come to between lo and
+ * hi of each kind.  Most of the changes are made for a purpose: if the chain
+ * gives too few of a kind of arrow, a tile that has another is made to have
+ * this kind by taking the square that it points at with it to before the
+ * square that it has now; if it gives too many, a tile that has one is made
+ * to have its next by taking the square that it points at with it to after
+ * that.  (That changes the other tiles that point at the square as well, so a
+ * change is kept only if the numbers don't come out worse.)  False if it
+ * hasn't worked out within the work (about the number of tiles that have
+ * been looked at).
+ */
+static bool chain_balance(struct chain *ch, const int *sq, int nq, int lo, int hi,
+                          struct mrand *rng, long work)
+{
+    int n = ch->cl->n, pen = chain_penalty(ch, lo, hi);
+    const int *lstart = ch->sv->lstart;
+    const int *target = ch->cl->target;
+
+    ch->spent = 0;
+    while (work > 0 && pen > 0 && nq >= 1) {
+        int c = -1, d, np, tries, nfew = 0, nmany = 0;
+        int few[NDIR], many[NDIR];
+        long long oldkey;
+        unsigned mode = mrand_below(rng, 8);
+
+        work--;
+        ch->spent++;
+        for (d = 0; d < NDIR; d++) {
+            int left = ch->cl->kcount[d] - ch->count[d];
+            if (left > hi) few[nfew++] = d;
+            else if (left < lo) many[nmany++] = d;
+        }
+
+        if (mode < 5 && (nfew > 0 || nmany > 0)) {
+            bool more = nfew > 0 && (nmany == 0 || (mrand_next(rng) & 1));
+            int kind = more ? few[mrand_below(rng, nfew)] : many[mrand_below(rng, nmany)];
+            long long newkey = 0;
+            bool have = false;
+
+            /* of some tiles (at random) the one that gives the smallest
+             * change of the place of the square */
+            for (tries = 0; tries < 40; tries++) {
+                int t = (int)mrand_below(rng, n), cur = ch->claim[t];
+                int sqr;
+                long long nk;
+
+                if (cur < 0) continue;
+                if (more) {
+                    sqr = target[t * NDIR + kind];
+                    if (cur == kind || ch->key[sqr] == KEY_NONE) continue;
+                    nk = ch->key[target[t * NDIR + cur]] - 1;
+                    if (!have || nk > newkey) {
+                        have = true;
+                        c = sqr;
+                        newkey = nk;
+                    }
+                } else {
+                    int next;
+                    if (cur != kind) continue;
+                    next = chain_arrow_but(ch, t, kind);
+                    if (next < 0) continue;
+                    nk = ch->key[target[t * NDIR + next]] + 1;
+                    if (!have || nk < newkey) {
+                        have = true;
+                        c = target[t * NDIR + kind];
+                        newkey = nk;
+                    }
+                }
+            }
+            if (!have) continue;
+            oldkey = ch->key[c];
+            ch->key[c] = newkey;
+        } else {
+            /* any square, to some other place */
+            c = sq[mrand_below(rng, nq)];
+            oldkey = ch->key[c];
+            if (mrand_next(rng) & 1)
+                ch->key[c] = ((long long)(mrand_next(rng) & 0x7fffffff) << 24) + c;
+            else
+                ch->key[c] = oldkey + (long long)(mrand_next(rng) & 0x7ffffff) - 0x4000000;
+        }
+        work -= 2 * (lstart[c + 1] - lstart[c]);
+        ch->spent += 2 * (lstart[c + 1] - lstart[c]);
+        chain_refresh_square(ch, c);
+        np = chain_penalty(ch, lo, hi);
+        if (np <= pen) {
+            pen = np;
+        } else {
+            ch->key[c] = oldkey;
+            chain_refresh_square(ch, c);
+        }
+    }
+    return pen == 0;
+}
+
+/*
+ * Could a chain of the squares that are not in the core (in_core_sq) come out
+ * right?  A quick look that says no to the blocks that would be a waste of
+ * the work of the balance:
+ *
+ * - a kind of arrow that the chain can't make enough of (the tiles that have
+ *   a chain square in that direction are too few), or can't help making too
+ *   many of (the tiles that have just one chain square, and in that
+ *   direction);
+ * - the tiles of a line (a column, a row or a diagonal) can have the arrow
+ *   to one end of it or the arrow to the other end, but not some of each, as
+ *   the one of the two squares that comes first in the order takes them all.
+ *   So a line that has a square of the chain at one end only can give that
+ *   arrow only, a line that has both can give either (all its tiles or none),
+ *   and the lines that have both have to be shared out so that both arrows
+ *   have enough.  (In a board that is a strip the tiles of a column all point
+ *   at the same two squares, and there it matters a good deal.)
+ */
+static bool chain_feasible(const struct mosco_clues *cl,
+                           const unsigned char *in_core_sq, int lo, int hi)
+{
+    static const int fam_dir[4] = { UP, LEFT, UP_LEFT, DOWN_LEFT };
+    int w = cl->w, h = cl->h, n = cl->n, t, d, f, i;
+    int pmax[NDIR], pmin[NDIR];
+    int nline[4];
+    int *lsize[4];
+    unsigned char *lend[4];
+    bool ok = true;
+
+    nline[0] = w;
+    nline[1] = h;
+    nline[2] = nline[3] = w + h - 1;
+    for (f = 0; f < 4; f++) {
+        lsize[f] = snewn(nline[f], int);
+        lend[f] = snewn(nline[f], unsigned char);
+        memset(lsize[f], 0, nline[f] * sizeof(int));
+        memset(lend[f], 0, nline[f]);
+    }
+    for (d = 0; d < NDIR; d++) pmax[d] = pmin[d] = 0;
+    for (t = 0; t < n; t++) {
+        int x = t % w, y = t / w, cnt = 0, last = -1;
+        int id[4];
+
+        for (d = 0; d < NDIR; d++)
+            if (!in_core_sq[cl->target[t * NDIR + d]]) {
+                pmax[d]++;
+                cnt++;
+                last = d;
+            }
+        if (cnt == 1) pmin[last]++;
+        if (cnt == 0) continue;         /* a tile of the core */
+        id[0] = x;
+        id[1] = y;
+        id[2] = x - y + h - 1;
+        id[3] = x + y;                  /* (x and y from 0) */
+        for (f = 0; f < 4; f++) {
+            int d1 = fam_dir[f], d2 = d1 + NDIR / 2;
+            lsize[f][id[f]]++;
+            lend[f][id[f]] = (!in_core_sq[cl->target[t * NDIR + d1]] ? 1 : 0) |
+                             (!in_core_sq[cl->target[t * NDIR + d2]] ? 2 : 0);
+        }
+    }
+    for (d = 0; d < NDIR; d++)
+        if (pmax[d] < cl->kcount[d] - hi || pmin[d] > cl->kcount[d] - lo)
+            ok = false;
+
+    for (f = 0; f < 4 && ok; f++) {
+        int d1 = fam_dir[f], d2 = d1 + NDIR / 2;
+        int a1 = 0, a2 = 0, nflex = 0, sf1, sf2;
+        int *flex = snewn(nline[f], int);
+
+        for (i = 0; i < nline[f]; i++) {
+            if (!lsize[f][i]) continue;
+            if (lend[f][i] == 1) a1 += lsize[f][i];
+            else if (lend[f][i] == 2) a2 += lsize[f][i];
+            else if (lend[f][i] == 3) flex[nflex++] = lsize[f][i];
+        }
+        sf1 = cl->kcount[d1] - hi - a1;
+        sf2 = cl->kcount[d2] - hi - a2;
+        if (sf1 < 0) sf1 = 0;
+        if (sf2 < 0) sf2 = 0;
+        /* the big lines first, each to the arrow that needs more */
+        while (nflex > 0 && (sf1 > 0 || sf2 > 0)) {
+            int best = 0;
+            for (i = 1; i < nflex; i++)
+                if (flex[i] > flex[best]) best = i;
+            if (sf1 >= sf2) sf1 -= flex[best];
+            else sf2 -= flex[best];
+            if (sf1 < 0) sf1 = 0;
+            if (sf2 < 0) sf2 = 0;
+            flex[best] = flex[--nflex];
+        }
+        if (sf1 > 0 || sf2 > 0) ok = false;
+        sfree(flex);
+    }
+    for (f = 0; f < 4; f++) {
+        sfree(lsize[f]);
+        sfree(lend[f]);
+    }
+    return ok;
+}
+
+/*
+ * A puzzle of the level for the board cl (the clues of it are set): the
+ * arrangement is sol.  The core is a patch of about core_target tiles (none:
+ * the chain does it all).  False if it hasn't worked out.
+ */
+static bool gen_chain(struct mosco_clues *cl, struct msolver *sv, int level,
+                      struct mrand *rng, signed char *sol, int core_target,
+                      int min_core, double *work)
+{
+    int w = cl->w, h = cl->h, n = cl->n, k = cl->k, t, c, d, i, attempt;
+    struct chain ch;
+    unsigned char *in_core_sq = snewn(k, unsigned char);
+    int *sq = snewn(k, int);
+    int *sidx = snewn(k, int);
+    int *core_tiles = snewn(SEARCH_TILES + 1, int);
+    bool found = false;
+
+    ch.cl = cl;
+    ch.sv = sv;
+    ch.key = snewn(k, long long);
+    ch.claim = snewn(n, signed char);
+
+    for (attempt = 0; attempt < CHAIN_GOES && !found && *work > 0; attempt++) {
+        int m = core_target;
+        int nk = 0, nq = 0, ns = 0, lo = 0, hi = 0, slack, tries = 0;
+        bool usable = m == 0, balanced;
+
+        STAT(blocks);
+        memset(in_core_sq, 0, k);
+        while (m > 0) {
+            /* A block of about m tiles anywhere in the board; the core is
+             * the tiles that can only point at the clue squares that the
+             * tiles of the block can point at, and the chain is all the
+             * other squares.  The chain needs squares enough, and of the
+             * right kinds, to come out right with the numbers of arrows,
+             * and the core mustn't be too big a puzzle: so another block
+             * if it is no good, and a smaller one if that goes on (a small
+             * board has a small core or none).  The more square the block,
+             * the fewer clue squares its tiles can point at. */
+            static const int shape[7] = { 4, 2, 8, 1, 16, 3, 6 };
+            int root = 1, a, b, x0, y0, x, y;
+            bool fits = true;
+
+            while ((root + 1) * (root + 1) <= m) root++;
+            a = root * shape[mrand_below(rng, 2) ? 0 : (int)mrand_below(rng, 7)] / 4;
+            if (a < 1) a = 1;
+            if (a > w) a = w;
+            b = (m + a - 1) / a;
+            if (b > h) {
+                b = h;
+                a = (m + b - 1) / b;
+                if (a > w) a = w;
+            }
+            x0 = (int)mrand_below(rng, w - a + 1);
+            y0 = (int)mrand_below(rng, h - b + 1);
+            memset(in_core_sq, 0, k);
+            ns = 0;
+            for (y = y0; y < y0 + b; y++)
+                for (x = x0; x < x0 + a; x++)
+                    for (d = 0; d < NDIR; d++) {
+                        int c2 = cl->target[(y * w + x) * NDIR + d];
+                        if (!in_core_sq[c2]) {
+                            in_core_sq[c2] = 1;
+                            ns++;
+                        }
+                    }
+            nk = 0;
+            for (t = 0; t < n && fits; t++) {
+                for (d = 0; d < NDIR; d++)
+                    if (!in_core_sq[cl->target[t * NDIR + d]]) break;
+                if (d == NDIR) {
+                    if (nk >= SEARCH_TILES) fits = false;
+                    else core_tiles[nk++] = t;
+                }
+            }
+            *work -= 2.0 * n;           /* (what the look at the block takes) */
+            if (fits && k - ns >= CHAIN_SQUARES) {
+                /* what the chain may leave of each kind: about nk / 8, and
+                 * the more tiles the core has the more it may be off (and
+                 * the more often it has gone wrong a little more, but not
+                 * much: a core with uneven kinds is a hard search) */
+                slack = (nk + 15) / 16 + (attempt / 8 < 3 ? attempt / 8 : 3);
+                lo = nk / NDIR - slack;
+                if (lo < 0) lo = 0;
+                hi = (nk + NDIR - 1) / NDIR + slack;
+                if (chain_feasible(cl, in_core_sq, lo, hi)) {
+                    usable = true;
+                    break;
+                }
+                STAT(infeasible);
+            } else {
+                STAT(toobig);
+            }
+            if (++tries % 6 == 0) {
+                if (m <= min_core) break;
+                m = m * 3 / 4;
+                if (m < min_core) m = min_core;
+            }
+            if (*work <= 0) break;
+        }
+        if (m == 0) {
+            /* no core: the chain does it all */
+            memset(in_core_sq, 0, k);
+            nk = ns = 0;
+            usable = true;
+            lo = 0;
+            hi = 0;
+        }
+        if (!usable) continue;
+
+        /* the other squares are the chain, in a random order */
+        for (c = 0; c < k; c++) {
+            if (in_core_sq[c]) {
+                ch.key[c] = KEY_NONE;
+            } else {
+                sq[nq++] = c;
+                ch.key[c] = ((long long)(mrand_next(rng) & 0x7fffffff) << 24) + c;
+            }
+        }
+        for (d = 0; d < NDIR; d++) ch.count[d] = 0;
+        for (t = 0; t < n; t++) {
+            ch.claim[t] = -1;
+            chain_refresh(&ch, t);
+        }
+
+        balanced = chain_balance(&ch, sq, nq, lo, hi, rng, 20000000L + 50L * n);
+        *work -= (double)ch.spent + 4.0 * n;
+        if (!balanced) {
+            STAT(nobalance);
+#ifdef MOSCO_DEBUG
+            if (getenv("MOSCO_TRACE")) {
+                fprintf(stderr, "nobalance: attempt %d m %d nk %d ns %d nq %d window [%d,%d] left:", attempt, m, nk, ns, nq, lo, hi);
+                for (d = 0; d < NDIR; d++) fprintf(stderr, " %d", cl->kcount[d] - ch.count[d]);
+                fprintf(stderr, "\n");
+            }
+#endif
+            continue;
+        }
+
+        if (nk == 0) {
+            memcpy(sol, ch.claim, n);
+        } else {
+            /* the core as a puzzle of its own */
+            struct mosco_clues *core;
+            struct gen *g;
+            int *ctarget = snewn(nk * NDIR, int);
+            int kc[NDIR], goes, ngoes;
+            long iters;
+            bool core_ok = false;
+
+            for (c = 0, ns = 0; c < k; c++) sidx[c] = in_core_sq[c] ? ns++ : -1;
+            for (i = 0; i < nk; i++)
+                for (d = 0; d < NDIR; d++)
+                    ctarget[i * NDIR + d] = sidx[cl->target[core_tiles[i] * NDIR + d]];
+            for (d = 0; d < NDIR; d++) kc[d] = cl->kcount[d] - ch.count[d];
+            core = clues_new_core(nk, ns, ctarget, kc);
+            g = gen_new(core, level, ((unsigned long long)mrand_next(rng) << 32) | mrand_next(rng));
+            STAT(coresearch);
+#ifdef MOSCO_DEBUG
+            mstats.coresum += nk;
+#endif
+            iters = (long)CORE_ITERS * nk;
+            ngoes = CORE_GOES;
+#ifdef MOSCO_DEBUG
+            if (dbg_core_iters >= 0) iters = (long)dbg_core_iters * nk;
+            if (dbg_core_goes >= 0) ngoes = dbg_core_goes;
+#endif
+            for (goes = 0; goes < ngoes && !core_ok && *work > 0; goes++) {
+                core_ok = gen_attempt(g, iters);
+                *work -= (double)g->spent * nk;
+            }
+            if (core_ok) {
+                for (t = 0; t < n; t++) sol[t] = ch.claim[t];
+                for (i = 0; i < nk; i++) sol[core_tiles[i]] = g->sol[i];
+            }
+            gen_free(g);
+            clues_free(core);
+            sfree(ctarget);
+            if (!core_ok) { STAT(corefail); continue; }
+        }
+
+        arrangement_clues(cl, sol, cl->clue);
+        found = verify_puzzle(sv, sol, level);
+        *work -= 20.0 * n;
+        if (!found) STAT(verifyfail); else STAT(found);
+    }
+
+    sfree(in_core_sq);
+    sfree(sq);
+    sfree(sidx);
+    sfree(core_tiles);
+    sfree(ch.key);
+    sfree(ch.claim);
+    return found;
+}
+
+static char *new_game_desc(const game_params *params, random_state *rs,
+                           char **aux, bool interactive)
+{
+    int w = params->w, h = params->h, n = w * h, k = 2 * w + 2 * h + 4;
+    int i, level;
+    int *zeros = snewn(k, int);
+    struct mosco_clues *cl;
+    struct msolver *sv;
+    struct mrand rng;
+    signed char *sol = snewn(n, signed char);
+    char *desc, *p, *auxs = snewn(n + 1, char);
+    bool found = false;
+
+    for (i = 0; i < k; i++) zeros[i] = 0;
+    cl = clues_new(w, h, zeros);
+    sfree(zeros);
+    sv = msolver_new(cl);
+    rng.s = ((unsigned long long)random_bits(rs, 32) << 32) | random_bits(rs, 32);
+    rng.s |= 1;
+
+    /* If the level can't be had (not for any size that is offered) the one below is */
+    for (level = params->diff; level >= DIFF_EASY && !found; level--) {
+        double work = level == DIFF_EASY ? EASY_WORK : LEVEL_WORK;
+
+        if (n <= SEARCH_TILES) work = 1e30;     /* (the search is all there is) */
+        if (n > SEARCH_TILES) {
+            int ct = level == DIFF_EASY ? CORE_TILES_EASY : CORE_TILES;
+#ifdef MOSCO_DEBUG
+            if (level == DIFF_EASY && dbg_core_easy >= 0) ct = dbg_core_easy;
+            if (level != DIFF_EASY && dbg_core_hard >= 0) ct = dbg_core_hard;
+#endif
+            found = gen_chain(cl, sv, level, &rng, sol, ct,
+                              level == DIFF_EASY ? 0 : MIN_CORE, &work);
+        }
+        /* (a board that has too few clue squares for a chain and a core is
+         * left to the search, as long as that is a matter of seconds) */
+        if (!found && n <= SEARCH_MAX_TILES) {
+            /* (the search is a poor way to a bigger board: it has a share
+             * of the work only) */
+            if (n > SEARCH_TILES && work > LEVEL_WORK / 4) work = LEVEL_WORK / 4;
+            found = gen_search(cl, sv, level, &rng, sol, &work);
+        }
+    }
+    if (!found) {
+        /* There has to be an end: an arrangement at random (the puzzle may
+         * have more solutions) */
+        random_arrangement(cl, sol, &rng);
+        arrangement_clues(cl, sol, cl->clue);
+    }
+
+    desc = snewn(k * 12 + 1, char);
+    p = desc;
+    for (i = 0; i < k; i++)
+        p += sprintf(p, i ? ",%d" : "%d", cl->clue[i]);
+    for (i = 0; i < n; i++) auxs[i] = '0' + sol[i];
+    auxs[n] = '\0';
+    *aux = auxs;
+    sv_drain(sv);
+    msolver_free(sv);
+    clues_free(cl);
+    sfree(sol);
+    return desc;
 }
 
 static bool parse_aux(const char *aux, int n, signed char *out)
@@ -1095,8 +2230,10 @@ static char *solve_game(const game_state *state, const game_state *curr,
     char *ret;
 
     if (!parse_aux(aux, n, sol)) {
-        /* a game that was typed in: there is only the solver to ask */
-        int res = find_solution(state->cl, NULL, NULL, sol, 4);
+        /* a game that was typed in: there is only the solver to ask (the
+         * reasoning first: it is the one solution if it gets to the end) */
+        int res = logical_solution(state->cl, NULL, sol);
+        if (res != 1) res = find_solution(state->cl, NULL, NULL, sol, 4);
         if (res != 1) {
             sfree(sol);
             *error = res == 0 ? "This puzzle has no solution"
@@ -1185,10 +2322,11 @@ static char *hint_game(const game_state *orig, const game_state *curr,
     signed char *sol = snewn(n, signed char);
     bool have_pref = parse_aux(midend_hint_aux, n, pref);
     struct msolver *sv = NULL;
-    struct sstate *root = NULL, *ss = NULL;
+    struct sstate *root = NULL, *ss = NULL, *full = NULL, *scratch = NULL;
     const char *msg = NULL;
     char *ret = NULL;
     bool contradiction;
+    int logical;
 
     /*
      * What is wrong whatever the solutions are: too many arrows pointing
@@ -1211,6 +2349,7 @@ static char *hint_game(const game_state *orig, const game_state *curr,
         }
 
     sv = msolver_new(cl);
+    sv->work = LOGIC_WORK;
     root = ss_new(sv);
     if (!ss_propagate(sv, root)) {
         msg = _("This puzzle has no solution");
@@ -1224,6 +2363,65 @@ static char *hint_game(const game_state *orig, const game_state *curr,
             goto out;
         }
 
+    /*
+     * Do the clues lead to one arrangement by reasoning alone?  (Every
+     * puzzle that is made here does.)  Then that is the solution, an arrow
+     * that isn't like it is a mistake, and what is to be laid next is what
+     * the same reasoning finds when it starts from the arrows that are laid:
+     * a tile that has just one arrow left, or else one where a "what if"
+     * leaves one.
+     */
+    full = ss_dup(sv, root);
+    scratch = ss_dup(sv, root);
+    logical = solve_level(sv, full, scratch, DIFF_HARD);
+    if (logical < 0) {
+        msg = _("This puzzle has no solution");
+        goto out;
+    }
+    if (logical == 1) {
+        int best = -1, bestn = NDIR + 1, wt, wd;
+
+        for (t = 0; t < n; t++) sol[t] = lowbit(full->dom[t]);
+        for (t = 0; t < n; t++)
+            if (curr->grid[t] >= 0 && curr->grid[t] != sol[t]) {
+                msg = mistake_message(w, t);
+                goto out;
+            }
+        ss = ss_dup(sv, root);
+        if (!ss_apply_grid(sv, ss, curr->grid, -1)) {
+            msg = _("The arrows laid so far can't all be right");
+            goto out;
+        }
+        for (t = 0; t < n; t++)
+            if (curr->grid[t] < 0 && !(ss->dom[t] & (ss->dom[t] - 1))) {
+                ret = hint_move(w, t, lowbit(ss->dom[t]));
+                goto out;
+            }
+        if (ss_whatif(sv, ss, scratch, &wt, &wd) == 1 && curr->grid[wt] < 0) {
+            ret = hint_move(w, wt, wd);
+            goto out;
+        }
+        /* (the reasoning has used up its work: a tile of the solution) */
+        for (t = 0; t < n; t++)
+            if (curr->grid[t] < 0) {
+                int pc = popcnt8(ss->dom[t]);
+                if (pc < bestn) {
+                    best = t;
+                    bestn = pc;
+                }
+            }
+        if (best >= 0)
+            ret = hint_move(w, best, sol[best]);
+        else
+            msg = _("No logical next step found");
+        goto out;
+    }
+
+    /*
+     * The reasoning stops short of the end (a description that was typed in,
+     * mostly): what is left is the search for a solution, and a hint that is
+     * only as good as that.
+     */
     ss = ss_dup(sv, root);
     contradiction = !ss_apply_grid(sv, ss, curr->grid, -1);
     if (!contradiction) {
@@ -1285,7 +2483,10 @@ static char *hint_game(const game_state *orig, const game_state *curr,
     }
 
 out:
+    if (sv) sv_drain(sv);
     if (ss) ss_free(ss);
+    if (full) ss_free(full);
+    if (scratch) ss_free(scratch);
     if (root) ss_free(root);
     if (sv) msolver_free(sv);
     sfree(cnt);
@@ -1375,7 +2576,7 @@ static const char *game_current_key_label(const game_ui *ui,
 struct game_drawstate {
     int tilesize;
     int w, h;
-    unsigned long *cache;       /* (w + 2) * (h + 2): what is drawn */
+    unsigned long long *cache;  /* (w + 2) * (h + 2): what is drawn */
     int *cnt;                   /* k: scratch */
     bool *aff;                  /* n: scratch */
 };
@@ -1646,7 +2847,7 @@ static void game_set_size(drawing *dr, game_drawstate *ds,
     int i;
 
     ds->tilesize = tilesize;
-    for (i = 0; i < (ds->w + 2) * (ds->h + 2); i++) ds->cache[i] = ~0UL;
+    for (i = 0; i < (ds->w + 2) * (ds->h + 2); i++) ds->cache[i] = ~0ULL;
 }
 
 static float *game_colours(frontend *fe, int *ncolours)
@@ -1690,8 +2891,8 @@ static game_drawstate *game_new_drawstate(drawing *dr, const game_state *state)
     ds->tilesize = PREFERRED_TILE_SIZE;
     ds->w = state->cl->w;
     ds->h = state->cl->h;
-    ds->cache = snewn((ds->w + 2) * (ds->h + 2), unsigned long);
-    for (i = 0; i < (ds->w + 2) * (ds->h + 2); i++) ds->cache[i] = ~0UL;
+    ds->cache = snewn((ds->w + 2) * (ds->h + 2), unsigned long long);
+    for (i = 0; i < (ds->w + 2) * (ds->h + 2); i++) ds->cache[i] = ~0ULL;
     ds->cnt = snewn(state->cl->k, int);
     ds->aff = snewn(state->cl->n, bool);
     return ds;
@@ -1758,7 +2959,7 @@ static void draw_mark(drawing *dr, int x0, int y0, int ts, int d)
  *   bit 12        shown because of the clue that is picked (or is it)
  *  for a clue:
  *   bits 10, 11   less than / as many as / more than the number is pointing at it
- *   bits 0 - 9    the number
+ *   bits 25 - 56  the number
  *  for a tile:
  *   bits 21 - 24  the mark that a long press shows (the direction + 1)
  *   bits 15 - 18  the arrow that a swipe shows (the direction + 1)
@@ -1767,7 +2968,7 @@ static void draw_mark(drawing *dr, int x0, int y0, int ts, int d)
  *   bits 0 - 3    the arrow (NDIR for none)
  */
 static void draw_square(drawing *dr, const game_drawstate *ds, int fx, int fy,
-                        unsigned long code)
+                        unsigned long long code)
 {
     int ts = ds->tilesize, x0 = fx * ts, y0 = fy * ts;
     bool ring = (code >> 20) & 1, aff = (code >> 12) & 1;
@@ -1784,12 +2985,17 @@ static void draw_square(drawing *dr, const game_drawstate *ds, int fx, int fy,
     draw_rect_outline(dr, x0, y0, ts + 1, ts + 1, COL_GRID);
 
     if (ring) {
-        int val = code & 1023, status = (code >> 10) & 3;
+        int val = (int)((code >> 25) & 0xffffffffULL), status = (int)((code >> 10) & 3);
         char buf[16];
-        int size = val >= 100 ? roundf2i(ts * 0.34F) :
-                   val >= 10 ? roundf2i(ts * 0.42F) : ts / 2;
+        int digits, size;
 
         sprintf(buf, "%d", val);
+        digits = (int)strlen(buf);
+        /* the more digits, the smaller (up to seven, as a board may have
+         * about a million tiles) */
+        size = digits <= 1 ? ts / 2 :
+               digits == 2 ? roundf2i(ts * 0.42F) :
+               roundf2i(ts * (1.5F / digits < 0.34F ? 1.5F / digits : 0.34F));
         draw_text(dr, x0 + ts / 2, y0 + ts / 2, FONT_VARIABLE, size,
                   ALIGN_HCENTRE | ALIGN_VCENTRE,
                   status == 1 ? COL_SATISFIED : status == 2 ? COL_ERROR : COL_TEXT,
@@ -1843,7 +3049,7 @@ static void game_redraw(drawing *dr, game_drawstate *ds,
 
     for (fy = 0; fy < h + 2; fy++) {
         for (fx = 0; fx < w + 2; fx++) {
-            unsigned long code;
+            unsigned long long code;
             bool cur = ui->cur_visible && ui->cur_x == fx && ui->cur_y == fy;
 
             if (fx == 0 || fy == 0 || fx == w + 1 || fy == h + 1) {
@@ -1851,27 +3057,28 @@ static void game_redraw(drawing *dr, game_drawstate *ds,
                 int v = cl->clue[c];
                 int status = ds->cnt[c] < v ? 0 : ds->cnt[c] == v ? 1 : 2;
 
-                code = (1UL << 20) | (unsigned long)v | ((unsigned long)status << 10);
-                if (ui->hl == c) code |= 1UL << 12;
+                code = (1ULL << 20) | ((unsigned long long)v << 25) |
+                       ((unsigned long long)status << 10);
+                if (ui->hl == c) code |= 1ULL << 12;
             } else {
                 int g;
 
                 t = (fy - 1) * w + (fx - 1);
                 g = state->grid[t];
-                code = (unsigned long)(g < 0 ? NDIR : g) |
-                       ((unsigned long)state->marks[t] << 4);
-                if (ds->aff[t]) code |= 1UL << 12;
-                if (g >= 0 && used[g] > n / NDIR) code |= 1UL << 14;
+                code = (unsigned long long)(g < 0 ? NDIR : g) |
+                       ((unsigned long long)state->marks[t] << 4);
+                if (ds->aff[t]) code |= 1ULL << 12;
+                if (g >= 0 && used[g] > n / NDIR) code |= 1ULL << 14;
                 if (ui->press && ui->dragdir >= 0 &&
                     ui->press_fx == fx && ui->press_fy == fy) {
                     if (ui->press == LEFT_BUTTON)
-                        code |= (unsigned long)(ui->dragdir + 1) << 15;
+                        code |= (unsigned long long)(ui->dragdir + 1) << 15;
                     else
-                        code |= (unsigned long)(ui->dragdir + 1) << 21;
+                        code |= (unsigned long long)(ui->dragdir + 1) << 21;
                 }
             }
-            if (cur) code |= 1UL << 13;
-            if (flash) code |= 1UL << 19;
+            if (cur) code |= 1ULL << 13;
+            if (flash) code |= 1ULL << 19;
 
             if (ds->cache[fy * (w + 2) + fx] != code) {
                 draw_square(dr, ds, fx, fy, code);
