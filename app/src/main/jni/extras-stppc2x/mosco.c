@@ -1480,9 +1480,18 @@ static bool gen_attempt(struct gen *g, long iters)
     return false;
 }
 
+#ifdef MOSCO_DEBUG
+/* (for the tests that tune the generator: -1 is "as it is") */
+static int dbg_core_easy = -1, dbg_core_hard = -1, dbg_core_iters = -1, dbg_core_goes = -1;
+static int dbg_search_iters = -1, dbg_nochain = 0;
+#endif
+
 /* The number of swaps that a go takes, by the size of the arena */
 static long gen_iters(int n)
 {
+#ifdef MOSCO_DEBUG
+    if (dbg_search_iters >= 0) return (long)dbg_search_iters * n;
+#endif
     return 4500L * n;
 }
 
@@ -1516,9 +1525,6 @@ static bool verify_puzzle(struct msolver *sv, const signed char *sol, int level)
 }
 
 #ifdef MOSCO_DEBUG
-static int dbg_core_easy = -1, dbg_core_hard = -1, dbg_core_iters = -1, dbg_core_goes = -1;
-#endif
-#ifdef MOSCO_DEBUG
 struct mosco_stats { long blocks, toobig, infeasible, nobalance, coresearch, corefail, verifyfail, found; long coresum; };
 static struct mosco_stats mstats;
 #define STAT(x) (mstats.x++)
@@ -1531,8 +1537,14 @@ static struct mosco_stats mstats;
 #define CORE_GOES 12
 /* How many cores and chains at most */
 #define CHAIN_GOES 200
-/* The chain needs this many clue squares to come out right with the kinds of arrow */
-#define CHAIN_SQUARES 24
+/* The chain needs this many clue squares outside the shadow of the core to come
+ * out right with the kinds of arrow.  (With more than this, a board of 73 to 104
+ * tiles turned down too many blocks and ended up with an easier puzzle than the
+ * level asked for.) */
+#define CHAIN_SQUARES 20
+#ifdef MOSCO_DEBUG
+static int dbg_chain_squares = -1;
+#endif
 
 /* The search on a board with few tiles (work: how much of it is left, see
  * LEVEL_WORK) */
@@ -1907,7 +1919,13 @@ static bool gen_chain(struct mosco_clues *cl, struct msolver *sv, int level,
                 }
             }
             *work -= 2.0 * n;           /* (what the look at the block takes) */
-            if (fits && k - ns >= CHAIN_SQUARES) {
+            if (fits && k - ns >=
+#ifdef MOSCO_DEBUG
+                (dbg_chain_squares >= 0 ? dbg_chain_squares : CHAIN_SQUARES)
+#else
+                CHAIN_SQUARES
+#endif
+                ) {
                 /* what the chain may leave of each kind: about nk / 8, and
                  * the more tiles the core has the more it may be off (and
                  * the more often it has gone wrong a little more, but not
@@ -2052,7 +2070,11 @@ static char *new_game_desc(const game_params *params, random_state *rs,
         double work = level == DIFF_EASY ? EASY_WORK : LEVEL_WORK;
 
         if (n <= SEARCH_TILES) work = 1e30;     /* (the search is all there is) */
-        if (n > SEARCH_TILES) {
+        if (n > SEARCH_TILES
+#ifdef MOSCO_DEBUG
+            && !dbg_nochain
+#endif
+            ) {
             int ct = level == DIFF_EASY ? CORE_TILES_EASY : CORE_TILES;
 #ifdef MOSCO_DEBUG
             if (level == DIFF_EASY && dbg_core_easy >= 0) ct = dbg_core_easy;
